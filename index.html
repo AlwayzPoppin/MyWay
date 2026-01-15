@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="icon" type="image/png" href="/icon.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/logo.png" />
+  <meta name="theme-color" content="#050914" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="MyWay - Real-time family GPS tracking with premium features" />
+  <title>MyWay</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --sat: env(safe-area-inset-top);
+      --sar: env(safe-area-inset-right);
+      --sab: env(safe-area-inset-bottom);
+      --sal: env(safe-area-inset-left);
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      overflow: hidden;
+      height: 100dvh;
+      background: #000000;
+      /* OLED Black */
+    }
+
+    #root {
+      height: 100%;
+    }
+
+    .glass {
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.4);
+    }
+
+    .dark-glass {
+      background: rgba(5, 5, 5, 0.85);
+      /* Deep midnight black */
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .safe-bottom {
+      padding-bottom: var(--sab);
+    }
+
+    .safe-top {
+      padding-top: var(--sat);
+    }
+
+    @keyframes pulse-ring {
+      0% {
+        transform: scale(.33);
+        opacity: 1;
+      }
+
+      80%,
+      100% {
+        transform: scale(1.5);
+        opacity: 0;
+      }
+    }
+
+    /* Marker pulse animation for "live" feel */
+    @keyframes marker-pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4);
+      }
+
+      50% {
+        box-shadow: 0 0 0 12px rgba(99, 102, 241, 0);
+      }
+    }
+
+    @keyframes gold-glow {
+
+      0%,
+      100% {
+        box-shadow: 0 0 15px rgba(245, 158, 11, 0.5);
+      }
+
+      50% {
+        box-shadow: 0 0 25px rgba(245, 158, 11, 0.8);
+      }
+    }
+
+    /* Enhanced glassmorphism */
+    .glass-premium {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+
+    /* Custom marker styles */
+    .custom-marker {
+      transition: transform 0.3s ease;
+    }
+
+    .custom-marker:hover {
+      transform: scale(1.1);
+      z-index: 1000 !important;
+    }
+
+    /* Leaflet popup styling */
+    .leaflet-popup-content-wrapper {
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      color: white;
+    }
+
+    .leaflet-popup-tip {
+      background: rgba(15, 23, 42, 0.95);
+    }
+
+    .leaflet-popup-close-button {
+      color: white !important;
+    }
+
+    /* Shimmer animation for search focus */
+    @keyframes shimmer {
+      0% {
+        transform: translateX(-100%);
+      }
+
+      100% {
+        transform: translateX(100%);
+      }
+    }
+
+    .animate-shimmer {
+      animation: shimmer 2s ease-in-out infinite;
+    }
+
+    /* Floating animation */
+    @keyframes float {
+
+      0%,
+      100% {
+        transform: translateY(0);
+      }
+
+      50% {
+        transform: translateY(-5px);
+      }
+    }
+
+    .animate-float {
+      animation: float 3s ease-in-out infinite;
+    }
+
+    /* Subtle scale pulse */
+    @keyframes scale-pulse {
+
+      0%,
+      100% {
+        transform: scale(1);
+      }
+
+      50% {
+        transform: scale(1.02);
+      }
+    }
+
+    /* Gradient border animation */
+    @keyframes gradient-shift {
+      0% {
+        background-position: 0% 50%;
+      }
+
+      50% {
+        background-position: 100% 50%;
+      }
+
+      100% {
+        background-position: 0% 50%;
+      }
+    }
+
+    .animate-gradient {
+      background-size: 200% 200%;
+      animation: gradient-shift 3s ease infinite;
+    }
+
+    /* Status halo animations */
+    @keyframes driving-pulse {
+
+      0%,
+      100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.6;
+      }
+
+      50% {
+        transform: translate(-50%, -50%) scale(1.15);
+        opacity: 0.3;
+      }
+    }
+
+    @keyframes moving-pulse {
+
+      0%,
+      100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.5;
+      }
+
+      50% {
+        transform: translate(-50%, -50%) scale(1.1);
+        opacity: 0.3;
+      }
+    }
+
+    @keyframes gold-pulse {
+
+      0%,
+      100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.7;
+        box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);
+      }
+
+      50% {
+        transform: translate(-50%, -50%) scale(1.12);
+        opacity: 0.4;
+        box-shadow: 0 0 40px rgba(245, 158, 11, 0.6);
+      }
+    }
+
+    /* Low battery flickering amber warning */
+    @keyframes battery-flicker {
+
+      0%,
+      100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.8;
+        box-shadow: 0 0 25px rgba(245, 158, 11, 0.7);
+      }
+
+      25% {
+        opacity: 0.3;
+      }
+
+      50% {
+        transform: translate(-50%, -50%) scale(1.05);
+        opacity: 0.9;
+        box-shadow: 0 0 35px rgba(245, 158, 11, 0.9);
+      }
+
+      75% {
+        opacity: 0.4;
+      }
+    }
+
+    @keyframes breathe {
+
+      0%,
+      100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.4;
+      }
+
+      50% {
+        transform: translate(-50%, -50%) scale(1.05);
+        opacity: 0.6;
+      }
+    }
+
+    @keyframes sponsor-glow {
+
+      0%,
+      100% {
+        opacity: 0.4;
+      }
+
+      50% {
+        opacity: 0.7;
+      }
+    }
+
+    /* Bottom sheet styles */
+    .bottom-sheet {
+      transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    .bottom-sheet-handle {
+      width: 36px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 2px;
+      margin: 8px auto;
+    }
+  </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.35.0"
+  }
+}
+</script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+
+<body class="bg-[#050914] text-white">
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+  <script>
+    // Register Service Worker for offline support and PWA
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('MyWay: Service Worker registered', reg.scope))
+          .catch(err => console.warn('MyWay: Service Worker registration failed', err));
+      });
+    }
+  </script>
+</body>
+
+</html>
