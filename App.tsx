@@ -24,14 +24,20 @@ import OfflineMapManager from './components/OfflineMapManager';
 import BentoSidebar from './components/BentoSidebar';
 import LoginScreen from './components/LoginScreen';
 import { useAuth } from './contexts/AuthContext';
-import { createCheckoutSession } from './services/stripeService';
-import { SUBSCRIPTION_TIERS } from './config/subscriptions';
 import {
   getFamilyInsights,
   getRouteToDestination,
   searchPlacesOnMap
 } from './services/geminiService';
 import { geolocationService } from './services/geolocationService';
+import {
+  updateMemberLocation,
+  subscribeToFamilyLocations,
+  getCircleMembers,
+  getFamilyCircle,
+  FamilyCircle
+} from './services/authService';
+import { createCheckoutSession } from './services/stripeService';
 
 const SPONSORED_PLACES: Place[] = [
   { id: 's1', name: 'Shell Premium', location: { lat: 37.7880, lng: -122.4100 }, radius: 0.005, type: 'sponsored', icon: '⛽', brandColor: '#fbbf24', deal: '10¢ off/gal for Circle members' }
@@ -53,7 +59,9 @@ const App: React.FC = () => {
     signInWithEmail,
     signUpWithEmail,
     sendMagicLink,
-    clearError
+    clearError,
+    createCircle,
+    joinCircle
   } = useAuth();
 
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -112,6 +120,53 @@ const App: React.FC = () => {
           wayType: 'NoWay'
         }
       ]);
+
+      // If user is in a circle, fetch other members
+      if (profile.familyCircleId) {
+        getCircleMembers(profile.familyCircleId).then(profiles => {
+          const otherMembers: FamilyMember[] = profiles
+            .filter(p => p.uid !== user.uid)
+            .map(p => ({
+              id: p.uid,
+              name: p.displayName || 'Family Member',
+              role: 'Member',
+              avatar: p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.uid}&backgroundColor=c0aede`,
+              location: { lat: 0, lng: 0 },
+              battery: 0,
+              speed: 0,
+              lastUpdated: 'Never',
+              status: 'Offline',
+              safetyScore: 100,
+              pathHistory: [],
+              driveEvents: [],
+              membershipTier: 'free',
+              wayType: 'HisWay'
+            }));
+
+          setMembers(prev => [...prev.filter(m => m.id === user.uid), ...otherMembers]);
+        });
+
+        // Subscribe to real-time location updates
+        const unsubscribe = subscribeToFamilyLocations(profile.familyCircleId, (locations) => {
+          setMembers(prev => prev.map(member => {
+            const loc = locations[member.id];
+            if (loc && member.id !== user.uid) {
+              return {
+                ...member,
+                location: { lat: loc.lat, lng: loc.lng },
+                speed: loc.speed,
+                heading: loc.heading,
+                battery: loc.battery,
+                lastUpdated: new Date(loc.timestamp).toLocaleTimeString(),
+                status: (loc.speed > 5) ? 'Driving' : (loc.speed > 0.5) ? 'Moving' : 'Stationary'
+              };
+            }
+            return member;
+          }));
+        });
+
+        return () => unsubscribe();
+      }
     }
   }, [user, profile]);
 
@@ -133,6 +188,8 @@ const App: React.FC = () => {
     geolocationService.watchPosition(
       (location) => {
         setLocationError(null);
+
+        // Update local state
         setMembers(prev => prev.map(m =>
           m.id === user.uid ? {
             ...m,
@@ -144,6 +201,19 @@ const App: React.FC = () => {
               (location.speed && location.speed > 0.5) ? 'Moving' : 'Stationary'
           } : m
         ));
+
+        // Sync to Firebase if in a circle
+        if (profile?.familyCircleId) {
+          updateMemberLocation(profile.familyCircleId, user.uid, {
+            lat: location.latitude,
+            lng: location.longitude,
+            speed: location.speed || 0,
+            heading: location.heading || 0,
+            accuracy: location.accuracy || 0,
+            timestamp: Date.now(),
+            battery: 100 // We should get real battery level if possible in PWA
+          });
+        }
       },
       (error) => {
         setLocationError(error.message);
@@ -152,7 +222,7 @@ const App: React.FC = () => {
     );
 
     return () => geolocationService.stopWatching();
-  }, [user]);
+  }, [user, profile?.familyCircleId]);
 
   useEffect(() => {
     if (members.length > 0) {
@@ -220,6 +290,15 @@ const App: React.FC = () => {
     setIsDriveMode(true);
   };
 
+  const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
+
+  // Fetch circle data if in one
+  useEffect(() => {
+    if (profile?.familyCircleId) {
+      getFamilyCircle(profile.familyCircleId).then(setCurrentCircle);
+    }
+  }, [profile?.familyCircleId]);
+
   return (
     <div className={`flex flex-col h-full w-full overflow-hidden transition-all duration-700 ${theme === 'dark' ? 'bg-black' : 'bg-[#f1f5f9]'}`}>
       {!isDriveMode && (
@@ -227,7 +306,7 @@ const App: React.FC = () => {
           theme={theme}
           onToggleTheme={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
           onUpgrade={() => setIsUpsellOpen(true)}
-          userTier={members[0].membershipTier}
+          userTier={members[0]?.membershipTier || 'free'}
         />
       )}
 
@@ -239,6 +318,10 @@ const App: React.FC = () => {
             selectedId={selectedMemberId}
             onSelect={setSelectedMemberId}
             theme={theme}
+            hasCircle={!!profile?.familyCircleId}
+            inviteCode={currentCircle?.inviteCode}
+            onCreateCircle={createCircle}
+            onJoinCircle={joinCircle}
           />
         )}
 

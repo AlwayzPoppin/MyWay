@@ -11,7 +11,10 @@ import {
     completeEmailLinkSignIn,
     signOut,
     getUserProfile,
-    UserProfile
+    UserProfile,
+    FamilyCircle,
+    createFamilyCircle,
+    joinFamilyCircle
 } from '../services/authService';
 
 interface AuthContextType {
@@ -27,6 +30,8 @@ interface AuthContextType {
     completeMagicLinkSignIn: (email?: string) => Promise<void>;
     logout: () => Promise<void>;
     clearError: () => void;
+    createCircle: (name: string) => Promise<FamilyCircle>;
+    joinCircle: (code: string) => Promise<FamilyCircle | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -161,7 +166,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         sendMagicLink: handleSendMagicLink,
         completeMagicLinkSignIn: handleCompleteMagicLinkSignIn,
         logout: handleLogout,
-        clearError
+        clearError,
+        createCircle: async (name: string) => {
+            if (!user) throw new Error('Must be logged in');
+            const circle = await createFamilyCircle(name, user.uid);
+            const updatedProfile = await getUserProfile(user.uid);
+            setProfile(updatedProfile);
+            return circle;
+        },
+        joinCircle: async (code: string) => {
+            if (!user) throw new Error('Must be logged in');
+            const circle = await joinFamilyCircle(code, user.uid);
+            if (circle) {
+                const updatedProfile = await getUserProfile(user.uid);
+                setProfile(updatedProfile);
+            }
+            return circle;
+        }
     };
 
     return (
