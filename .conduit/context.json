@@ -7,123 +7,6 @@
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T03:34:15.752Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T03:35:52.726Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T03:37:22.287Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T03:43:23.224Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File deleted: components/WayModeSelector.tsx",
-      "files": [
-        "components/WayModeSelector.tsx"
-      ],
-      "timestamp": "2026-01-15T03:50:06.002Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-15T04:26:23.836Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SafetyAlerts.tsx",
-      "files": [
-        "components/SafetyAlerts.tsx"
-      ],
-      "timestamp": "2026-01-15T04:26:33.760Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/BentoSidebar.tsx",
-      "files": [
-        "components/BentoSidebar.tsx"
-      ],
-      "timestamp": "2026-01-15T04:26:45.956Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/BentoSidebar.tsx",
-      "files": [
-        "components/BentoSidebar.tsx"
-      ],
-      "timestamp": "2026-01-15T04:32:53.719Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SafetyAlerts.tsx",
-      "files": [
-        "components/SafetyAlerts.tsx"
-      ],
-      "timestamp": "2026-01-15T04:39:17.844Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-15T04:39:19.980Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/BentoSidebar.tsx",
-      "files": [
-        "components/BentoSidebar.tsx"
-      ],
-      "timestamp": "2026-01-15T04:51:55.931Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/BentoSidebar.tsx",
-      "files": [
-        "components/BentoSidebar.tsx"
-      ],
-      "timestamp": "2026-01-15T04:52:20.394Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
       "action": "File modified: public/sw.js",
       "files": [
         "public/sw.js"
@@ -453,6 +336,123 @@
         "contexts/AuthContext.tsx"
       ],
       "timestamp": "2026-01-15T06:48:27.882Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: config/subscriptions.ts",
+      "files": [
+        "config/subscriptions.ts"
+      ],
+      "timestamp": "2026-01-15T07:11:21.188Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: index.tsx",
+      "files": [
+        "index.tsx"
+      ],
+      "timestamp": "2026-01-15T07:11:46.303Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/LoginScreen.tsx",
+      "files": [
+        "components/LoginScreen.tsx"
+      ],
+      "timestamp": "2026-01-15T07:12:23.008Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/LoginScreen.tsx",
+      "files": [
+        "components/LoginScreen.tsx"
+      ],
+      "timestamp": "2026-01-15T07:12:33.919Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-15T07:13:01.927Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/firebase.ts",
+      "files": [
+        "services/firebase.ts"
+      ],
+      "timestamp": "2026-01-15T07:26:35.735Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: .env.local",
+      "files": [
+        ".env.local"
+      ],
+      "timestamp": "2026-01-15T07:26:49.556Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/stripeService.ts",
+      "files": [
+        "services/stripeService.ts"
+      ],
+      "timestamp": "2026-01-15T07:27:02.348Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/PremiumUpsellModal.tsx",
+      "files": [
+        "components/PremiumUpsellModal.tsx"
+      ],
+      "timestamp": "2026-01-15T07:27:26.595Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/PremiumUpsellModal.tsx",
+      "files": [
+        "components/PremiumUpsellModal.tsx"
+      ],
+      "timestamp": "2026-01-15T07:27:32.904Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-15T07:27:53.206Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-15T07:28:00.874Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-15T07:28:20.811Z"
     }
   ],
   "handoffs": [],
@@ -476,11 +476,16 @@
     "staged": [],
     "modified": [
       ".conduit/context.json",
-      "contexts/AuthContext.tsx",
-      "services/authService.ts"
+      "App.tsx",
+      "components/LoginScreen.tsx",
+      "components/PremiumUpsellModal.tsx",
+      "index.tsx",
+      "services/firebase.ts",
+      "config/subscriptions.ts",
+      "services/stripeService.ts"
     ],
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-15T06:48:27.882Z"
+  "lastSync": "2026-01-15T07:28:50.474Z"
 }

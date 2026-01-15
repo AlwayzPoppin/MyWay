@@ -22,68 +22,16 @@ import MessagingPanel from './components/MessagingPanel';
 import SettingsPanel from './components/SettingsPanel';
 import OfflineMapManager from './components/OfflineMapManager';
 import BentoSidebar from './components/BentoSidebar';
+import LoginScreen from './components/LoginScreen';
+import { useAuth } from './contexts/AuthContext';
+import { createCheckoutSession } from './services/stripeService';
+import { SUBSCRIPTION_TIERS } from './config/subscriptions';
 import {
   getFamilyInsights,
   getRouteToDestination,
   searchPlacesOnMap
 } from './services/geminiService';
 import { geolocationService } from './services/geolocationService';
-
-const INITIAL_MEMBERS: FamilyMember[] = [
-  {
-    id: '1',
-    name: 'You',
-    role: 'Primary',
-    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah&backgroundColor=b6e3f4',
-    location: { lat: 37.7749, lng: -122.4194 }, // Stationary
-    battery: 100,
-    speed: 0,
-    lastUpdated: 'Now',
-    status: 'Stationary',
-    safetyScore: 98,
-    pathHistory: [],
-    driveEvents: [],
-    membershipTier: 'gold',
-    wayType: 'NoWay'
-  },
-  {
-    id: '2',
-    name: 'David',
-    role: 'Member',
-    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=David&backgroundColor=c0aede',
-    location: { lat: 37.7739, lng: -122.4312 }, // Moving
-    battery: 12,
-    speed: 45,
-    lastUpdated: 'Now',
-    status: 'Moving',
-    destination: 'Office',
-    safetyScore: 100,
-    pathHistory: [
-      { lat: 37.7738, lng: -122.4311 },
-      { lat: 37.7735, lng: -122.4300 }
-    ],
-    driveEvents: [],
-    membershipTier: 'free',
-    wayType: 'HisWay'
-  },
-  {
-    id: '3',
-    name: 'Chloe',
-    role: 'Member',
-    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Chloe&backgroundColor=ffdfbf',
-    location: { lat: 37.7849, lng: -122.4094 }, // Stationary
-    battery: 92,
-    speed: 0,
-    lastUpdated: '10 min ago',
-    status: 'Stationary',
-    currentPlace: 'School',
-    safetyScore: 100,
-    pathHistory: [],
-    driveEvents: [],
-    membershipTier: 'free',
-    wayType: 'HerWay'
-  }
-];
 
 const SPONSORED_PLACES: Place[] = [
   { id: 's1', name: 'Shell Premium', location: { lat: 37.7880, lng: -122.4100 }, radius: 0.005, type: 'sponsored', icon: '⛽', brandColor: '#fbbf24', deal: '10¢ off/gal for Circle members' }
@@ -95,8 +43,21 @@ const INITIAL_REWARDS: Reward[] = [
 ];
 
 const App: React.FC = () => {
+  const {
+    user,
+    profile,
+    loading: authLoading,
+    error: authError,
+    emailLinkSent,
+    signInWithGoogle,
+    signInWithEmail,
+    signUpWithEmail,
+    sendMagicLink,
+    clearError
+  } = useAuth();
+
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [members, setMembers] = useState<FamilyMember[]>(INITIAL_MEMBERS);
+  const [members, setMembers] = useState<FamilyMember[]>([]);
   const [isUpsellOpen, setIsUpsellOpen] = useState(false);
   const [isRewardsOpen, setIsRewardsOpen] = useState(false);
   const [rewards] = useState<Reward[]>(INITIAL_REWARDS);
@@ -130,6 +91,30 @@ const App: React.FC = () => {
     units: 'imperial' as 'imperial' | 'metric'
   });
 
+  // Initialize members from auth profile
+  useEffect(() => {
+    if (user && profile) {
+      setMembers([
+        {
+          id: user.uid,
+          name: profile.displayName || 'You',
+          role: 'Primary',
+          avatar: profile.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}&backgroundColor=b6e3f4`,
+          location: { lat: 37.7749, lng: -122.4194 },
+          battery: 100,
+          speed: 0,
+          lastUpdated: 'Now',
+          status: 'Stationary',
+          safetyScore: 98,
+          pathHistory: [],
+          driveEvents: [],
+          membershipTier: (profile as any).membershipTier || 'free',
+          wayType: 'NoWay'
+        }
+      ]);
+    }
+  }, [user, profile]);
+
   // Handle window resize
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -139,6 +124,7 @@ const App: React.FC = () => {
 
   // Real GPS tracking for "You" member
   useEffect(() => {
+    if (!user) return;
     if (!geolocationService.isSupported()) {
       setLocationError('GPS not supported on this device');
       return;
@@ -148,7 +134,7 @@ const App: React.FC = () => {
       (location) => {
         setLocationError(null);
         setMembers(prev => prev.map(m =>
-          m.id === '1' ? {
+          m.id === user.uid ? {
             ...m,
             location: { lat: location.latitude, lng: location.longitude },
             speed: location.speed || 0,
@@ -166,30 +152,68 @@ const App: React.FC = () => {
     );
 
     return () => geolocationService.stopWatching();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
-    const fetch = async () => setInsights(await getFamilyInsights(members));
-    fetch();
+    if (members.length > 0) {
+      const fetch = async () => setInsights(await getFamilyInsights(members));
+      fetch();
+    }
   }, [members]);
 
   const handleToggleGhost = (memberId: string) => {
     setMembers(prev => prev.map(m => m.id === memberId ? { ...m, isGhostMode: !m.isGhostMode } : m));
   };
 
-  const handleUpgrade = (tier: 'gold' | 'platinum') => {
-    setMembers(prev => prev.map(m => m.id === '1' ? { ...m, membershipTier: tier } : m));
-    setIsUpsellOpen(false);
-    setNotification(`✨ Upgraded to ${tier.toUpperCase()}`);
-    setTimeout(() => setNotification(null), 3000);
+  const handleUpgrade = async (tierId: string) => {
+    try {
+      const tier = SUBSCRIPTION_TIERS[tierId];
+      if (!tier) return;
+
+      setNotification(`🚀 Preparing your ${tier.name}...`);
+      const checkoutUrl = await createCheckoutSession(tier.priceId);
+      window.location.href = checkoutUrl;
+    } catch (err: any) {
+      setNotification(`❌ Error: ${err.message}`);
+      setTimeout(() => setNotification(null), 5000);
+    }
   };
 
+  if (authLoading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#050914] text-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          <p className="font-bold tracking-widest animate-pulse">LOADING MYWAY...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <LoginScreen
+        theme={theme}
+        onSignInWithGoogle={signInWithGoogle}
+        onSignInWithEmail={signInWithEmail}
+        onSignUpWithEmail={signUpWithEmail}
+        onSendMagicLink={sendMagicLink}
+        magicLinkSent={emailLinkSent}
+        loading={authLoading}
+        error={authError}
+        onClearError={clearError}
+      />
+    );
+  }
+
   const handleDiscovery = async (query: string) => {
+    if (members.length === 0) return;
     const results = await searchPlacesOnMap(query, members[0].location);
     setDiscoveredPlaces([...SPONSORED_PLACES, ...results]);
   };
 
   const handleStartNavigation = async (dest: string) => {
+    if (members.length === 0) return;
     const route = await getRouteToDestination(members[0].location, dest, members);
     setActiveRoute(route);
     setIsNavigating(true);

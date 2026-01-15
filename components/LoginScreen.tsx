@@ -6,6 +6,8 @@ interface LoginScreenProps {
     onSignInWithGoogle: () => Promise<void>;
     onSignInWithEmail: (email: string, password: string) => Promise<void>;
     onSignUpWithEmail: (email: string, password: string, displayName: string) => Promise<void>;
+    onSendMagicLink: (email: string) => Promise<void>;
+    magicLinkSent: boolean;
     loading: boolean;
     error: string | null;
     onClearError: () => void;
@@ -16,18 +18,23 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     onSignInWithGoogle,
     onSignInWithEmail,
     onSignUpWithEmail,
+    onSendMagicLink,
+    magicLinkSent,
     loading,
     error,
     onClearError
 }) => {
     const [isSignUp, setIsSignUp] = useState(false);
+    const [useMagicLink, setUseMagicLink] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [displayName, setDisplayName] = useState('');
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (isSignUp) {
+        if (useMagicLink) {
+            await onSendMagicLink(email);
+        } else if (isSignUp) {
             await onSignUpWithEmail(email, password, displayName);
         } else {
             await onSignInWithEmail(email, password);
@@ -38,12 +45,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
 
     return (
         <div className={`min-h-screen flex items-center justify-center p-6 ${isDark
-                ? 'bg-gradient-to-br from-[#050914] via-[#0f172a] to-[#1e1b4b]'
-                : 'bg-gradient-to-br from-slate-100 via-white to-blue-50'
+            ? 'bg-gradient-to-br from-[#050914] via-[#0f172a] to-[#1e1b4b]'
+            : 'bg-gradient-to-br from-slate-100 via-white to-blue-50'
             }`}>
             <div className={`w-full max-w-md rounded-3xl p-8 shadow-2xl ${isDark
-                    ? 'bg-white/5 border border-white/10 backdrop-blur-xl'
-                    : 'bg-white border border-slate-200'
+                ? 'bg-white/5 border border-white/10 backdrop-blur-xl'
+                : 'bg-white border border-slate-200'
                 }`}>
                 {/* Logo */}
                 <div className="text-center mb-8">
@@ -59,11 +66,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     </p>
                 </div>
 
-                {/* Error Alert */}
+                {/* Status Messages */}
                 {error && (
-                    <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center justify-between">
+                    <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center justify-between animate-in fade-in zoom-in">
                         <span>{error}</span>
                         <button onClick={onClearError} className="text-red-300 hover:text-white">✕</button>
+                    </div>
+                )}
+
+                {magicLinkSent && (
+                    <div className="mb-6 p-4 rounded-xl bg-green-500/10 border border-green-500/30 text-green-400 text-sm animate-in fade-in zoom-in">
+                        ✨ Magic link sent! Check your inbox to sign in.
                     </div>
                 )}
 
@@ -72,8 +85,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     onClick={onSignInWithGoogle}
                     disabled={loading}
                     className={`w-full flex items-center justify-center gap-3 py-4 rounded-xl font-semibold transition-all ${isDark
-                            ? 'bg-white text-slate-900 hover:bg-slate-100'
-                            : 'bg-slate-900 text-white hover:bg-slate-800'
+                        ? 'bg-white text-slate-900 hover:bg-slate-100'
+                        : 'bg-slate-900 text-white hover:bg-slate-800'
                         } ${loading ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02]'}`}
                 >
                     <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -101,59 +114,76 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                             value={displayName}
                             onChange={(e) => setDisplayName(e.target.value)}
                             className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${isDark
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-amber-500/50'
-                                    : 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-amber-500/50'
+                                : 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
                                 }`}
                             required={isSignUp}
                         />
                     )}
                     <input
                         type="email"
-                        placeholder="Email"
+                        placeholder="Email Address"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${isDark
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-amber-500/50'
-                                : 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
+                            ? 'bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-amber-500/50'
+                            : 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
                             }`}
                         required
                     />
-                    <input
-                        type="password"
-                        placeholder="Password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${isDark
+                    {!useMagicLink && (
+                        <input
+                            type="password"
+                            placeholder="Password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${isDark
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-amber-500/50'
                                 : 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
-                            }`}
-                        required
-                        minLength={6}
-                    />
+                                }`}
+                            required={!useMagicLink}
+                            minLength={6}
+                        />
+                    )}
                     <button
                         type="submit"
-                        disabled={loading}
+                        disabled={loading || magicLinkSent}
                         className={`w-full py-4 rounded-xl font-bold uppercase tracking-wider transition-all
               bg-gradient-to-r from-amber-400 via-orange-500 to-amber-500 text-black
-              ${loading ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-lg hover:shadow-amber-500/30 hover:scale-[1.02]'}`}
+              ${(loading || magicLinkSent) ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-lg hover:shadow-amber-500/30 hover:scale-[1.02]'}`}
                     >
-                        {loading ? '...' : isSignUp ? 'Create Account' : 'Sign In'}
+                        {loading ? '...' : useMagicLink ? 'Send Magic Link' : isSignUp ? 'Create Account' : 'Sign In'}
                     </button>
                 </form>
+
+                {/* Magic Link Toggle */}
+                {!isSignUp && (
+                    <div className="text-center mt-4">
+                        <button
+                            onClick={() => {
+                                setUseMagicLink(!useMagicLink);
+                                onClearError();
+                            }}
+                            className={`text-sm font-medium ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-800'} transition-colors`}
+                        >
+                            {useMagicLink ? 'Use password instead' : 'Sign in with Magic Link (Passwordless)'}
+                        </button>
+                    </div>
+                )}
 
                 {/* Toggle Sign Up / Sign In */}
                 <p className={`text-center mt-6 text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                     {isSignUp ? 'Already have an account?' : "Don't have an account?"}
                     <button
-                        onClick={() => setIsSignUp(!isSignUp)}
+                        onClick={() => {
+                            setIsSignUp(!isSignUp);
+                            setUseMagicLink(false);
+                            onClearError();
+                        }}
                         className="ml-2 text-amber-500 hover:text-amber-400 font-semibold"
                     >
                         {isSignUp ? 'Sign In' : 'Sign Up'}
-                    </button>
-                </p>
-            </div>
-        </div>
-    );
+                        );
 };
 
-export default LoginScreen;
+                        export default LoginScreen;
