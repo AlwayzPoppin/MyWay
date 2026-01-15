@@ -5,8 +5,12 @@ import {
     createUserWithEmailAndPassword,
     signOut as firebaseSignOut,
     onAuthStateChanged,
+    sendSignInLinkToEmail,
+    isSignInWithEmailLink,
+    signInWithEmailLink,
     User,
-    updateProfile
+    updateProfile,
+    ActionCodeSettings
 } from 'firebase/auth';
 import { ref, set, get, onValue, off } from 'firebase/database';
 import { auth, googleProvider, database } from './firebase';
@@ -53,6 +57,44 @@ export const signUpWithEmail = async (email: string, password: string, displayNa
     const result = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(result.user, { displayName });
     await createUserProfileIfNotExists(result.user);
+    return result.user;
+};
+
+// Email Link (Passwordless) Authentication
+const EMAIL_LINK_STORAGE_KEY = 'emailForSignIn';
+
+export const sendEmailLink = async (email: string): Promise<void> => {
+    const actionCodeSettings: ActionCodeSettings = {
+        // URL to redirect to after email link is clicked
+        url: window.location.origin + '/auth/email-link',
+        handleCodeInApp: true,
+    };
+
+    await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+    // Save the email to localStorage to complete sign-in later
+    window.localStorage.setItem(EMAIL_LINK_STORAGE_KEY, email);
+};
+
+export const isEmailLinkSignIn = (): boolean => {
+    return isSignInWithEmailLink(auth, window.location.href);
+};
+
+export const completeEmailLinkSignIn = async (email?: string): Promise<User> => {
+    // Get email from localStorage if not provided
+    const emailToUse = email || window.localStorage.getItem(EMAIL_LINK_STORAGE_KEY);
+
+    if (!emailToUse) {
+        throw new Error('Email is required to complete sign-in. Please enter your email.');
+    }
+
+    const result = await signInWithEmailLink(auth, emailToUse, window.location.href);
+
+    // Clear the saved email
+    window.localStorage.removeItem(EMAIL_LINK_STORAGE_KEY);
+
+    // Create user profile if first time
+    await createUserProfileIfNotExists(result.user);
+
     return result.user;
 };
 

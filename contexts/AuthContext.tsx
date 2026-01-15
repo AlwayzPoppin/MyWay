@@ -6,6 +6,9 @@ import {
     signInWithGoogle,
     signInWithEmail,
     signUpWithEmail,
+    sendEmailLink,
+    isEmailLinkSignIn,
+    completeEmailLinkSignIn,
     signOut,
     getUserProfile,
     UserProfile
@@ -16,9 +19,12 @@ interface AuthContextType {
     profile: UserProfile | null;
     loading: boolean;
     error: string | null;
+    emailLinkSent: boolean;
     signInWithGoogle: () => Promise<void>;
     signInWithEmail: (email: string, password: string) => Promise<void>;
     signUpWithEmail: (email: string, password: string, displayName: string) => Promise<void>;
+    sendMagicLink: (email: string) => Promise<void>;
+    completeMagicLinkSignIn: (email?: string) => Promise<void>;
     logout: () => Promise<void>;
     clearError: () => void;
 }
@@ -42,8 +48,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [emailLinkSent, setEmailLinkSent] = useState(false);
 
     useEffect(() => {
+        // Check if returning from email link sign-in
+        if (isEmailLinkSignIn()) {
+            setLoading(true);
+            completeEmailLinkSignIn()
+                .then(() => setLoading(false))
+                .catch((err) => {
+                    setError(err.message || 'Failed to complete sign-in');
+                    setLoading(false);
+                });
+        }
+
         const unsubscribe = onAuthChange(async (firebaseUser) => {
             setUser(firebaseUser);
             if (firebaseUser) {
@@ -94,6 +112,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
     };
 
+    const handleSendMagicLink = async (email: string) => {
+        try {
+            setError(null);
+            setLoading(true);
+            await sendEmailLink(email);
+            setEmailLinkSent(true);
+        } catch (err: any) {
+            setError(err.message || 'Failed to send magic link');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleCompleteMagicLinkSignIn = async (email?: string) => {
+        try {
+            setError(null);
+            setLoading(true);
+            await completeEmailLinkSignIn(email);
+            setEmailLinkSent(false);
+        } catch (err: any) {
+            setError(err.message || 'Failed to complete sign-in');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleLogout = async () => {
         try {
             setError(null);
@@ -110,9 +154,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         profile,
         loading,
         error,
+        emailLinkSent,
         signInWithGoogle: handleSignInWithGoogle,
         signInWithEmail: handleSignInWithEmail,
         signUpWithEmail: handleSignUpWithEmail,
+        sendMagicLink: handleSendMagicLink,
+        completeMagicLinkSignIn: handleCompleteMagicLinkSignIn,
         logout: handleLogout,
         clearError
     };
