@@ -12,31 +12,48 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ theme, onToggleTheme, onUpgrade, userTier = 'free', children }) => {
   const isPremium = userTier === 'gold' || userTier === 'platinum';
 
+  const ambientBg = theme === 'dark' 
+    ? 'rgba(10, 11, 30, 0.95)' // Deep Indigo matching logo
+    : 'rgba(255, 255, 255, 0.95)';
+
   return (
-    <header className={`h-16 md:h-18 border-b px-4 md:px-8 flex items-center justify-between z-[90] safe-top transition-all duration-500 backdrop-blur-xl
-      ${theme === 'dark'
-        ? 'bg-gradient-to-r from-[#050914]/98 via-[#0f172a]/95 to-[#050914]/98 border-white/5'
-        : 'bg-gradient-to-r from-white/98 via-slate-50/95 to-white/98 border-slate-200'}`}
+    <header className={`h-16 md:h-18 border-b px-4 md:px-8 flex items-center justify-between z-[90] safe-top transition-all duration-700 backdrop-blur-3xl relative overflow-hidden
+      ${theme === 'dark' ? 'border-white/5' : 'border-slate-200'}`}
+      style={{
+        backgroundColor: ambientBg,
+        boxShadow: theme === 'dark' ? '0 4px 30px rgba(0, 0, 0, 0.5)' : '0 4px 30px rgba(0, 0, 0, 0.05)'
+      }}
     >
+      {/* Dynamic Ambient Glows (RGBIC style) */}
+      <div className="absolute inset-0 pointer-events-none opacity-40">
+        <div className="absolute -top-24 left-0 w-96 h-96 bg-amber-500/20 blur-[100px] rounded-full animate-pulse" />
+        <div className="absolute -top-24 right-0 w-96 h-96 bg-blue-500/20 blur-[100px] rounded-full animate-pulse" style={{ animationDelay: '1s' }} />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/5" />
+      </div>
+
       {/* Logo and brand */}
-      <div className="flex items-center gap-3 md:gap-4">
-        <div className="relative group w-10 h-10 md:w-11 md:h-11 shadow-xl transition-all duration-300 hover:scale-105">
-          {/* Logo Image */}
-          <img
-            src="/logo.png"
-            alt="MyWay Logo"
-            className="w-full h-full object-contain drop-shadow-lg"
-          />
+      <div className="flex items-center gap-3 md:gap-4 relative z-10">
+        <div className="relative group w-10 h-10 md:w-12 md:h-12 transition-all duration-500 hover:scale-110">
+          {/* Logo Glow Effect */}
+          <div className="absolute inset-0 bg-gradient-to-br from-amber-400 to-orange-600 rounded-xl blur-md opacity-40 group-hover:opacity-60 transition-opacity" />
+          
+          <div className={`relative w-full h-full rounded-2xl overflow-hidden border ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} shadow-2xl`}>
+            <img
+              src="/logo.png"
+              alt="MyWay Logo"
+              className="w-full h-full object-cover"
+            />
+          </div>
         </div>
 
         <div className="hidden sm:block">
-          <h1 className="text-xl md:text-2xl leading-none flex items-center" style={{ fontFamily: 'Poppins, sans-serif' }}>
+          <h1 className="text-xl md:text-2xl leading-none flex items-center tracking-tighter" style={{ fontFamily: '"Outfit", "Inter", sans-serif' }}>
             <span className={`font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My</span>
-            <span className="font-extrabold bg-gradient-to-r from-amber-400 via-orange-500 to-amber-500 bg-clip-text text-transparent">Way</span>
+            <span className="font-extrabold bg-gradient-to-br from-amber-400 via-orange-500 to-amber-600 bg-clip-text text-transparent">Way</span>
           </h1>
-          <p className="text-[9px] text-slate-500 font-semibold uppercase tracking-[0.2em] mt-0.5 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            Family GPS
+          <p className="text-[8px] text-slate-500 font-black uppercase tracking-[0.3em] mt-1 flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+            Family Connectivity
           </p>
         </div>
       </div>

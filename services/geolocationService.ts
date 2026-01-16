@@ -36,12 +36,21 @@ class GeolocationService {
                     resolve(this.parsePosition(position));
                 },
                 (error) => {
-                    reject(this.parseError(error));
+                    // Fallback to low accuracy if high accuracy fails/times out
+                    if (error.code === 3) { // Timeout
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => resolve(this.parsePosition(pos)),
+                            (err) => reject(this.parseError(err)),
+                            { enableHighAccuracy: false, timeout: 20000 }
+                        );
+                    } else {
+                        reject(this.parseError(error));
+                    }
                 },
                 {
                     enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
+                    timeout: 20000,
+                    maximumAge: 10000
                 }
             );
         });
@@ -58,12 +67,13 @@ class GeolocationService {
                 onLocation(this.parsePosition(position));
             },
             (error) => {
+                // Just report the error, don't recurse
                 onError?.(this.parseError(error));
             },
             {
                 enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 5000
+                timeout: 30000,
+                maximumAge: 10000
             }
         );
     }

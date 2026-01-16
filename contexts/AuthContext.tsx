@@ -70,8 +70,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const unsubscribe = onAuthChange(async (firebaseUser) => {
             setUser(firebaseUser);
             if (firebaseUser) {
-                const userProfile = await getUserProfile(firebaseUser.uid);
-                setProfile(userProfile);
+                try {
+                    const userProfile = await getUserProfile(firebaseUser.uid);
+                    setProfile(userProfile);
+                } catch (err) {
+                    console.error('Profile load failed:', err);
+                }
             } else {
                 setProfile(null);
             }
@@ -170,8 +174,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         createCircle: async (name: string) => {
             if (!user) throw new Error('Must be logged in');
             const circle = await createFamilyCircle(name, user.uid);
-            const updatedProfile = await getUserProfile(user.uid);
-            setProfile(updatedProfile);
+            // Update the profile state with the new circle ID
+            // If profile is null, create a minimal profile object
+            setProfile(prev => {
+                if (prev) {
+                    return { ...prev, familyCircleId: circle.id };
+                }
+                // Create a minimal profile if none exists
+                return {
+                    uid: user.uid,
+                    email: user.email,
+                    displayName: user.displayName,
+                    photoURL: user.photoURL,
+                    phoneNumber: user.phoneNumber,
+                    familyCircleId: circle.id,
+                    createdAt: Date.now(),
+                    lastSeen: Date.now(),
+                    settings: {
+                        theme: 'dark',
+                        notifications: true,
+                        locationSharing: true
+                    }
+                };
+            });
+            console.log('Profile updated with new circleId:', circle.id);
             return circle;
         },
         joinCircle: async (code: string) => {

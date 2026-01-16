@@ -12,8 +12,9 @@ import {
     updateProfile,
     ActionCodeSettings
 } from 'firebase/auth';
-import { ref, set, get, onValue, off } from 'firebase/database';
+import { ref, set, get, onValue, off, push } from 'firebase/database';
 import { auth, googleProvider, database } from './firebase';
+import { Geofence } from './geofenceService';
 
 // Types
 export interface UserProfile {
@@ -62,6 +63,7 @@ export const signUpWithEmail = async (email: string, password: string, displayNa
 
 // Email Link (Passwordless) Authentication
 const EMAIL_LINK_STORAGE_KEY = 'emailForSignIn';
+const GOOGLE_MAPS_API_KEY = (import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 export const sendEmailLink = async (email: string): Promise<void> => {
     const actionCodeSettings: ActionCodeSettings = {
@@ -135,10 +137,25 @@ export const createUserProfileIfNotExists = async (user: User): Promise<void> =>
     }
 };
 
-export const getUserProfile = async (uid: string): Promise<UserProfile | null> => {
-    const userRef = ref(database, `users/${uid}`);
-    const snapshot = await get(userRef);
-    return snapshot.exists() ? snapshot.val() : null;
+export const getUserProfile = async (uid: string, retries = 2): Promise<UserProfile | null> => {
+    for (let i = 0; i <= retries; i++) {
+        try {
+            const userRef = ref(database, `users/${uid}`);
+            const snapshotPromise = get(userRef);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Profile fetch timeout')), 4000)
+            );
+
+            const snapshot = await Promise.race([snapshotPromise, timeoutPromise]) as any;
+            return snapshot.exists() ? snapshot.val() as UserProfile : null;
+        } catch (error) {
+            console.error(`Error fetching user profile (Attempt ${i + 1}/${retries + 1}):`, error);
+            if (i === retries) return null;
+            // Wait a bit before retrying
+            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        }
+    }
+    return null;
 };
 
 export const updateUserProfile = async (uid: string, updates: Partial<UserProfile>): Promise<void> => {
@@ -151,6 +168,7 @@ export const updateUserProfile = async (uid: string, updates: Partial<UserProfil
 
 // Family Circle Functions
 export const createFamilyCircle = async (name: string, ownerId: string): Promise<FamilyCircle> => {
+    console.log('Creating family circle:', { name, ownerId });
     const circleId = `circle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const inviteCode = Math.random().toString(36).substr(2, 8).toUpperCase();
 
@@ -227,7 +245,6 @@ export const subscribeToFamilyLocations = (
 
     return () => off(locationsRef);
 };
-
 export const getCircleMembers = async (circleId: string): Promise<UserProfile[]> => {
     const circle = await getFamilyCircle(circleId);
     if (!circle) return [];
@@ -238,4 +255,38 @@ export const getCircleMembers = async (circleId: string): Promise<UserProfile[]>
         if (profile) members.push(profile);
     }
     return members;
+};
+
+// Geofence Management Functions
+export const addGeofence = async (circleId: string, geofence: Omit<Geofence, 'id'>): Promise<string> => {
+    const geofencesRef = ref(database, `geofences/${circleId}`);
+    const newGeofenceRef = push(geofencesRef);
+    const id = newGeofenceRef.key as string;
+
+    const geofenceWithId: Geofence = { ...geofence, id };
+    await set(ref(database, `geofences/${circleId}/${id}`), geofenceWithId);
+
+    return id;
+};
+
+export const getGeofences = async (circleId: string): Promise<Geofence[]> => {
+    const geofencesRef = ref(database, `geofences/${circleId}`);
+    const snapshot = await get(geofencesRef);
+    if (!snapshot.exists()) return [];
+
+    return Object.values(snapshot.val());
+};
+
+export const subscribeToGeofences = (
+    circleId: string,
+    callback: (geofences: Geofence[]) => void
+): (() => void) => {
+    const geofencesRef = ref(database, `geofences/${circleId}`);
+
+    onValue(geofencesRef, (snapshot) => {
+        const data = snapshot.exists() ? snapshot.val() : {};
+        callback(Object.values(data));
+    });
+
+    return () => off(geofencesRef);
 };

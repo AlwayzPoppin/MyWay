@@ -183,7 +183,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                         className="ml-2 text-amber-500 hover:text-amber-400 font-semibold"
                     >
                         {isSignUp ? 'Sign In' : 'Sign Up'}
-                        );
+                    </button>
+                </p>
+            </div>
+        </div>
+    );
 };
 
-                        export default LoginScreen;
+export default LoginScreen;

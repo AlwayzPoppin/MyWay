@@ -15,9 +15,9 @@ export interface SubscriptionTier {
 export const SUBSCRIPTION_TIERS: Record<string, SubscriptionTier> = {
     gold: {
         id: 'gold',
-        name: 'Gold Membership',
-        priceId: 'price_gold_monthly', // Placeholder - update with real Stripe Price ID
-        price: 9.99,
+        name: 'Gold Monthly',
+        priceId: 'price_gold_monthly',
+        price: 4.99,
         currency: 'USD',
         interval: 'month',
         description: 'Perfect for small families staying connected.',
@@ -31,11 +31,27 @@ export const SUBSCRIPTION_TIERS: Record<string, SubscriptionTier> = {
             'Priority safety shield'
         ]
     },
+    gold_annual: {
+        id: 'gold_annual',
+        name: 'Gold Annual',
+        priceId: 'price_gold_annual',
+        price: 39.99,
+        currency: 'USD',
+        interval: 'year',
+        description: 'Save 33% with our annual family plan.',
+        badge: '🏆 GOLD ANNUAL',
+        color: 'from-amber-400 to-orange-500',
+        features: [
+            'Basic Gold features',
+            'Priority support',
+            'Early access to new features'
+        ]
+    },
     platinum: {
         id: 'platinum',
-        name: 'Platinum Plus',
-        priceId: 'price_platinum_monthly', // Placeholder - update with real Stripe Price ID
-        price: 19.99,
+        name: 'Platinum Plus Monthly',
+        priceId: 'price_platinum_monthly',
+        price: 9.99,
         currency: 'USD',
         interval: 'month',
         description: 'Ultimate safety and peace of mind for large families.',
@@ -48,6 +64,22 @@ export const SUBSCRIPTION_TIERS: Record<string, SubscriptionTier> = {
             'Driving safety reports',
             'Emergency roadside assistance',
             'Exclusive 3D map skins'
+        ]
+    },
+    platinum_annual: {
+        id: 'platinum_annual',
+        name: 'Platinum Plus Annual',
+        priceId: 'price_platinum_annual',
+        price: 79.99,
+        currency: 'USD',
+        interval: 'year',
+        description: 'Best value for maximum protection. Save 33%.',
+        badge: '💎 PLATINUM ANNUAL',
+        color: 'from-indigo-400 to-purple-600',
+        features: [
+            'All Platinum features',
+            'Family safety consult',
+            'VIP roadside priority'
         ]
     }
 };

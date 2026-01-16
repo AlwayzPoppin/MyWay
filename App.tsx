@@ -35,18 +35,23 @@ import {
   subscribeToFamilyLocations,
   getCircleMembers,
   getFamilyCircle,
-  FamilyCircle
+  FamilyCircle,
+  subscribeToGeofences,
+  addGeofence
 } from './services/authService';
 import { createCheckoutSession } from './services/stripeService';
+import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceService';
+import { sendArrivalAlert, sendDepartureAlert } from './services/emailService';
+import { subscribeToRewards, seedRewards } from './services/rewardsService';
+import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores } from './services/placesService';
+import { SUBSCRIPTION_TIERS } from './config/subscriptions';
 
 const SPONSORED_PLACES: Place[] = [
+  // This array is now supplemented by real Google Places data
   { id: 's1', name: 'Shell Premium', location: { lat: 37.7880, lng: -122.4100 }, radius: 0.005, type: 'sponsored', icon: '⛽', brandColor: '#fbbf24', deal: '10¢ off/gal for Circle members' }
 ];
 
-const INITIAL_REWARDS: Reward[] = [
-  { id: 'r1', brand: 'Starbucks', title: 'Buy One Get One Free', code: 'OMNIDRINK', expiry: '2025-12-31', icon: '☕' },
-  { id: 'r2', brand: 'Shell', title: '10¢ off per Gallon', code: 'OMNIGAS', expiry: '2025-06-30', icon: '⛽' }
-];
+// Rewards are now loaded from Firebase - see useEffect below
 
 const App: React.FC = () => {
   const {
@@ -64,11 +69,11 @@ const App: React.FC = () => {
     joinCircle
   } = useAuth();
 
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [isUpsellOpen, setIsUpsellOpen] = useState(false);
   const [isRewardsOpen, setIsRewardsOpen] = useState(false);
-  const [rewards] = useState<Reward[]>(INITIAL_REWARDS);
+  const [rewards, setRewards] = useState<Reward[]>([]);
   const [privacyZones] = useState<PrivacyZone[]>([]);
   const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>(SPONSORED_PLACES);
   const [incidents, setIncidents] = useState<IncidentReport[]>([]);
@@ -89,7 +94,7 @@ const App: React.FC = () => {
   const [mapBounds, setMapBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
   const [is3DMode, setIs3DMode] = useState(false);
   const [userSettings, setUserSettings] = useState({
-    theme: 'light' as 'light' | 'dark' | 'auto',
+    theme: 'dark' as 'light' | 'dark' | 'auto',
     notifications: true,
     locationSharing: true,
     batteryAlerts: true,
@@ -98,6 +103,32 @@ const App: React.FC = () => {
     mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
     units: 'imperial' as 'imperial' | 'metric'
   });
+
+  const [geofences, setGeofences] = useState<Geofence[]>([]);
+  const geofenceStatesRef = useRef<Record<string, Record<string, GeofenceStatus>>>({}); // { memberId: { geofenceId: 'INSIDE' | 'OUTSIDE' } }
+  const profilesRef = useRef<Record<string, any>>({}); // Store profile info like email for fast lookup
+
+  const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
+
+  // Fetch circle data if in one
+  useEffect(() => {
+    if (profile?.familyCircleId) {
+      getFamilyCircle(profile.familyCircleId).then(setCurrentCircle);
+    }
+  }, [profile?.familyCircleId]);
+
+  // Load rewards from Firebase
+  useEffect(() => {
+    const unsubscribe = subscribeToRewards((firebaseRewards) => {
+      if (firebaseRewards.length > 0) {
+        setRewards(firebaseRewards);
+      } else {
+        // Seed initial rewards if none exist
+        seedRewards().then(() => console.log('Initial rewards seeded!'));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Initialize members from auth profile
   useEffect(() => {
@@ -144,6 +175,11 @@ const App: React.FC = () => {
             }));
 
           setMembers(prev => [...prev.filter(m => m.id === user.uid), ...otherMembers]);
+
+          // Populate profilesRef with member emails
+          profiles.forEach(p => {
+            profilesRef.current[p.uid] = p;
+          });
         });
 
         // Subscribe to real-time location updates
@@ -165,10 +201,38 @@ const App: React.FC = () => {
           }));
         });
 
-        return () => unsubscribe();
+      }
+
+      // Also store current user profile in ref
+      profilesRef.current[user.uid] = profile;
+
+      // Sync theme from profile
+      if (profile.settings?.theme && profile.settings.theme !== 'auto') {
+        setTheme(profile.settings.theme as 'light' | 'dark');
+        setUserSettings(prev => ({ ...prev, theme: profile.settings.theme }));
       }
     }
   }, [user, profile]);
+
+  // Subscribe to Geofences
+  useEffect(() => {
+    if (profile?.familyCircleId) {
+      const unsubscribe = subscribeToGeofences(profile.familyCircleId, (circlesGeofences) => {
+        setGeofences(circlesGeofences);
+
+        // If no geofences exist, let's create a default "Home" one for demo purposes if the user is the owner
+        if (circlesGeofences.length === 0 && profile.uid === user?.uid) {
+          addGeofence(profile.familyCircleId, {
+            name: 'Home',
+            lat: 37.7749,
+            lng: -122.4194,
+            radius: 100
+          });
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [profile?.familyCircleId, user?.uid]);
 
   // Handle window resize
   useEffect(() => {
@@ -212,6 +276,48 @@ const App: React.FC = () => {
             accuracy: location.accuracy || 0,
             timestamp: Date.now(),
             battery: 100 // We should get real battery level if possible in PWA
+          });
+        }
+
+        // --- Geofence Logic ---
+        if (members.length > 0 && geofences.length > 0) {
+          const circleMembers = members;
+          const familyCircleId = profile?.familyCircleId;
+
+          circleMembers.forEach(member => {
+            const memberGeofenceStates = geofenceStatesRef.current[member.id] || {};
+
+            geofences.forEach(geofence => {
+              const previousStatus = memberGeofenceStates[geofence.id] || 'OUTSIDE';
+              const transition = detectTransition(member.location, geofence, previousStatus);
+
+              if (transition) {
+                console.log(`Geofence Transition: ${member.name} ${transition.to} ${geofence.name}`);
+
+                // Update state ref
+                if (!geofenceStatesRef.current[member.id]) {
+                  geofenceStatesRef.current[member.id] = {};
+                }
+                geofenceStatesRef.current[member.id][geofence.id] = transition.to;
+
+                // Trigger alerts
+                const recipients = members.map(m => m.id === member.id ? '' : (profilesRef.current[m.id]?.email || '')).filter(e => e !== '');
+
+                if (transition.to === 'INSIDE') {
+                  setNotification(`🏠 ${member.name} reached ${geofence.name}!`);
+                  if (recipients.length > 0) {
+                    sendArrivalAlert(recipients, member.name, geofence.name).catch(console.error);
+                  }
+                } else if (transition.to === 'OUTSIDE') {
+                  setNotification(`🚗 ${member.name} left ${geofence.name}.`);
+                  if (recipients.length > 0) {
+                    sendDepartureAlert(recipients, member.name, geofence.name).catch(console.error);
+                  }
+                }
+
+                setTimeout(() => setNotification(null), 5000);
+              }
+            });
           });
         }
       },
@@ -282,22 +388,53 @@ const App: React.FC = () => {
     setDiscoveredPlaces([...SPONSORED_PLACES, ...results]);
   };
 
+  // Quick search handlers for category buttons (GAS, COFFEE, FOOD, GROCERY)
+  const handleQuickSearch = async (type: 'gas' | 'coffee' | 'food' | 'grocery') => {
+    if (members.length === 0) return;
+    const location = members[0].location;
+
+    let results: Place[] = [];
+    try {
+      switch (type) {
+        case 'gas':
+          results = await searchGasStations(location);
+          break;
+        case 'coffee':
+          results = await searchCoffeeShops(location);
+          break;
+        case 'food':
+          results = await searchRestaurants(location);
+          break;
+        case 'grocery':
+          results = await searchGroceryStores(location);
+          break;
+      }
+    } catch (error) {
+      console.warn('Places API error, falling back to Gemini:', error);
+    }
+
+    // If no results from Places API, fallback to Gemini search
+    if (results.length === 0) {
+      const query = type === 'gas' ? 'gas station' : type === 'coffee' ? 'coffee shop' : type === 'food' ? 'restaurant' : 'grocery store';
+      results = await searchPlacesOnMap(query, location);
+    }
+
+    setDiscoveredPlaces([...SPONSORED_PLACES, ...results]);
+  };
+
   const handleStartNavigation = async (dest: string) => {
     if (members.length === 0) return;
+    console.log('Starting navigation to:', dest);
+    setNotification(`🧭 Navigating to ${dest}...`);
+    setTimeout(() => setNotification(null), 3000);
+
     const route = await getRouteToDestination(members[0].location, dest, members);
+    console.log('Route received:', route);
     setActiveRoute(route);
     setIsNavigating(true);
     setIsDriveMode(true);
   };
 
-  const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
-
-  // Fetch circle data if in one
-  useEffect(() => {
-    if (profile?.familyCircleId) {
-      getFamilyCircle(profile.familyCircleId).then(setCurrentCircle);
-    }
-  }, [profile?.familyCircleId]);
 
   return (
     <div className={`flex flex-col h-full w-full overflow-hidden transition-all duration-700 ${theme === 'dark' ? 'bg-black' : 'bg-[#f1f5f9]'}`}>
@@ -542,15 +679,17 @@ const App: React.FC = () => {
       </div>
 
       {/* Mobile Bottom Sheet - replaces sidebar on mobile */}
-      {isMobile && !isDriveMode && (
-        <BottomSheet
-          members={members}
-          selectedId={selectedMemberId}
-          onSelect={setSelectedMemberId}
-          theme={theme}
-        />
-      )}
-    </div>
+      {
+        isMobile && !isDriveMode && (
+          <BottomSheet
+            members={members}
+            selectedId={selectedMemberId}
+            onSelect={setSelectedMemberId}
+            theme={theme}
+          />
+        )
+      }
+    </div >
   );
 };
 

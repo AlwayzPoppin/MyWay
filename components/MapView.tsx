@@ -190,6 +190,8 @@ const createPlaceMarker = (place: Place) => {
         width: 48px;
         height: 48px;
         filter: drop-shadow(0 4px 12px rgba(0,0,0,0.3));
+        cursor: pointer;
+        pointer-events: auto;
       ">
         ${isSponsored ? `
           <div style="
