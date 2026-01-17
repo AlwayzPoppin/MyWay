@@ -14,7 +14,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="description" content="MyWay - Real-time family GPS tracking with premium features" />
   <title>MyWay</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Standard Tailwind CDN for Rapid Prototyping - Switch to PostCSS for Prod -->
+  <!-- Tailwind CDN removed in favor of PostCSS build -->
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800;900&display=swap"
     rel="stylesheet">
@@ -61,6 +62,32 @@
     .no-scrollbar {
       -ms-overflow-style: none;
       scrollbar-width: none;
+    }
+
+    /* Visible scrollbar for settings panel */
+    .scrollbar-visible::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .scrollbar-visible::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .scrollbar-visible::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+
+    .scrollbar-visible::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .scrollbar-visible-light::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .scrollbar-visible-light::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 0, 0, 0.35);
     }
 
     .safe-bottom {
@@ -341,7 +368,12 @@
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js')
           .then(reg => console.log('MyWay: Service Worker registered', reg.scope))
-          .catch(err => console.warn('MyWay: Service Worker registration failed', err));
+          .catch(err => {
+            console.warn('MyWay: Service Worker registration failed', err);
+            if (window.location.protocol === 'https:' && window.location.hostname === 'localhost') {
+              console.info('💡 TIP: SSL errors on localhost are common. Try proceeding in "Insecure" mode or check your certificate.');
+            }
+          });
       });
     }
   </script>

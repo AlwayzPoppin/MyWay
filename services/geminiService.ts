@@ -2,7 +2,26 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { FamilyMember, NavigationRoute, DailyInsight, Place } from "../types";
 
-const getAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAi = () => {
+  const key = (import.meta as any).env.VITE_GEMINI_API_KEY;
+  if (!key) {
+    console.warn("VITE_GEMINI_API_KEY is not defined");
+  }
+  return new GoogleGenAI({ apiKey: key || '' });
+};
+
+const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
+  try {
+    return await fn();
+  } catch (e: any) {
+    if (e.message?.includes('429') && retries > 0) {
+      console.warn(`AI Rate Limited. Retrying in ${delay}ms...`);
+      await new Promise(res => setTimeout(res, delay));
+      return withRetry(fn, retries - 1, delay * 2);
+    }
+    throw e;
+  }
+};
 
 export function encodeAudio(bytes: Uint8Array) {
   let binary = '';
@@ -39,55 +58,60 @@ export const generateBriefingAudio = async (insights: DailyInsight[]): Promise<s
   const ai = getAi();
   const text = insights.map(i => `${i.title}. ${i.description}`).join(' ');
   const prompt = `Read this family safety briefing cheerfully: ${text}`;
-  
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text: prompt }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-      },
-    },
-  });
 
-  return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
+  return withRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash-exp",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
+        },
+      },
+    });
+
+    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
+  });
 };
 
-export const searchPlacesOnMap = async (query: string, currentLoc: {lat: number, lng: number}): Promise<Place[]> => {
+export const searchPlacesOnMap = async (query: string, currentLoc: { lat: number, lng: number }): Promise<Place[]> => {
   const ai = getAi();
   const prompt = `Find 5 ${query} near [${currentLoc.lat}, ${currentLoc.lng}]. Return a JSON list of places. Each place must have name, location {lat, lng}, type (gas, food, coffee, other), and icon (emoji). Include brand colors if known.`;
-  
+
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              location: { 
-                type: Type.OBJECT, 
-                properties: { 
-                  lat: { type: Type.NUMBER }, 
-                  lng: { type: Type.NUMBER } 
-                }, 
-                required: ["lat", "lng"] 
+    const results = await withRetry(async () => {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash-exp',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                location: {
+                  type: Type.OBJECT,
+                  properties: {
+                    lat: { type: Type.NUMBER },
+                    lng: { type: Type.NUMBER }
+                  },
+                  required: ["lat", "lng"]
+                },
+                type: { type: Type.STRING, enum: ['gas', 'food', 'coffee', 'other'] },
+                icon: { type: Type.STRING },
+                brandColor: { type: Type.STRING }
               },
-              type: { type: Type.STRING, enum: ['gas', 'food', 'coffee', 'other'] },
-              icon: { type: Type.STRING },
-              brandColor: { type: Type.STRING }
-            },
-            required: ["name", "location", "type", "icon"]
+              required: ["name", "location", "type", "icon"]
+            }
           }
         }
-      }
+      });
+      return JSON.parse(response.text || "[]");
     });
-    const results = JSON.parse(response.text || "[]");
+
     return results.map((r: any, idx: number) => ({
       ...r,
       id: `discovered-${idx}-${Date.now()}`,
@@ -99,83 +123,223 @@ export const searchPlacesOnMap = async (query: string, currentLoc: {lat: number,
   }
 };
 
-export const getRouteToDestination = async (start: {lat: number, lng: number}, endName: string, members: FamilyMember[]): Promise<NavigationRoute> => {
-  const ai = getAi();
-  const prompt = `Driving from [${start.lat}, ${start.lng}] to ${endName}. Family: ${members.map(m=>m.name).join(',')}. Return JSON.`;
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: prompt,
-    config: { 
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          destinationName: { type: Type.STRING },
-          destinationLoc: { type: Type.OBJECT, properties: { lat: { type: Type.NUMBER }, lng: { type: Type.NUMBER } }, required: ["lat", "lng"] },
-          steps: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { instruction: { type: Type.STRING }, distance: { type: Type.STRING } } } },
-          totalDistance: { type: Type.STRING },
-          totalTime: { type: Type.STRING },
-          safetyAdvisory: { type: Type.STRING }
-        },
-        required: ["destinationName", "destinationLoc", "steps", "totalDistance", "totalTime"]
-      }
+export const getRouteToDestination = async (start: { lat: number, lng: number }, endName: string, members: FamilyMember[]): Promise<NavigationRoute> => {
+  try {
+    const ai = getAi();
+    const prompt = `Driving from [${start.lat}, ${start.lng}] to ${endName}. Family: ${members.map(m => m.name).join(',')}. Return JSON.`;
+    const data = await withRetry(async () => {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash-exp',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              destinationName: { type: Type.STRING },
+              destinationLoc: { type: Type.OBJECT, properties: { lat: { type: Type.NUMBER }, lng: { type: Type.NUMBER } }, required: ["lat", "lng"] },
+              steps: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    instruction: { type: Type.STRING },
+                    distance: { type: Type.STRING },
+                    endLocation: {
+                      type: Type.OBJECT,
+                      properties: { lat: { type: Type.NUMBER }, lng: { type: Type.NUMBER } },
+                      required: ["lat", "lng"]
+                    }
+                  },
+                  required: ["instruction", "distance"] // endLocation optional for resilience
+                }
+              },
+              totalDistance: { type: Type.STRING },
+              totalTime: { type: Type.STRING },
+              safetyAdvisory: { type: Type.STRING }
+            },
+            required: ["destinationName", "destinationLoc", "steps", "totalDistance", "totalTime"]
+          }
+        }
+      });
+      return JSON.parse(response.text || "{}");
+    });
+    if (!data.steps || !Array.isArray(data.steps) || data.steps.length === 0) {
+      throw new Error("Invalid route data received from AI");
     }
-  });
-  return JSON.parse(response.text || "{}");
+    return data;
+  } catch (e) {
+    console.error("Routing Error:", e);
+    return null as any;
+  }
 };
 
 export const getFamilyInsights = async (members: FamilyMember[]): Promise<DailyInsight[]> => {
   const ai = getAi();
   const context = members.map(m => `${m.name}: ${m.status}, ${m.battery}%`).join('\n');
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Insights for: ${context}. Return JSON array.`,
-    config: { 
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            description: { type: Type.STRING },
-            category: { type: Type.STRING, enum: ['safety', 'efficiency', 'reminder'] }
-          },
-          required: ["title", "description", "category"]
+  return withRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: `Insights for: ${context}. Return JSON array.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              description: { type: Type.STRING },
+              category: { type: Type.STRING, enum: ['safety', 'efficiency', 'reminder'] }
+            },
+            required: ["title", "description", "category"]
+          }
         }
       }
-    }
+    });
+    return JSON.parse(response.text || "[]");
   });
-  return JSON.parse(response.text || "[]");
 };
 
 export const askOmni = async (query: string, members: FamilyMember[], history: any[]) => {
   const ai = getAi();
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [{ role: 'user', parts: [{ text: query }] }],
-    config: { tools: [{ googleMaps: {} }] },
+  return withRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash-exp",
+      contents: [{ role: 'user', parts: [{ text: query }] }],
+      config: { tools: [{ googleMaps: {} }] },
+    });
+    const links = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((c: any) => c.maps ? { title: c.maps.title, uri: c.maps.uri } : null).filter(Boolean);
+    return { text: response.text || "", links };
   });
-  const links = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((c: any) => c.maps ? { title: c.maps.title, uri: c.maps.uri } : null).filter(Boolean);
-  return { text: response.text || "", links };
 };
 
 export const predictETA = async (member: FamilyMember, dest: string) => {
   const ai = getAi();
-  const resp = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Predict ETA for ${member.name} to ${dest}.`,
+  return withRetry(async () => {
+    const resp = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: `Predict ETA for ${member.name} to ${dest}.`,
+    });
+    return resp.text || "";
   });
-  return resp.text || "";
 };
 
-export const connectCoPilot = (callbacks: any) => {
+export interface SafetyAdvisory {
+  title: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+  type: 'weather' | 'traffic' | 'crime' | 'other';
+}
+
+export const getSafetyAdvisory = async (loc: { lat: number, lng: number }, context?: string): Promise<SafetyAdvisory | null> => {
   const ai = getAi();
+  const prompt = `Analyze safety risks at [${loc.lat}, ${loc.lng}]. Context: ${context || 'Driving'}. 
+  Include weather (mock potential local weather if not provided) and general traffic risks.
+  Return JSON: { title, description, severity, type }. High severity only for immediate danger.`;
+
+  try {
+    return withRetry(async () => {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash-exp',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              description: { type: Type.STRING },
+              severity: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
+              type: { type: Type.STRING, enum: ['weather', 'traffic', 'crime', 'other'] }
+            },
+            required: ["title", "description", "severity", "type"]
+          }
+        }
+      });
+
+      return JSON.parse(response.text || "null");
+    });
+  } catch (e) {
+    console.error("Safety Advisory Error", e);
+    return null;
+  }
+};
+
+export interface MessageIntent {
+  intent: 'ask_location' | 'ask_eta' | 'check_in' | 'none';
+  suggestedAction?: string;
+}
+
+export const parseMessageIntent = async (text: string): Promise<MessageIntent> => {
+  const ai = getAi();
+  const prompt = `Analyze this family message: "${text}". 
+  Is the sender asking for location, ETA, or a check-in? 
+  Return JSON: { intent: 'ask_location' | 'ask_eta' | 'check_in' | 'none', suggestedAction: string (short label like "Share ETA") }.`;
+
+  try {
+    return withRetry(async () => {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash-exp',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              intent: { type: Type.STRING, enum: ['ask_location', 'ask_eta', 'check_in', 'none'] },
+              suggestedAction: { type: Type.STRING }
+            },
+            required: ["intent"]
+          }
+        }
+      });
+
+      return JSON.parse(response.text || '{"intent":"none"}');
+    });
+  } catch (e) {
+    console.error("Intent Detection Error", e);
+    return { intent: 'none' };
+  }
+};
+
+export const connectCoPilot = (callbacks: any, settings: { personality: 'standard' | 'grok' | 'newyork', gender: 'male' | 'female' } = { personality: 'standard', gender: 'female' }) => {
+  const ai = getAi();
+
+  // Voice Mapping (Gemini 2.0 Models)
+  const voiceMap = {
+    standard: { male: 'Fenrir', female: 'Kore' },
+    grok: { male: 'Zephyr', female: 'Aoede' },
+    newyork: { male: 'Orion', female: 'Puck' }
+  };
+  const selectedVoice = voiceMap[settings.personality][settings.gender];
+
+  // Personality Mapping
+  const instructions = {
+    standard: `You are MyWay Co-Pilot, a helpful and safety-conscious driving assistant.
+               - Keep alerts brief and clear.
+               - Prioritize safety above all else.
+               - Maintain a professional, calm demeanor.`,
+    grok: `You are MyWay Grok, a witty, edgy, and brutally honest AI Co-Pilot. 
+           - Speak concisely and punchily. No long monologues.
+           - Use sarcasm when appropriate, especially for bad driving.
+           - If the user is safe, complement them with dry wit.
+           - Keep it cool, calm, and slightly detached.`,
+    newyork: `You are MyWay NY, a fast-talking, no-nonsense New York driving assistant.
+              - Speak fast and direct. Time is money.
+              - Don't sugarcoat safety alerts. "Yo, watch the road!"
+              - If traffic is bad, commiserate with typical NY frustration.
+              - Be helpful but brisk. You got places to be.`
+  };
+
   return ai.live.connect({
-    model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+    model: 'gemini-2.0-flash-exp',
     config: {
+      systemInstruction: {
+        parts: [{ text: instructions[settings.personality] }]
+      },
       responseModalities: [Modality.AUDIO],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } } },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
     },

@@ -6,6 +6,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 import { getFirestore } from 'firebase/firestore';
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 
 const firebaseConfig = {
     apiKey: (import.meta as any).env.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
@@ -29,5 +30,13 @@ export const database = getDatabase(app);
 
 // Firestore (Stripe & RevenueCat)
 export const db = getFirestore(app);
+
+// Cloud Functions
+export const functions = getFunctions(app);
+
+// Connect to emulator in development
+if ((import.meta as any).env.DEV && (import.meta as any).env.VITE_USE_FUNCTIONS_EMULATOR === 'true') {
+    connectFunctionsEmulator(functions, 'localhost', 5001);
+}
 
 export default app;

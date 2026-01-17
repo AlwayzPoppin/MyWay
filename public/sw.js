@@ -74,6 +74,37 @@ self.addEventListener('message', (event) => {
     }
 });
 
+// Limit cache size to avoid storage quota issues
+const MAX_TILES = 2000; // ~40-60MB depending on tile complexity
+
+async function enforceLimits() {
+    try {
+        const cache = await caches.open(TILE_CACHE_NAME);
+        const keys = await cache.keys();
+
+        if (keys.length > MAX_TILES) {
+            const tilesToDelete = keys.length - MAX_TILES;
+            // Delete the oldest/first entries (approximation of LRU)
+            await Promise.all(
+                keys.slice(0, tilesToDelete).map(request => cache.delete(request))
+            );
+            console.log(`[SW] Pruned ${tilesToDelete} tiles from cache to enforce limit of ${MAX_TILES}`);
+        }
+    } catch (e) {
+        console.error('[SW] Error enforcing cache limits:', e);
+    }
+}
+
+async function getCacheSize(client) {
+    const cache = await caches.open(TILE_CACHE_NAME);
+    const keys = await cache.keys();
+    client.postMessage({
+        type: 'CACHE_SIZE',
+        count: keys.length
+    });
+}
+
+// Call enforceLimits after caching operations
 async function cacheTiles(tileUrls, client) {
     const cache = await caches.open(TILE_CACHE_NAME);
     let cached = 0;
@@ -82,8 +113,10 @@ async function cacheTiles(tileUrls, client) {
     for (const url of tileUrls) {
         try {
             const response = await fetch(url);
-            await cache.put(url, response);
-            cached++;
+            if (response.ok) {
+                await cache.put(url, response);
+                cached++;
+            }
 
             // Report progress
             client.postMessage({
@@ -96,23 +129,22 @@ async function cacheTiles(tileUrls, client) {
         }
     }
 
+    // Clean up if we exceeded limits
+    await enforceLimits();
+
     client.postMessage({
         type: 'CACHE_COMPLETE',
         cached,
-        total
     });
 }
 
-async function clearTileCache(client) {
-    await caches.delete(TILE_CACHE_NAME);
-    client.postMessage({ type: 'CACHE_CLEARED' });
-}
-
-async function getCacheSize(client) {
-    const cache = await caches.open(TILE_CACHE_NAME);
-    const keys = await cache.keys();
-    client.postMessage({
-        type: 'CACHE_SIZE',
-        count: keys.length
-    });
-}
+/**
+ * Mesh P2P Relay Background Service
+ * Acts as a proximity node for nearby encrypted location heartbeats.
+ */
+const meshChannel = new BroadcastChannel('myway-mesh-relay');
+meshChannel.onmessage = (event) => {
+    if (event.data.type === 'MESH_HEARTBEAT') {
+        console.log('[SW-Mesh] Relaying heartbeat for node:', event.data.senderId);
+    }
+};

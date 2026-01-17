@@ -1,8 +1,10 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './index.css'; // Global styles (Tailwind)
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
+import { UIProvider } from './contexts/UIContext';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -13,7 +15,9 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <AuthProvider>
-      <App />
+      <UIProvider>
+        <App />
+      </UIProvider>
     </AuthProvider>
   </React.StrictMode>
 );

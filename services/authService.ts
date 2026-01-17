@@ -30,7 +30,10 @@ export interface UserProfile {
         theme: 'light' | 'dark' | 'auto';
         notifications: boolean;
         locationSharing: boolean;
+        aiPersonality: 'standard' | 'grok' | 'newyork';
+        aiGender: 'male' | 'female';
     };
+    ecdhPublicKey?: string;
 }
 
 export interface FamilyCircle {
@@ -130,7 +133,9 @@ export const createUserProfileIfNotExists = async (user: User): Promise<void> =>
             settings: {
                 theme: 'dark',
                 notifications: true,
-                locationSharing: true
+                locationSharing: true,
+                aiPersonality: 'standard',
+                aiGender: 'female'
             }
         };
         await set(userRef, profile);
@@ -214,6 +219,21 @@ export const getFamilyCircle = async (circleId: string): Promise<FamilyCircle | 
     return snapshot.exists() ? snapshot.val() : null;
 };
 
+// --- KEY DISTRIBUTION ENGINE ---
+
+export const getWrappedKeyForUser = (circleId: string, uid: string, callback: (wrappedKey: string) => void): (() => void) => {
+    const keyRef = ref(database, `keys/${circleId}/${uid}`);
+    onValue(keyRef, (snapshot) => {
+        if (snapshot.exists()) callback(snapshot.val());
+    });
+    return () => off(keyRef);
+};
+
+export const deliverWrappedKey = async (circleId: string, targetUid: string, wrappedKey: string): Promise<void> => {
+    await set(ref(database, `keys/${circleId}/${targetUid}`), wrappedKey);
+};
+
+
 // Real-time Location Functions
 export interface MemberLocation {
     lat: number;
@@ -223,6 +243,8 @@ export interface MemberLocation {
     accuracy: number;
     timestamp: number;
     battery: number;
+    signalQuality?: string;
+    encryptedData?: string;
 }
 
 export const updateMemberLocation = async (

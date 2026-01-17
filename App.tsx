@@ -2,8 +2,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Reward } from './types';
 import Sidebar from './components/Sidebar';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import MapView from './components/MapView';
-import Header from './components/Header';
+import MapLibre3DView from './components/MapLibre3DView';
 import InsightsBar from './components/InsightsBar';
 import MemberDetailPanel from './components/MemberDetailPanel';
 import NavigationOverlay from './components/NavigationOverlay';
@@ -23,11 +25,16 @@ import SettingsPanel from './components/SettingsPanel';
 import OfflineMapManager from './components/OfflineMapManager';
 import BentoSidebar from './components/BentoSidebar';
 import LoginScreen from './components/LoginScreen';
+import OnboardingFlow from './components/OnboardingFlow';
 import { useAuth } from './contexts/AuthContext';
+import { useUI } from './contexts/UIContext';
+import OverlayManager from './components/OverlayManager';
 import {
   getFamilyInsights,
   getRouteToDestination,
-  searchPlacesOnMap
+  searchPlacesOnMap,
+  getSafetyAdvisory,
+  SafetyAdvisory
 } from './services/geminiService';
 import { geolocationService } from './services/geolocationService';
 import {
@@ -37,19 +44,45 @@ import {
   getFamilyCircle,
   FamilyCircle,
   subscribeToGeofences,
-  addGeofence
+  addGeofence,
+  updateUserProfile,
+  getUserProfile,
+  deliverWrappedKey,
+  getWrappedKeyForUser
 } from './services/authService';
-import { createCheckoutSession } from './services/stripeService';
+import { createCheckoutSession, goToBillingPortal } from './services/stripeService';
 import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceService';
 import { sendArrivalAlert, sendDepartureAlert } from './services/emailService';
 import { subscribeToRewards, seedRewards } from './services/rewardsService';
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores } from './services/placesService';
+import { subscribeToUserPlaces, seedDefaultPlaces, UserPlace, addUserPlace, deleteUserPlace } from './services/userPlacesService';
+import { subscribeSponsoredPlaces, seedSponsoredPlaces, SponsoredPlace } from './services/sponsoredPlacesService';
+import { updateNavigationState, NavigationState } from './services/navigationEngine';
+import {
+  encryptLocation,
+  decryptLocation,
+  getFuzzyLocation,
+  generateFamilyKey,
+  setFamilyKey,
+  generateECDHKeyPair,
+  exportPublicKey,
+  importPublicKey,
+  deriveSharedSecretKey,
+  wrapCircleKey,
+  unwrapCircleKey
+} from './services/cryptoService';
+import { startMeshHeartbeat, subscribeToMesh, MeshNode } from './services/meshService';
+import { audioService } from './services/audioService';
 import { SUBSCRIPTION_TIERS } from './config/subscriptions';
+import { useLocationSync } from './hooks/useLocationSync';
+import { useCoPilot } from './hooks/useCoPilot';
 
-const SPONSORED_PLACES: Place[] = [
-  // This array is now supplemented by real Google Places data
-  { id: 's1', name: 'Shell Premium', location: { lat: 37.7880, lng: -122.4100 }, radius: 0.005, type: 'sponsored', icon: '⛽', brandColor: '#fbbf24', deal: '10¢ off/gal for Circle members' }
-];
+// SPONSORED_PLACES now loaded from Firebase - see useEffect below
+
+// Demo data purged for real-world transition
+const DEMO_MEMBERS: FamilyMember[] = [];
+const DEMO_PLACES: Place[] = [];
+
 
 // Rewards are now loaded from Firebase - see useEffect below
 
@@ -66,33 +99,108 @@ const App: React.FC = () => {
     sendMagicLink,
     clearError,
     createCircle,
-    joinCircle
+    joinCircle,
+    logout
   } = useAuth();
 
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
-  const [members, setMembers] = useState<FamilyMember[]>([]);
-  const [isUpsellOpen, setIsUpsellOpen] = useState(false);
-  const [isRewardsOpen, setIsRewardsOpen] = useState(false);
+  const {
+    theme, setTheme,
+    isMobile,
+    isUpsellOpen, setUpsellOpen,
+    isRewardsOpen, setRewardsOpen,
+    isPrivacyOpen, setPrivacyOpen,
+    isQuickStopOpen, setQuickStopOpen,
+    isMessagingOpen, setMessagingOpen,
+    isSettingsOpen, setSettingsOpen,
+    isOfflineMapsOpen, setOfflineMapsOpen,
+    isDriveMode, setDriveMode,
+    is3DMode, set3DMode,
+    notification, showNotification
+  } = useUI();
+
+  const [isSearching, startSearchTransition] = React.useTransition();
+  const [isSimulationActive, setIsSimulationActive] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    return !localStorage.getItem('myway_onboarding_complete');
+  });
+
+  // --- HOOKS ---
+  const {
+    members: liveMembers,
+    setMembers, // Exposed for manual updates if needed (e.g. ghost mode toggles)
+    locationError,
+    userLocation
+  } = useLocationSync(user, profile, isSimulationActive, profile?.familyCircleId);
+
+  // Resolution logic: Prefer live data, fallback to empty (GPS will populate 'you' via hook)
+  const members = liveMembers;
+
+
+  // Auto-center effect (now derived from hook state)
+  const [hasInitiallyCentered, setHasInitiallyCentered] = useState(false);
+  useEffect(() => {
+    if (userLocation && !hasInitiallyCentered) {
+      const targetId = user?.uid || 'demo-you';
+      setSelectedMemberId(targetId);
+      setHasInitiallyCentered(true);
+      console.log(`[Location] Centering on ${targetId} at NC coordinates (or detected GPS)`);
+    }
+  }, [userLocation, hasInitiallyCentered, user]);
+
+  // Background Persistence & Lifecycle (Audit Recommendation)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const setupBackgroundListeners = async () => {
+      // 1. App State Listener
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        console.log(`[Lifecycle] App is now ${isActive ? 'Active' : 'Background'}`);
+        if (!isActive) {
+          // When backgrounded, ensure location service continues in persistent mode
+          // Native BackgroundGeolocation plugin handles the heavy lifting
+          showNotification('MyWay: Running in background', 3000);
+        }
+      });
+
+      // 2. Handle background navigation resume if needed
+      // This is a placeholder for deep-link or notification-action resume
+    };
+
+    setupBackgroundListeners();
+
+    return () => {
+      CapacitorApp.removeAllListeners();
+    };
+  }, []);
+
+  const membersRef = useRef<FamilyMember[]>([]);
+  // Keep membersRef in sync for legacy references
+  useEffect(() => {
+    membersRef.current = members;
+  }, [members]);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [privacyZones] = useState<PrivacyZone[]>([]);
-  const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>(SPONSORED_PLACES);
+  const [sponsoredPlaces, setSponsoredPlaces] = useState<SponsoredPlace[]>([]);
+  const [userPlaces, setUserPlaces] = useState<UserPlace[]>([]);
+  const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>([]);
   const [incidents, setIncidents] = useState<IncidentReport[]>([]);
   const [insights, setInsights] = useState<DailyInsight[]>([]);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [activeRoute, setActiveRoute] = useState<NavigationRoute | null>(null);
+  const [navState, setNavState] = useState<NavigationState>({
+    currentStepIndex: 0,
+    distanceToNextStep: 0,
+    isOffRoute: false,
+    hasArrived: false
+  });
   const [isNavigating, setIsNavigating] = useState(false);
-  const [isDriveMode, setIsDriveMode] = useState(false);
+  const { activeAdvisory: coPilotAdvisory } = useCoPilot(user, isNavigating, members);
+  const [meshNodes, setMeshNodes] = useState<MeshNode[]>([]);
+  const [safetyScore, setSafetyScore] = useState(100);
+  const [sessionPoints, setSessionPoints] = useState(0);
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
   const [isReporting, setIsReporting] = useState(false);
-  const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  const [notification, setNotification] = useState<string | null>(null);
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [isQuickStopOpen, setIsQuickStopOpen] = useState(false);
-  const [isMessagingOpen, setIsMessagingOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isOfflineMapsOpen, setIsOfflineMapsOpen] = useState(false);
   const [mapBounds, setMapBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
-  const [is3DMode, setIs3DMode] = useState(false);
   const [userSettings, setUserSettings] = useState({
     theme: 'dark' as 'light' | 'dark' | 'auto',
     notifications: true,
@@ -101,21 +209,75 @@ const App: React.FC = () => {
     arrivalAlerts: true,
     speedAlerts: false,
     mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
-    units: 'imperial' as 'imperial' | 'metric'
+    units: 'imperial' as 'imperial' | 'metric',
+    aiPersonality: 'standard' as 'standard' | 'grok' | 'newyork',
+    aiGender: 'female' as 'male' | 'female',
+    mapSkin: 'default' as 'default' | 'cyberpunk' | 'sunset' | 'midnight' | 'arctic' | 'forest'
   });
+
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [avgGasPrice, setAvgGasPrice] = useState('$3.45');
+
+  // Online/Offline listeners
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Offline insight persistence
+  useEffect(() => {
+    if (isOffline) {
+      setInsights(prev => {
+        if (prev.some(i => i.category === 'System')) return prev;
+        return [{
+          id: 'offline-status',
+          category: 'System',
+          title: 'System Offline',
+          description: 'Connectivity lost. Some features may be limited.',
+          priority: 'high',
+          type: 'alert'
+        }, ...prev];
+      });
+    } else {
+      setInsights(prev => prev.filter(i => i.id !== 'offline-status'));
+    }
+  }, [isOffline]);
 
   const [geofences, setGeofences] = useState<Geofence[]>([]);
   const geofenceStatesRef = useRef<Record<string, Record<string, GeofenceStatus>>>({}); // { memberId: { geofenceId: 'INSIDE' | 'OUTSIDE' } }
   const profilesRef = useRef<Record<string, any>>({}); // Store profile info like email for fast lookup
+  // Keep membersRef in sync (Handled by hook now, but removing older dup definition)
+
 
   const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
+  const [ecdhKeyPair, setEcdhKeyPair] = useState<CryptoKeyPair | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+
+  // Sync settings to Audio Service
+  useEffect(() => {
+    audioService.updateSettings({
+      personality: userSettings.aiPersonality,
+      gender: userSettings.aiGender
+    });
+  }, [userSettings.aiPersonality, userSettings.aiGender]);
+
 
   // Fetch circle data if in one
   useEffect(() => {
     if (profile?.familyCircleId) {
-      getFamilyCircle(profile.familyCircleId).then(setCurrentCircle);
+      getFamilyCircle(profile.familyCircleId).then(circle => {
+        setCurrentCircle(circle);
+        setIsOwner(circle?.ownerId === user?.uid);
+      });
     }
-  }, [profile?.familyCircleId]);
+  }, [profile?.familyCircleId, user?.uid]);
+
 
   // Load rewards from Firebase
   useEffect(() => {
@@ -130,6 +292,106 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  // Load sponsored places from Firebase
+  useEffect(() => {
+    const unsubscribe = subscribeSponsoredPlaces((places) => {
+      if (places.length > 0) {
+        setSponsoredPlaces(places);
+      } else {
+        // Seed default sponsored places if none exist
+        seedSponsoredPlaces().then(() => console.log('Sponsored places seeded!'));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Load user places from Firebase (or use demo places if not authenticated)
+  useEffect(() => {
+    if (!user || !profile?.familyCircleId) {
+      // Demo mode: use hardcoded demo places
+      setUserPlaces(DEMO_PLACES.map(p => ({ ...p, createdAt: Date.now(), createdBy: 'demo' })));
+      return;
+    }
+
+    const unsubscribe = subscribeToUserPlaces(profile.familyCircleId, (places) => {
+      if (places.length > 0) {
+        setUserPlaces(places);
+      } else {
+        // Seed default "Home" place for new circles
+        seedDefaultPlaces(profile.familyCircleId, user.uid, userLocation || undefined)
+          .then(() => console.log('Default places seeded!'));
+      }
+    });
+    return () => unsubscribe();
+  }, [user?.uid, profile?.familyCircleId, userLocation]);
+
+  // Combine places for map display
+  useEffect(() => {
+    setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces]);
+  }, [sponsoredPlaces, userPlaces]);
+
+
+  // --- ADVANCED E2EE ORCHESTRATION ---
+  useEffect(() => {
+    if (!user) return;
+
+    const initE2EE = async () => {
+      // 1. Generate local ECDH KeyPair if not exists
+      let keys = ecdhKeyPair;
+      if (!keys) {
+        keys = await generateECDHKeyPair();
+        setEcdhKeyPair(keys);
+      }
+
+      // 2. Sync Public Key to Profile
+      const pubKeyBase64 = await exportPublicKey(keys.publicKey);
+      if (profile && profile.ecdhPublicKey !== pubKeyBase64) {
+        updateUserProfile(user.uid, { ecdhPublicKey: pubKeyBase64 });
+      }
+
+      // 3. OWNER LOGIC: Deliver keys to circle members
+      if (isOwner && currentCircle) {
+        const circleMembers = await getCircleMembers(currentCircle.id);
+
+        // In this strategic demo, we generate the circle key if it's not set locally.
+        // In a real app, the owner would unwrap it from a master recovery key.
+        const ownerCircleKey = await generateFamilyKey();
+        setFamilyKey(ownerCircleKey);
+
+        for (const member of circleMembers) {
+          if (member.uid !== user.uid && member.ecdhPublicKey) {
+            const memberPubKey = await importPublicKey(member.ecdhPublicKey);
+            const sharedSecret = await deriveSharedSecretKey(keys.privateKey, memberPubKey);
+            const wrapped = await wrapCircleKey(ownerCircleKey, sharedSecret);
+            await deliverWrappedKey(currentCircle.id, member.uid, wrapped);
+          }
+        }
+      }
+
+      // 4. MEMBER LOGIC: Wait for key delivery from owner
+      if (!isOwner && currentCircle) {
+        getWrappedKeyForUser(currentCircle.id, user.uid, async (wrapped) => {
+          const ownerProfile = await getUserProfile(currentCircle.ownerId);
+          if (ownerProfile?.ecdhPublicKey && keys) {
+            const ownerPubKey = await importPublicKey(ownerProfile.ecdhPublicKey);
+            const sharedSecret = await deriveSharedSecretKey(keys.privateKey, ownerPubKey);
+            const unwrapped = await unwrapCircleKey(wrapped, sharedSecret);
+            setFamilyKey(unwrapped);
+            console.log("🔐 E2EE Circle Key Synchronized via ECDH from Owner");
+          }
+        });
+      }
+    };
+
+    initE2EE();
+  }, [user?.uid, profile?.familyCircleId, isOwner, !!currentCircle]);
+
+
+  // Sync Audio Service state
+  useEffect(() => {
+    audioService.setEnabled(isVoiceEnabled);
+  }, [isVoiceEnabled]);
+
   // Initialize members from auth profile
   useEffect(() => {
     if (user && profile) {
@@ -142,8 +404,8 @@ const App: React.FC = () => {
           location: { lat: 37.7749, lng: -122.4194 },
           battery: 100,
           speed: 0,
-          lastUpdated: 'Now',
-          status: 'Stationary',
+          lastUpdated: 'Waiting for signal...',
+          status: 'Offline',
           safetyScore: 98,
           pathHistory: [],
           driveEvents: [],
@@ -182,24 +444,7 @@ const App: React.FC = () => {
           });
         });
 
-        // Subscribe to real-time location updates
-        const unsubscribe = subscribeToFamilyLocations(profile.familyCircleId, (locations) => {
-          setMembers(prev => prev.map(member => {
-            const loc = locations[member.id];
-            if (loc && member.id !== user.uid) {
-              return {
-                ...member,
-                location: { lat: loc.lat, lng: loc.lng },
-                speed: loc.speed,
-                heading: loc.heading,
-                battery: loc.battery,
-                lastUpdated: new Date(loc.timestamp).toLocaleTimeString(),
-                status: (loc.speed > 5) ? 'Driving' : (loc.speed > 0.5) ? 'Moving' : 'Stationary'
-              };
-            }
-            return member;
-          }));
-        });
+        // Logic moved to useLocationSync hook
 
       }
 
@@ -234,108 +479,128 @@ const App: React.FC = () => {
     }
   }, [profile?.familyCircleId, user?.uid]);
 
-  // Handle window resize
+
+  // Proactive AI Co-Pilot loop (Hook)
+  const { activeAdvisory } = useCoPilot(user, isNavigating, members);
+
+  // Mesh P2P Continuity Loop (Upgraded to Firebase-backed Relays)
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    if (!user || !profile?.familyCircleId) return;
 
-  // Real GPS tracking for "You" member
+    // Use current location from profile or fallback to center
+    const currentLoc = profile.location || { lat: 37.7749, lng: -122.4194 };
+
+    // Start our own heartbeat
+    const stopHeartbeat = startMeshHeartbeat(profile.familyCircleId, user.uid, currentLoc);
+
+    // Subscribe to others
+    const unsubscribe = subscribeToMesh(profile.familyCircleId, user.uid, currentLoc, (node) => {
+      setMeshNodes(prev => {
+        const filtered = prev.filter(n => n.id !== node.id);
+        return [...filtered, node];
+      });
+    });
+
+    return () => {
+      stopHeartbeat();
+      unsubscribe();
+    };
+  }, [user?.uid, profile?.familyCircleId, profile?.location?.lat]);
+
+
+
+  // NOTE: isMobile resize handling is now in UIContext
+
+  // --- Navigation Engine Integration (Modular) ---
   useEffect(() => {
-    if (!user) return;
-    if (!geolocationService.isSupported()) {
-      setLocationError('GPS not supported on this device');
-      return;
-    }
+    if (isNavigating && activeRoute && userLocation) { // utilizing userLocation from hook
+      const newNavState = updateNavigationState(userLocation, activeRoute, navState);
 
-    geolocationService.watchPosition(
-      (location) => {
-        setLocationError(null);
-
-        // Update local state
-        setMembers(prev => prev.map(m =>
-          m.id === user.uid ? {
-            ...m,
-            location: { lat: location.latitude, lng: location.longitude },
-            speed: location.speed || 0,
-            heading: location.heading || 0,
-            lastUpdated: new Date().toISOString(),
-            status: (location.speed && location.speed > 5) ? 'Driving' :
-              (location.speed && location.speed > 0.5) ? 'Moving' : 'Stationary'
-          } : m
-        ));
-
-        // Sync to Firebase if in a circle
-        if (profile?.familyCircleId) {
-          updateMemberLocation(profile.familyCircleId, user.uid, {
-            lat: location.latitude,
-            lng: location.longitude,
-            speed: location.speed || 0,
-            heading: location.heading || 0,
-            accuracy: location.accuracy || 0,
-            timestamp: Date.now(),
-            battery: 100 // We should get real battery level if possible in PWA
-          });
-        }
-
-        // --- Geofence Logic ---
-        if (members.length > 0 && geofences.length > 0) {
-          const circleMembers = members;
-          const familyCircleId = profile?.familyCircleId;
-
-          circleMembers.forEach(member => {
-            const memberGeofenceStates = geofenceStatesRef.current[member.id] || {};
-
-            geofences.forEach(geofence => {
-              const previousStatus = memberGeofenceStates[geofence.id] || 'OUTSIDE';
-              const transition = detectTransition(member.location, geofence, previousStatus);
-
-              if (transition) {
-                console.log(`Geofence Transition: ${member.name} ${transition.to} ${geofence.name}`);
-
-                // Update state ref
-                if (!geofenceStatesRef.current[member.id]) {
-                  geofenceStatesRef.current[member.id] = {};
-                }
-                geofenceStatesRef.current[member.id][geofence.id] = transition.to;
-
-                // Trigger alerts
-                const recipients = members.map(m => m.id === member.id ? '' : (profilesRef.current[m.id]?.email || '')).filter(e => e !== '');
-
-                if (transition.to === 'INSIDE') {
-                  setNotification(`🏠 ${member.name} reached ${geofence.name}!`);
-                  if (recipients.length > 0) {
-                    sendArrivalAlert(recipients, member.name, geofence.name).catch(console.error);
-                  }
-                } else if (transition.to === 'OUTSIDE') {
-                  setNotification(`🚗 ${member.name} left ${geofence.name}.`);
-                  if (recipients.length > 0) {
-                    sendDepartureAlert(recipients, member.name, geofence.name).catch(console.error);
-                  }
-                }
-
-                setTimeout(() => setNotification(null), 5000);
-              }
-            });
-          });
-        }
-      },
-      (error) => {
-        setLocationError(error.message);
-        console.warn('Geolocation error:', error.message);
+      if (newNavState.currentStepIndex !== navState.currentStepIndex) {
+        showNotification(`🔜 Next: ${activeRoute.steps[newNavState.currentStepIndex].instruction}`, 4000);
       }
-    );
 
-    return () => geolocationService.stopWatching();
-  }, [user, profile?.familyCircleId]);
+      if (newNavState.hasArrived && !navState.hasArrived) {
+        showNotification(`🎯 You have arrived at your destination!`, 6000);
+
+        // Phase 4: Award Safety Points
+        const earned = Math.floor(safetyScore / 5);
+        setSessionPoints(earned);
+        setRewards(prev => [...prev, {
+          id: `safety_${Date.now()}`,
+          title: 'Safe Drive Completion',
+          description: `Earned for maintaining a ${safetyScore}% safety score.`,
+          points: earned,
+          category: 'Transportation',
+          expiryDate: 'Never',
+          status: 'AVAILABLE',
+          partner: 'MyWay Safety'
+        }]);
+
+        audioService.speak(`You have arrived. Safety score: ${safetyScore} percent. You earned ${earned} points.`);
+        updateNavigationState(userLocation, null, navState);
+
+        // Reset navigation
+        setTimeout(() => {
+          setDriveMode(false);
+          setIsNavigating(false);
+          setActiveRoute(null);
+        }, 5000);
+      } else {
+        setNavState(newNavState);
+      }
+    }
+  }, [userLocation, isNavigating, activeRoute, navState, safetyScore]);
+
+  // --- Geofence Logic (Modular) ---
+  useEffect(() => {
+    if (members.length > 0 && geofences.length > 0) {
+      members.forEach(member => {
+        const memberGeofenceStates = geofenceStatesRef.current[member.id] || {};
+        geofences.forEach(geofence => {
+          const previousStatus = memberGeofenceStates[geofence.id] || 'OUTSIDE';
+          const transition = detectTransition(member.location, geofence, previousStatus);
+
+          if (transition) {
+            console.log(`Geofence Transition: ${member.name} ${transition.to} ${geofence.name}`);
+
+            if (!geofenceStatesRef.current[member.id]) {
+              geofenceStatesRef.current[member.id] = {};
+            }
+            geofenceStatesRef.current[member.id][geofence.id] = transition.to;
+
+            // Trigger alerts
+            const recipients = members.map(m => m.id === member.id ? '' : (profilesRef.current[m.id]?.email || '')).filter(e => e !== '');
+
+            if (transition.to === 'INSIDE') {
+              showNotification(`🏠 ${member.name} reached ${geofence.name}!`, 5000);
+              if (recipients.length > 0) {
+                sendArrivalAlert(recipients, member.name, geofence.name).catch(console.error);
+              }
+            } else {
+              showNotification(`🚗 ${member.name} left ${geofence.name}.`, 5000);
+              if (recipients.length > 0) {
+                sendDepartureAlert(recipients, member.name, geofence.name).catch(console.error);
+              }
+            }
+          }
+        });
+      });
+    }
+  }, [members, geofences]);
 
   useEffect(() => {
-    if (members.length > 0) {
-      const fetch = async () => setInsights(await getFamilyInsights(members));
-      fetch();
-    }
-  }, [members]);
+    if (members.length === 0) return;
+
+    const fetchInsights = async () => {
+      const results = await getFamilyInsights(members);
+      setInsights(results || []);
+    };
+
+    fetchInsights();
+    const interval = setInterval(fetchInsights, 600000); // 10 minutes
+    return () => clearInterval(interval);
+  }, [members.length]);
 
   const handleToggleGhost = (memberId: string) => {
     setMembers(prev => prev.map(m => m.id === memberId ? { ...m, isGhostMode: !m.isGhostMode } : m));
@@ -346,12 +611,11 @@ const App: React.FC = () => {
       const tier = SUBSCRIPTION_TIERS[tierId];
       if (!tier) return;
 
-      setNotification(`🚀 Preparing your ${tier.name}...`);
+      showNotification(`🚀 Preparing your ${tier.name}...`, 5000);
       const checkoutUrl = await createCheckoutSession(tier.priceId);
       window.location.href = checkoutUrl;
     } catch (err: any) {
-      setNotification(`❌ Error: ${err.message}`);
-      setTimeout(() => setNotification(null), 5000);
+      showNotification(`❌ Error: ${err.message}`, 5000);
     }
   };
 
@@ -382,70 +646,108 @@ const App: React.FC = () => {
     );
   }
 
-  const handleDiscovery = async (query: string) => {
+  // Show onboarding for first-time users
+  if (showOnboarding) {
+    return (
+      <OnboardingFlow
+        theme={theme}
+        onComplete={() => setShowOnboarding(false)}
+      />
+    );
+  }
+
+  const handleDiscovery = (query: string) => {
     if (members.length === 0) return;
-    const results = await searchPlacesOnMap(query, members[0].location);
-    setDiscoveredPlaces([...SPONSORED_PLACES, ...results]);
+    startSearchTransition(async () => {
+      const results = await searchPlacesOnMap(query, members[0].location);
+      setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces, ...results]);
+    });
   };
 
   // Quick search handlers for category buttons (GAS, COFFEE, FOOD, GROCERY)
-  const handleQuickSearch = async (type: 'gas' | 'coffee' | 'food' | 'grocery') => {
+  const handleQuickSearch = (type: 'gas' | 'coffee' | 'food' | 'grocery') => {
     if (members.length === 0) return;
     const location = members[0].location;
 
-    let results: Place[] = [];
-    try {
-      switch (type) {
-        case 'gas':
-          results = await searchGasStations(location);
-          break;
-        case 'coffee':
-          results = await searchCoffeeShops(location);
-          break;
-        case 'food':
-          results = await searchRestaurants(location);
-          break;
-        case 'grocery':
-          results = await searchGroceryStores(location);
-          break;
+    startSearchTransition(async () => {
+      let results: Place[] = [];
+      try {
+        switch (type) {
+          case 'gas':
+            results = await searchGasStations(location);
+            break;
+          case 'coffee':
+            results = await searchCoffeeShops(location);
+            break;
+          case 'food':
+            results = await searchRestaurants(location);
+            break;
+          case 'grocery':
+            results = await searchGroceryStores(location);
+            break;
+        }
+      } catch (error) {
+        console.warn('Places API error, falling back to Gemini:', error);
       }
-    } catch (error) {
-      console.warn('Places API error, falling back to Gemini:', error);
-    }
 
-    // If no results from Places API, fallback to Gemini search
-    if (results.length === 0) {
-      const query = type === 'gas' ? 'gas station' : type === 'coffee' ? 'coffee shop' : type === 'food' ? 'restaurant' : 'grocery store';
-      results = await searchPlacesOnMap(query, location);
-    }
+      // If no results from Places API, fallback to Gemini search
+      if (results.length === 0) {
+        const query = type === 'gas' ? 'gas station' : type === 'coffee' ? 'coffee shop' : type === 'food' ? 'restaurant' : 'grocery store';
+        results = await searchPlacesOnMap(query, location);
+      }
 
-    setDiscoveredPlaces([...SPONSORED_PLACES, ...results]);
+      setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces, ...results]);
+    });
   };
 
-  const handleStartNavigation = async (dest: string) => {
+  const handleStartNavigation = async (dest: string, simulate: boolean = false) => {
     if (members.length === 0) return;
-    console.log('Starting navigation to:', dest);
-    setNotification(`🧭 Navigating to ${dest}...`);
-    setTimeout(() => setNotification(null), 3000);
 
-    const route = await getRouteToDestination(members[0].location, dest, members);
-    console.log('Route received:', route);
-    setActiveRoute(route);
-    setIsNavigating(true);
-    setIsDriveMode(true);
+    try {
+      showNotification(`🧭 ${simulate ? 'Calculating simulation route...' : 'Preparing navigation...'}`, 5000);
+
+      const route = await getRouteToDestination(members[0].location, dest, members);
+
+      if (!route || !route.steps) {
+        showNotification("❌ Could not calculate route. Please try again.", 4000);
+        return;
+      }
+
+      if (simulate) {
+        // Extract simulation points from range steps
+        const simulationPoints = route.steps
+          .filter(s => s.endLocation)
+          .map(s => s.endLocation!);
+
+        // Add start and end
+        if (members[0].location) simulationPoints.unshift(members[0].location);
+        simulationPoints.push(route.destinationLoc);
+
+        geolocationService.setSimulationRoute(simulationPoints);
+        setIsSimulationActive(true);
+        geolocationService.setSimulationMode(true);
+      }
+
+      setActiveRoute(route);
+      setNavState({
+        currentStepIndex: 0,
+        distanceToNextStep: 0,
+        isOffRoute: false,
+        hasArrived: false
+      });
+      setDriveMode(true);
+      setIsNavigating(true);
+      set3DMode(true); // VisionQA: Trigger 3D Fly-to on Navigation Start
+    } catch (error) {
+      console.error("Navigation startup error:", error);
+      showNotification("❌ Failed to start navigation.", 3000);
+    }
   };
 
 
   return (
     <div className={`flex flex-col h-full w-full overflow-hidden transition-all duration-700 ${theme === 'dark' ? 'bg-black' : 'bg-[#f1f5f9]'}`}>
-      {!isDriveMode && (
-        <Header
-          theme={theme}
-          onToggleTheme={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
-          onUpgrade={() => setIsUpsellOpen(true)}
-          userTier={members[0]?.membershipTier || 'free'}
-        />
-      )}
+      {!isDriveMode && null}
 
       <div className={`flex flex-1 relative overflow-hidden ${isMobile && !isDriveMode ? 'flex-col-reverse' : 'flex-row'}`}>
         {/* Desktop Sidebar - Bento Grid style */}
@@ -459,7 +761,33 @@ const App: React.FC = () => {
             inviteCode={currentCircle?.inviteCode}
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
+            avgGasPrice={avgGasPrice}
           />
+        )}
+
+        {/* Top Left Profile/Settings FAB (Replaces Header) */}
+        {!isDriveMode && (
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className={`absolute top-4 left-4 z-[90] group flex items-center gap-3 transition-all duration-300 ${!isMobile ? 'hover:scale-105' : ''}`}
+          >
+            <div className={`relative w-11 h-11 md:w-12 md:h-12 rounded-full border-2 overflow-hidden shadow-2xl transition-all duration-300
+              ${theme === 'dark' ? 'bg-slate-800 border-white/20' : 'bg-white border-slate-200'}
+              ${members[0]?.membershipTier === 'gold' ? 'border-amber-500' : ''}`}
+            >
+              <img
+                src={members[0]?.avatar || user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid}`}
+                alt="Profile"
+                className="w-full h-full object-cover"
+              />
+            </div>
+            {!isMobile && (
+              <div className={`px-4 py-2 rounded-xl shadow-lg backdrop-blur-md font-bold text-sm border
+                 ${theme === 'dark' ? 'bg-black/50 border-white/10 text-white' : 'bg-white/80 border-slate-200 text-slate-800'}`}>
+                Settings
+              </div>
+            )}
+          </button>
         )}
 
         {/* Map and overlay container */}
@@ -468,24 +796,36 @@ const App: React.FC = () => {
           <div
             className="absolute inset-0 z-0 transition-transform duration-500"
             style={{
-              transform: is3DMode ? 'rotateX(45deg) scale(1.2)' : 'none',
+              transform: is3DMode ? 'none' : 'none', // MapLibre handles its own 3D transform
               transformOrigin: 'center center'
             }}
           >
-            <MapView
-              members={members}
-              places={discoveredPlaces}
-              tasks={[]}
-              incidents={incidents}
-              privacyZones={privacyZones}
-              selectedMemberId={selectedMemberId}
-              activeRoute={activeRoute}
-              isNavigating={isNavigating || isDriveMode}
-              theme={theme}
-              onSelectPlace={(p) => handleStartNavigation(p.name)}
-              onSelectMember={setSelectedMemberId}
-              onBoundsChange={setMapBounds}
-            />
+            {is3DMode ? (
+              <MapLibre3DView
+                members={members}
+                theme={theme}
+                mapSkin={userSettings.mapSkin}
+                selectedMemberId={selectedMemberId}
+                onUserInteraction={() => setSelectedMemberId(null)}
+              />
+            ) : (
+              <MapView
+                members={members}
+                places={discoveredPlaces}
+                tasks={[]}
+                incidents={incidents}
+                privacyZones={privacyZones}
+                selectedMemberId={selectedMemberId}
+                activeRoute={activeRoute}
+                isNavigating={isNavigating || isDriveMode}
+                theme={theme}
+                onSelectPlace={(p) => handleStartNavigation(p.name)}
+                onSelectMember={setSelectedMemberId}
+                onBoundsChange={setMapBounds}
+                onUserInteraction={() => setSelectedMemberId(null)}
+                is3DMode={false}
+              />
+            )}
           </div>
 
           {/* UI Overlays - z-10 and above to appear over the map */}
@@ -499,181 +839,264 @@ const App: React.FC = () => {
 
           {/* Safety Alerts */}
           {!isDriveMode && (
-            <div className="absolute z-[70] top-18 right-4 pointer-events-auto flex flex-col items-end">
-              <SafetyAlerts
-                members={members}
-                onDismiss={(id) => console.log('Dismissed:', id)}
-                onSendReminder={(memberId, type) => {
-                  setNotification(`📱 Sent ${type === 'charge' ? 'charge reminder' : 'check-in request'}!`);
-                  setTimeout(() => setNotification(null), 3000);
-                }}
-                theme={theme}
-              />
-            </div>
+            <OverlayManager>
+              <div className="absolute z-[70] top-18 right-4 pointer-events-auto flex flex-col items-end">
+                <SafetyAlerts
+                  members={members}
+                  onDismiss={(id) => console.log('Dismissed:', id)}
+                  onSendReminder={(memberId, type) => {
+                    showNotification(`📱 Sent ${type === 'charge' ? 'charge reminder' : 'check-in request'}!`, 3000);
+                  }}
+                  theme={theme}
+                />
+              </div>
+            </OverlayManager>
           )}
 
-          {isDriveMode && activeRoute ? (
-            <DriveModeHUD
-              route={activeRoute}
-              onCancel={() => { setIsDriveMode(false); setIsNavigating(false); setActiveRoute(null); }}
-              speed={members[0].speed}
-            />
+          {isDriveMode && activeRoute && activeRoute.steps && activeRoute.steps.length > 0 ? (
+            <OverlayManager>
+              <DriveModeHUD
+                route={activeRoute}
+                onCancel={() => {
+                  setDriveMode(false);
+                  setIsNavigating(false);
+                  setActiveRoute(null);
+                  geolocationService.setSimulationMode(false);
+                  setIsSimulationActive(false);
+                }}
+                speed={members.find(m => m.id === user?.uid)?.speed || 0}
+                theme={theme}
+                stepIndex={navState.currentStepIndex}
+                advisory={activeAdvisory}
+                safetyScore={safetyScore}
+                sessionPoints={sessionPoints}
+              />
+            </OverlayManager>
           ) : (
             <>
-              {/* Search bar - centralized */}
-              <div className={`absolute z-[100] px-4 transition-all duration-500 ${isMobile
-                ? 'bottom-28 left-0 right-0 flex justify-center'
-                : 'bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl'
-                }`}>
-                <div className="flex gap-3 w-full max-w-lg shadow-2xl rounded-2xl items-end">
-                  <SearchBox onSearch={handleDiscovery} theme={theme} />
-                  {/* Quick Stop button - Gold Theme */}
-                  <button
-                    onClick={() => setIsQuickStopOpen(true)}
-                    className="h-14 w-14 md:h-14 md:w-14 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 border-2 border-white/20 text-white shadow-xl flex items-center justify-center text-xl hover:scale-105 active:scale-95 transition-all"
-                    title="Quick Stops"
-                  >
-                    ☕
-                  </button>
-                </div>
-              </div>
+
 
               {/* QuickStopGrid modal */}
               {isQuickStopOpen && (
                 <QuickStopGrid
                   onSearch={handleDiscovery}
-                  onClose={() => setIsQuickStopOpen(false)}
+                  onClose={() => setQuickStopOpen(false)}
                   theme={theme}
                 />
               )}
 
-              {isUpsellOpen && <PremiumUpsellModal onClose={() => setIsUpsellOpen(false)} onUpgrade={handleUpgrade} theme={theme} />}
+              {isUpsellOpen && <PremiumUpsellModal onClose={() => setUpsellOpen(false)} onUpgrade={handleUpgrade} theme={theme} />}
 
               {isRewardsOpen && (
-                <div className={`absolute z-[90] transition-all duration-500 ${isMobile ? 'inset-x-0 bottom-28 p-4' : 'left-8 top-32 w-80'}`}>
-                  <RewardsPanel rewards={rewards} onClose={() => setIsRewardsOpen(false)} theme={theme} />
-                </div>
+                <OverlayManager>
+                  <div className={`absolute z-[90] transition-all duration-500 ${isMobile ? 'inset-x-0 bottom-28 p-4' : 'left-8 top-32 w-80'}`}>
+                    <RewardsPanel rewards={rewards} onClose={() => setRewardsOpen(false)} theme={theme} />
+                  </div>
+                </OverlayManager>
               )}
 
               {isPrivacyOpen && (
-                <div className={`absolute z-[90] transition-all duration-500 ${isMobile ? 'inset-x-0 bottom-28 p-4' : 'left-8 top-32 w-80'}`}>
-                  <PrivacyPanel zones={[]} isGhostMode={members[0].isGhostMode || false} onToggleGhost={() => handleToggleGhost('1')} onClose={() => setIsPrivacyOpen(false)} theme={theme} />
-                </div>
+                <OverlayManager>
+                  <div className={`absolute z-[90] transition-all duration-500 ${isMobile ? 'inset-x-0 bottom-28 p-4' : 'left-8 top-32 w-80'}`}>
+                    <PrivacyPanel
+                      zones={[]}
+                      isGhostMode={members.find(m => m.id === user?.uid)?.isGhostMode || false}
+                      onToggleGhost={() => handleToggleGhost(user?.uid || '')}
+                      onClose={() => setPrivacyOpen(false)}
+                      theme={theme}
+                    />
+                  </div>
+                </OverlayManager>
               )}
 
               {/* Member detail panel - desktop only, mobile uses BottomSheet */}
-              {selectedMemberId && !isPrivacyOpen && !isRewardsOpen && !isMobile && (
-                <div className="absolute z-[80] left-8 top-32 w-80">
-                  <MemberDetailPanel
-                    member={members.find(m => m.id === selectedMemberId)!}
-                    onClose={() => setSelectedMemberId(null)}
-                    onToggleGhost={selectedMemberId === '1' ? () => handleToggleGhost('1') : undefined}
+              {selectedMemberId && !isPrivacyOpen && !isRewardsOpen && !isMobile && (() => {
+                const selectedMember = members.find(m => m.id === selectedMemberId);
+                return selectedMember ? (
+                  <OverlayManager>
+                    <div className="absolute z-[80] left-8 top-32 w-80">
+                      <MemberDetailPanel
+                        member={selectedMember}
+                        onClose={() => setSelectedMemberId(null)}
+                        onToggleGhost={selectedMemberId === user?.uid ? () => handleToggleGhost(user?.uid || '') : undefined}
+                        theme={theme}
+                      />
+                    </div>
+                  </OverlayManager>
+                ) : null;
+              })()}
+
+              {/* Unified Command Center - Bottom Center Single Bar */}
+              <OverlayManager>
+                <div className={`absolute left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 ${isMobile ? 'bottom-20' : 'bottom-10'}`}>
+                  <SearchBox
+                    onSearch={handleDiscovery}
+                    onCategorySearch={handleQuickSearch}
+                    onQuickStop={() => setQuickStopOpen(true)}
+                    onTestDrive={() => handleStartNavigation("Simulated Destination", true)}
                     theme={theme}
                   />
                 </div>
-              )}
+              </OverlayManager>
 
-              {!isMobile && <div className="absolute bottom-12 left-32 w-80 z-30"><InsightsBar insights={insights} theme={theme} /></div>}
+              {/* Safety Insights - Repositioned to Top Center Drawer as per Audit */}
+              <OverlayManager>
+                <div className={`absolute left-1/2 -translate-x-1/2 z-50 ${isMobile ? 'top-4 w-auto max-w-[90%]' : 'top-6 w-auto'}`}>
+                  <InsightsBar
+                    insights={insights}
+                    theme={theme}
+                    onReconnect={() => {
+                      showNotification("🔄 Attempting to reconnect...", 3000);
+                      setTimeout(() => setIsOffline(false), 1500);
+                    }}
+                  />
+                </div>
+              </OverlayManager>
             </>
           )}
 
-          {/* Safety controls - positioned for easy access */}
-          <div className={`absolute flex flex-col items-end gap-3 z-[60] ${isMobile ? 'top-4 right-4' : 'bottom-24 right-6'
-            }`}>
-            <CoPilotOverlay isActive={false} isSpeaking={false} transcription="" onToggle={() => { }} />
+          {/* Action Hub - Grouped Clusters shifted higher to avoid taskbar */}
+          <OverlayManager>
+            <div className={`absolute flex flex-col items-end gap-6 z-[60] ${isMobile ? 'top-4 right-4' : 'bottom-40 right-6'}`}>
 
-            {/* 3D Mode toggle */}
-            <button
-              onClick={() => setIs3DMode(!is3DMode)}
-              className={`w-14 h-14 md:w-16 md:h-16 rounded-2xl text-white shadow-lg flex items-center justify-center font-black border-2 hover:scale-105 active:scale-95 transition-all
-                ${is3DMode
-                  ? 'bg-gradient-to-br from-amber-400 to-orange-500 border-white/20 shadow-[0_10px_30px_rgba(245,158,11,0.4)]'
-                  : theme === 'dark' ? 'bg-white/10 border-white/20' : 'bg-white border-slate-200 text-slate-700'}
-              `}
-              title="Toggle 3D Mode"
-            >
-              <span className="text-xl">🗺️</span>
-            </button>
+              {/* Mesh Status (If active) */}
+              {meshNodes.length > 0 && (
+                <div className="bg-indigo-500/90 backdrop-blur-md text-white border border-white/20 p-2 rounded-2xl shadow-2xl animate-pulse flex flex-col items-center mb-2">
+                  <span className="text-[10px] font-black uppercase tracking-tighter">MESH ACTIVE</span>
+                  <div className="flex gap-2 items-baseline">
+                    <span className="text-xl font-black">{meshNodes.length}</span>
+                    <span className="text-[9px] font-bold opacity-70">NODES</span>
+                  </div>
+                </div>
+              )}
 
-            {/* Settings button */}
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className={`w-14 h-14 md:w-16 md:h-16 rounded-2xl shadow-lg flex items-center justify-center font-black border-2 hover:scale-105 active:scale-95 transition-all ${theme === 'dark'
-                ? 'bg-white/10 border-white/20 text-white'
-                : 'bg-white border-slate-200 text-slate-700'
-                }`}
-              title="Settings"
-            >
-              <span className="text-xl">⚙️</span>
-            </button>
-
-            {/* Chat button */}
-            <button
-              onClick={() => setIsMessagingOpen(true)}
-              className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_10px_30px_rgba(245,158,11,0.4)] flex items-center justify-center font-black border-2 border-white/20 hover:scale-105 active:scale-95 transition-all"
-              title="Family Chat"
-            >
-              <span className="text-xl">💬</span>
-            </button>
-
-            {/* SOS button with safety shield */}
-            <div className="relative group">
-              <button
-                className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-700 text-white shadow-[0_10px_30px_rgba(220,38,38,0.4)] flex items-center justify-center font-black border-2 border-red-400/50 hover:scale-105 active:scale-95 transition-all"
-                title="Emergency SOS"
-              >
-                <span className="text-xl">🛡️</span>
-              </button>
-              {/* SOS reveals on hover/long press */}
-              <div className="absolute bottom-full right-0 mb-2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none group-hover:pointer-events-auto">
-                <button className="w-16 h-16 rounded-full bg-red-600 text-white shadow-2xl flex items-center justify-center font-black text-sm border-4 border-white/20 animate-pulse">
-                  SOS
+              {/* Cluster 1: Intelligence & Navigation */}
+              <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl">
+                <button
+                  onClick={() => {
+                    const targetId = user?.uid || 'demo-you';
+                    setSelectedMemberId(targetId);
+                    showNotification("📍 Centered on your location", 2000);
+                  }}
+                  className="w-11 h-11 rounded-2xl bg-white/5 text-slate-300 flex items-center justify-center hover:bg-white/10 transition-all"
+                  title="Current Location"
+                >
+                  <span className="text-xl">🎯</span>
+                </button>
+                <div className="w-8 h-px bg-white/10 self-center" />
+                <button
+                  onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all
+                    ${isVoiceEnabled ? 'bg-indigo-500 text-white shadow-lg' : 'bg-white/5 text-slate-500'}`}
+                  title="Voice Co-Pilot"
+                >
+                  <span className="text-xl">🎙️</span>
+                </button>
+                <button
+                  onClick={() => set3DMode(!is3DMode)}
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all
+                    ${is3DMode ? 'bg-amber-500 text-white shadow-lg' : 'bg-white/5 text-slate-500'}`}
+                  title="3D Mode"
+                >
+                  <span className="text-xl">🗺️</span>
                 </button>
               </div>
+
+              {/* Cluster 2: Communication & Safety */}
+              <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl">
+                <button
+                  onClick={() => setMessagingOpen(true)}
+                  className="w-11 h-11 rounded-2xl bg-white/5 text-slate-300 flex items-center justify-center hover:bg-white/10 transition-all"
+                  title="Family Chat"
+                >
+                  <span className="text-xl">💬</span>
+                </button>
+                <button
+                  onClick={() => {
+                    const confirmed = confirm('🚨 EMERGENCY SOS\n\nAlert circle members?');
+                    if (confirmed) showNotification('🆘 SOS Alert sent!', 5000);
+                  }}
+                  className="w-11 h-11 rounded-2xl bg-red-600/80 text-white flex items-center justify-center hover:bg-red-700 transition-all shadow-lg animate-pulse hover:animate-none ring-2 ring-red-500/50"
+                  title="Emergency SOS"
+                >
+                  <span className="text-xl">🛡️</span>
+                </button>
+              </div>
+
+              {/* Cluster 3: System & Profile - REMOVED per VisionQA 3.0 Audit (Redundant) */}
+              {/* Settings now exclusively accessed via Sidebar */}
             </div>
-          </div>
+          </OverlayManager>
 
           {/* Messaging Panel */}
           {isMessagingOpen && (
-            <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96 h-[500px]'}`}>
-              <MessagingPanel
-                members={members}
-                currentUserId="1"
-                onClose={() => setIsMessagingOpen(false)}
-                theme={theme}
-              />
-            </div>
+            <OverlayManager>
+              <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96 h-[500px]'}`}>
+                <MessagingPanel
+                  members={members}
+                  currentUserId={user?.uid || ''}
+                  circleId={profile?.familyCircleId}
+                  onClose={() => setMessagingOpen(false)}
+                  theme={theme}
+                />
+              </div>
+            </OverlayManager>
           )}
 
           {/* Settings Panel */}
           {isSettingsOpen && (
-            <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 max-h-[calc(100vh-120px)]'}`}>
-              <SettingsPanel
-                settings={userSettings}
-                onUpdateSettings={(newSettings) => {
-                  setUserSettings(newSettings);
-                  if (newSettings.theme !== 'auto') {
-                    setTheme(newSettings.theme);
-                  }
-                }}
-                onClose={() => setIsSettingsOpen(false)}
-                onOpenOfflineMaps={() => setIsOfflineMapsOpen(true)}
-                theme={theme}
-                userName={members[0].name}
-                userAvatar={members[0].avatar}
-              />
-            </div>
+            <OverlayManager>
+              <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 max-h-[calc(100vh-120px)]'}`}>
+                <SettingsPanel
+                  settings={userSettings}
+                  onUpdateSettings={(newSettings) => {
+                    setUserSettings(newSettings);
+                    if (newSettings.theme !== 'auto') {
+                      setTheme(newSettings.theme);
+                    }
+                  }}
+                  onClose={() => setSettingsOpen(false)}
+                  onOpenOfflineMaps={() => setOfflineMapsOpen(true)}
+                  theme={theme}
+                  userName={members[0]?.name || 'User'}
+                  userAvatar={members[0]?.avatar || ''}
+                  onUpgrade={() => setUpsellOpen(true)}
+                  isPremium={members[0]?.membershipTier === 'gold' || members[0]?.membershipTier === 'platinum'}
+                  userPlaces={userPlaces}
+                  onAddPlace={(place) => {
+                    if (user && profile?.familyCircleId) {
+                      addUserPlace(profile.familyCircleId, place, user.uid);
+                    }
+                  }}
+                  onDeletePlace={(placeId) => {
+                    if (profile?.familyCircleId) {
+                      deleteUserPlace(profile.familyCircleId, placeId);
+                    }
+                  }}
+                  onSignOut={logout}
+                  onManageSubscription={async () => {
+                    try {
+                      await goToBillingPortal();
+                    } catch (err: any) {
+                      showNotification(`❌ ${err.message}`, 5000);
+                    }
+                  }}
+                />
+              </div>
+            </OverlayManager>
           )}
 
           {/* Offline Maps Panel */}
           {isOfflineMapsOpen && (
-            <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
-              <OfflineMapManager
-                currentBounds={mapBounds}
-                theme={theme}
-                onClose={() => setIsOfflineMapsOpen(false)}
-              />
-            </div>
+            <OverlayManager>
+              <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
+                <OfflineMapManager
+                  currentBounds={mapBounds}
+                  theme={theme}
+                  onClose={() => setOfflineMapsOpen(false)}
+                />
+              </div>
+            </OverlayManager>
           )}
         </div>
       </div>

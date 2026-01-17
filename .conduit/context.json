@@ -7,308 +7,11 @@
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: components/LoginScreen.tsx",
-      "files": [
-        "components/LoginScreen.tsx"
-      ],
-      "timestamp": "2026-01-15T17:57:08.712Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/firebase.ts",
-      "files": [
-        "services/firebase.ts"
-      ],
-      "timestamp": "2026-01-15T17:58:51.567Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .env.local",
-      "files": [
-        ".env.local"
-      ],
-      "timestamp": "2026-01-15T18:14:55.817Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .env.local",
-      "files": [
-        ".env.local"
-      ],
-      "timestamp": "2026-01-15T18:18:21.050Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .env.local",
-      "files": [
-        ".env.local"
-      ],
-      "timestamp": "2026-01-15T18:23:57.485Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/geolocationService.ts",
-      "files": [
-        "services/geolocationService.ts"
-      ],
-      "timestamp": "2026-01-15T18:23:59.725Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .env.local",
-      "files": [
-        ".env.local"
-      ],
-      "timestamp": "2026-01-15T18:25:52.630Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/authService.ts",
-      "files": [
-        "services/authService.ts"
-      ],
-      "timestamp": "2026-01-15T18:26:07.159Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: contexts/AuthContext.tsx",
-      "files": [
-        "contexts/AuthContext.tsx"
-      ],
-      "timestamp": "2026-01-15T18:26:08.927Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
       "action": "File modified: App.tsx",
       "files": [
         "App.tsx"
       ],
-      "timestamp": "2026-01-15T18:27:13.895Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T18:27:15.633Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/geolocationService.ts",
-      "files": [
-        "services/geolocationService.ts"
-      ],
-      "timestamp": "2026-01-15T18:45:03.134Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/authService.ts",
-      "files": [
-        "services/authService.ts"
-      ],
-      "timestamp": "2026-01-15T18:49:06.433Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T18:52:41.454Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: contexts/AuthContext.tsx",
-      "files": [
-        "contexts/AuthContext.tsx"
-      ],
-      "timestamp": "2026-01-15T18:54:50.777Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/placesService.ts",
-      "files": [
-        "services/placesService.ts"
-      ],
-      "timestamp": "2026-01-15T18:59:51.110Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/rewardsService.ts",
-      "files": [
-        "services/rewardsService.ts"
-      ],
-      "timestamp": "2026-01-15T18:59:52.874Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T19:00:15.543Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T19:00:34.544Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T19:00:53.853Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T19:01:22.718Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .env.local",
-      "files": [
-        ".env.local"
-      ],
-      "timestamp": "2026-01-15T19:01:40.656Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T19:02:03.215Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .env.local",
-      "files": [
-        ".env.local"
-      ],
-      "timestamp": "2026-01-15T19:08:47.326Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T19:15:27.048Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-15T19:16:13.447Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: contexts/AuthContext.tsx",
-      "files": [
-        "contexts/AuthContext.tsx"
-      ],
-      "timestamp": "2026-01-15T19:21:20.330Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-15T19:22:05.448Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .agent/workflows/gemini.md",
-      "files": [
-        ".agent/workflows/gemini.md"
-      ],
-      "timestamp": "2026-01-15T20:37:29.263Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-16T03:44:18.914Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/authService.ts",
-      "files": [
-        "services/authService.ts"
-      ],
-      "timestamp": "2026-01-16T03:44:20.248Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-16T03:44:40.996Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File created: ts_errors.txt",
-      "files": [
-        "ts_errors.txt"
-      ],
-      "timestamp": "2026-01-16T03:45:21.916Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: ts_errors.txt",
-      "files": [
-        "ts_errors.txt"
-      ],
-      "timestamp": "2026-01-16T03:45:30.374Z"
+      "timestamp": "2026-01-17T01:38:49.974Z"
     },
     {
       "type": "contribution",
@@ -317,97 +20,7 @@
       "files": [
         "components/BentoSidebar.tsx"
       ],
-      "timestamp": "2026-01-16T03:45:41.264Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File created: ts_errors_2.txt",
-      "files": [
-        "ts_errors_2.txt"
-      ],
-      "timestamp": "2026-01-16T03:46:19.042Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: ts_errors_2.txt",
-      "files": [
-        "ts_errors_2.txt"
-      ],
-      "timestamp": "2026-01-16T03:46:27.653Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/PremiumUpsellModal.tsx",
-      "files": [
-        "components/PremiumUpsellModal.tsx"
-      ],
-      "timestamp": "2026-01-16T03:46:38.416Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/authService.ts",
-      "files": [
-        "services/authService.ts"
-      ],
-      "timestamp": "2026-01-16T03:47:09.024Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/placesService.ts",
-      "files": [
-        "services/placesService.ts"
-      ],
-      "timestamp": "2026-01-16T03:47:11.248Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/firebase.ts",
-      "files": [
-        "services/firebase.ts"
-      ],
-      "timestamp": "2026-01-16T03:47:37.939Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .agent/workflows/gemini.md",
-      "files": [
-        ".agent/workflows/gemini.md"
-      ],
-      "timestamp": "2026-01-16T14:58:45.126Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: public/logo.png",
-      "files": [
-        "public/logo.png"
-      ],
-      "timestamp": "2026-01-16T15:02:22.946Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/Header.tsx",
-      "files": [
-        "components/Header.tsx"
-      ],
-      "timestamp": "2026-01-16T15:02:47.442Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: .agent/workflows/ollama.md",
-      "files": [
-        ".agent/workflows/ollama.md"
-      ],
-      "timestamp": "2026-01-16T15:10:09.187Z"
+      "timestamp": "2026-01-17T01:39:38.805Z"
     },
     {
       "type": "contribution",
@@ -416,43 +29,430 @@
       "files": [
         "App.tsx"
       ],
-      "timestamp": "2026-01-16T15:18:04.249Z"
+      "timestamp": "2026-01-17T01:40:08.611Z"
     },
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: services/authService.ts",
+      "action": "File modified: components/BentoSidebar.tsx",
       "files": [
-        "services/authService.ts"
+        "components/BentoSidebar.tsx"
       ],
-      "timestamp": "2026-01-16T15:18:59.996Z"
+      "timestamp": "2026-01-17T01:45:25.825Z"
     },
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: config/subscriptions.ts",
+      "action": "File modified: components/SearchBox.tsx",
       "files": [
-        "config/subscriptions.ts"
+        "components/SearchBox.tsx"
       ],
-      "timestamp": "2026-01-16T15:20:53.059Z"
+      "timestamp": "2026-01-17T01:45:27.699Z"
     },
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: config/subscriptions.ts",
+      "action": "File modified: App.tsx",
       "files": [
-        "config/subscriptions.ts"
+        "App.tsx"
       ],
-      "timestamp": "2026-01-16T15:24:50.758Z"
+      "timestamp": "2026-01-17T01:50:43.833Z"
     },
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: components/PremiumUpsellModal.tsx",
+      "action": "File modified: components/SearchBox.tsx",
       "files": [
-        "components/PremiumUpsellModal.tsx"
+        "components/SearchBox.tsx"
       ],
-      "timestamp": "2026-01-16T15:25:11.908Z"
+      "timestamp": "2026-01-17T01:50:45.560Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/SearchBox.tsx",
+      "files": [
+        "components/SearchBox.tsx"
+      ],
+      "timestamp": "2026-01-17T01:51:05.588Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T01:54:48.352Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T01:54:57.917Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T01:55:19.961Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: hooks/useLocationSync.ts",
+      "files": [
+        "hooks/useLocationSync.ts"
+      ],
+      "timestamp": "2026-01-17T01:59:07.955Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T01:59:10.416Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-17T01:59:11.841Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/geolocationService.ts",
+      "files": [
+        "services/geolocationService.ts"
+      ],
+      "timestamp": "2026-01-17T01:59:13.834Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T01:59:29.575Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/userPlacesService.ts",
+      "files": [
+        "services/userPlacesService.ts"
+      ],
+      "timestamp": "2026-01-17T02:04:02.922Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-17T02:04:05.165Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/SettingsPanel.tsx",
+      "files": [
+        "components/SettingsPanel.tsx"
+      ],
+      "timestamp": "2026-01-17T02:04:07.178Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/geolocationService.ts",
+      "files": [
+        "services/geolocationService.ts"
+      ],
+      "timestamp": "2026-01-17T02:04:09.176Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: hooks/useLocationSync.ts",
+      "files": [
+        "hooks/useLocationSync.ts"
+      ],
+      "timestamp": "2026-01-17T02:09:12.461Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T02:09:14.368Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T02:12:16.819Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-17T02:16:16.493Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-17T02:16:41.940Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T02:24:07.740Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/InsightsBar.tsx",
+      "files": [
+        "components/InsightsBar.tsx"
+      ],
+      "timestamp": "2026-01-17T02:24:26.939Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T02:24:34.652Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-17T02:24:52.844Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/SearchBox.tsx",
+      "files": [
+        "components/SearchBox.tsx"
+      ],
+      "timestamp": "2026-01-17T02:24:58.569Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-17T02:25:14.977Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/meshService.ts",
+      "files": [
+        "services/meshService.ts"
+      ],
+      "timestamp": "2026-01-17T02:36:36.135Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/cryptoService.ts",
+      "files": [
+        "services/cryptoService.ts"
+      ],
+      "timestamp": "2026-01-17T02:36:41.358Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/chatService.ts",
+      "files": [
+        "services/chatService.ts"
+      ],
+      "timestamp": "2026-01-17T02:36:43.317Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/StorageManager.tsx",
+      "files": [
+        "components/StorageManager.tsx"
+      ],
+      "timestamp": "2026-01-17T02:36:56.713Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/SettingsPanel.tsx",
+      "files": [
+        "components/SettingsPanel.tsx"
+      ],
+      "timestamp": "2026-01-17T02:37:36.599Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/cryptoService.ts",
+      "files": [
+        "services/cryptoService.ts"
+      ],
+      "timestamp": "2026-01-17T02:38:20.053Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/InsightsBar.tsx",
+      "files": [
+        "components/InsightsBar.tsx"
+      ],
+      "timestamp": "2026-01-17T02:39:44.845Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: package-lock.json",
+      "files": [
+        "package-lock.json"
+      ],
+      "timestamp": "2026-01-17T02:40:07.222Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: tailwind.config.js",
+      "files": [
+        "tailwind.config.js"
+      ],
+      "timestamp": "2026-01-17T02:40:21.799Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: index.css",
+      "files": [
+        "index.css"
+      ],
+      "timestamp": "2026-01-17T02:40:23.846Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: index.html",
+      "files": [
+        "index.html"
+      ],
+      "timestamp": "2026-01-17T02:40:25.159Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: postcss.config.js",
+      "files": [
+        "postcss.config.js"
+      ],
+      "timestamp": "2026-01-17T02:40:37.563Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/SettingsPanel.tsx",
+      "files": [
+        "components/SettingsPanel.tsx"
+      ],
+      "timestamp": "2026-01-17T02:41:55.120Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: index.tsx",
+      "files": [
+        "index.tsx"
+      ],
+      "timestamp": "2026-01-17T02:43:53.942Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: package-lock.json",
+      "files": [
+        "package-lock.json"
+      ],
+      "timestamp": "2026-01-17T02:46:22.537Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: postcss.config.js",
+      "files": [
+        "postcss.config.js"
+      ],
+      "timestamp": "2026-01-17T02:46:33.677Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: postcss.config.js",
+      "files": [
+        "postcss.config.js"
+      ],
+      "timestamp": "2026-01-17T02:48:49.379Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-17T02:49:44.188Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: index.css",
+      "files": [
+        "index.css"
+      ],
+      "timestamp": "2026-01-17T02:50:27.203Z"
     }
   ],
   "handoffs": [],
@@ -475,33 +475,139 @@
     "branch": "main",
     "staged": [],
     "modified": [
-      ".agent/workflows/antigravity.md",
-      ".agent/workflows/gemini.md",
       ".conduit/context.json",
+      ".conduit/history.json",
       "App.tsx",
+      "agent_bridge.js",
       "components/BentoSidebar.tsx",
+      "components/DriveModeHUD.tsx",
       "components/Header.tsx",
-      "components/LoginScreen.tsx",
+      "components/InsightsBar.tsx",
       "components/MapView.tsx",
-      "components/PremiumUpsellModal.tsx",
-      "config/subscriptions.ts",
-      "contexts/AuthContext.tsx",
+      "components/MessagingPanel.tsx",
+      "components/SearchBox.tsx",
+      "components/SettingsPanel.tsx",
       "index.html",
-      "public/logo.png",
+      "index.tsx",
+      "package-lock.json",
+      "package.json",
+      "public/sw.js",
       "services/authService.ts",
       "services/firebase.ts",
+      "services/geminiService.ts",
       "services/geolocationService.ts",
-      ".agent/workflows/ollama.md",
-      "services/emailService.ts",
-      "services/geofenceService.ts",
       "services/placesService.ts",
-      "services/rewardsService.ts",
-      "ts_errors.txt",
-      "ts_errors_2.txt"
+      "services/stripeService.ts",
+      "ts_errors_2.txt",
+      "tsconfig.json",
+      "types.ts",
+      "vite.config.ts",
+      ".firebaserc",
+      "agent_bridge.cjs",
+      "android/.gitignore",
+      "android/app/.gitignore",
+      "android/app/build.gradle",
+      "android/app/capacitor.build.gradle",
+      "android/app/proguard-rules.pro",
+      "android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java",
+      "android/app/src/main/AndroidManifest.xml",
+      "android/app/src/main/java/com/myway/app/MainActivity.java",
+      "android/app/src/main/res/drawable-land-hdpi/splash.png",
+      "android/app/src/main/res/drawable-land-mdpi/splash.png",
+      "android/app/src/main/res/drawable-land-xhdpi/splash.png",
+      "android/app/src/main/res/drawable-land-xxhdpi/splash.png",
+      "android/app/src/main/res/drawable-land-xxxhdpi/splash.png",
+      "android/app/src/main/res/drawable-port-hdpi/splash.png",
+      "android/app/src/main/res/drawable-port-mdpi/splash.png",
+      "android/app/src/main/res/drawable-port-xhdpi/splash.png",
+      "android/app/src/main/res/drawable-port-xxhdpi/splash.png",
+      "android/app/src/main/res/drawable-port-xxxhdpi/splash.png",
+      "android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
+      "android/app/src/main/res/drawable/ic_launcher_background.xml",
+      "android/app/src/main/res/drawable/splash.png",
+      "android/app/src/main/res/layout/activity_main.xml",
+      "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+      "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+      "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+      "android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
+      "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+      "android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+      "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
+      "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+      "android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+      "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
+      "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+      "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+      "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
+      "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+      "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
+      "android/app/src/main/res/values/ic_launcher_background.xml",
+      "android/app/src/main/res/values/strings.xml",
+      "android/app/src/main/res/values/styles.xml",
+      "android/app/src/main/res/xml/file_paths.xml",
+      "android/app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java",
+      "android/build.gradle",
+      "android/capacitor.settings.gradle",
+      "android/gradle.properties",
+      "android/gradle/wrapper/gradle-wrapper.jar",
+      "android/gradle/wrapper/gradle-wrapper.properties",
+      "android/gradlew",
+      "android/gradlew.bat",
+      "android/settings.gradle",
+      "android/variables.gradle",
+      "capacitor.config.ts",
+      "components/MapLibre3DView.tsx",
+      "components/OnboardingFlow.tsx",
+      "components/OverlayManager.tsx",
+      "components/StorageManager.tsx",
+      "contexts/UIContext.tsx",
+      "firebase.json",
+      "functions/.env",
+      "functions/lib/index.js",
+      "functions/lib/index.js.map",
+      "functions/package-lock.json",
+      "functions/package.json",
+      "functions/src/index.ts",
+      "functions/tsconfig.json",
+      "hooks/useCoPilot.ts",
+      "hooks/useLocationSync.ts",
+      "index.css",
+      "ios/.gitignore",
+      "ios/App/App.xcodeproj/project.pbxproj",
+      "ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist",
+      "ios/App/App/AppDelegate.swift",
+      "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
+      "ios/App/App/Assets.xcassets/AppIcon.appiconset/Contents.json",
+      "ios/App/App/Assets.xcassets/Contents.json",
+      "ios/App/App/Assets.xcassets/Splash.imageset/Contents.json",
+      "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732-1.png",
+      "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732-2.png",
+      "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732.png",
+      "ios/App/App/Base.lproj/LaunchScreen.storyboard",
+      "ios/App/App/Base.lproj/Main.storyboard",
+      "ios/App/App/Info.plist",
+      "ios/App/CapApp-SPM/.gitignore",
+      "ios/App/CapApp-SPM/Package.swift",
+      "ios/App/CapApp-SPM/README.md",
+      "ios/App/CapApp-SPM/Sources/CapApp-SPM/CapApp-SPM.swift",
+      "ios/debug.xcconfig",
+      "postcss.config.js",
+      "services/audioService.ts",
+      "services/chatService.ts",
+      "services/cryptoService.ts",
+      "services/mapSkinService.ts",
+      "services/meshService.ts",
+      "services/navigationEngine.ts",
+      "services/roadsideService.ts",
+      "services/sponsoredPlacesService.ts",
+      "services/userPlacesService.ts",
+      "tailwind.config.js"
     ],
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-16T15:26:35.742Z",
+  "lastSync": "2026-01-17T02:59:18.748Z",
   "reservedFiles": {}
 }

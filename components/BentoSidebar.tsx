@@ -11,6 +11,7 @@ interface BentoSidebarProps {
     inviteCode?: string;
     onCreateCircle: (name: string) => Promise<any>;
     onJoinCircle: (code: string) => Promise<any>;
+    avgGasPrice?: string;
 }
 
 const BentoSidebar: React.FC<BentoSidebarProps> = ({
@@ -21,13 +22,10 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     hasCircle,
     inviteCode,
     onCreateCircle,
-    onJoinCircle
+    onJoinCircle,
+    avgGasPrice = '$3.45'
 }) => {
-    const getBatteryColor = (battery: number) => {
-        if (battery <= 20) return '#ef4444';
-        if (battery <= 50) return '#f59e0b';
-        return '#22c55e';
-    };
+    const [isCollapsed, setIsCollapsed] = React.useState(false);
 
     const getStatusIcon = (status: string) => {
         switch (status) {
@@ -40,96 +38,115 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     };
 
     return (
-        <div className={`w-80 h-full p-4 overflow-y-auto no-scrollbar border-r backdrop-blur-2xl transition-colors duration-500
-      ${theme === 'dark'
-                ? 'bg-[#050505]/90 border-white/5 backdrop-blur-md'
-                : 'bg-white/90 border-slate-200 backdrop-blur-md'}`}
+        <div className={`relative h-full overflow-y-auto no-scrollbar border-r backdrop-blur-2xl transition-all duration-500 ease-in-out
+          ${isCollapsed ? 'w-20' : 'w-80'}
+          ${theme === 'dark'
+                ? 'bg-[#050505]/95 border-white/5'
+                : 'bg-white/95 border-slate-200'}`}
         >
-            <div className="mt-14 space-y-4">
-                {/* Header with Circle Management */}
-                <div className="flex items-center justify-between px-2">
-                    <h2 className={`text-lg font-black tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                        Circle
-                    </h2>
-                    {hasCircle && (
-                        <button
-                            onClick={() => {
-                                if (inviteCode) {
-                                    navigator.clipboard.writeText(inviteCode);
-                                    alert(`Invite Code: ${inviteCode} copied to clipboard!`);
-                                }
-                            }}
-                            className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all
-                                ${theme === 'dark' ? 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
-                        >
-                            + Add Family
-                        </button>
-                    )}
-                </div>
+            {/* Collapse Toggle */}
+            <button
+                onClick={() => setIsCollapsed(!isCollapsed)}
+                className={`absolute top-4 right-4 z-[100] w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-110 active:scale-90
+                    ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
+                title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            >
+                <span className={`text-xs transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`}>
+                    ◀️
+                </span>
+            </button>
 
-                {!hasCircle ? (
+            <div className={`mt-14 space-y-4 px-3 transition-opacity duration-300 ${isCollapsed ? 'opacity-100' : 'opacity-100'}`}>
+                {/* Header Section */}
+                {!isCollapsed && (
+                    <div className="flex items-center justify-between px-2 animate-in fade-in slide-in-from-left-2">
+                        <h2 className={`text-lg font-black tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                            Circle
+                        </h2>
+                        {hasCircle && (
+                            <button
+                                onClick={() => {
+                                    if (inviteCode) {
+                                        navigator.clipboard.writeText(inviteCode);
+                                        alert(`Invite Code: ${inviteCode} copied to clipboard!`);
+                                    }
+                                }}
+                                className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all
+                                    ${theme === 'dark' ? 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
+                            >
+                                + Add
+                            </button>
+                        )}
+                    </div>
+                )}
+
+                {!hasCircle && !isCollapsed ? (
                     <CircleManager
                         theme={theme}
                         onCreateCircle={onCreateCircle}
                         onJoinCircle={onJoinCircle}
                     />
                 ) : (
-                    <div className="grid grid-cols-2 gap-3">
-                        {/* Family Summary Card - Compact */}
-                        <div className={`col-span-2 px-4 py-3 rounded-2xl border transition-all hover:scale-[1.02] flex items-center justify-between
-                  ${theme === 'dark'
-                                ? 'bg-white/5 border-white/5 hover:bg-white/10'
-                                : 'bg-slate-50 border-slate-100'}`}
-                        >
-                            <div>
-                                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Live Status</p>
-                                <h3 className={`text-base font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                    {members.filter(m => m.status !== 'Offline').length} Active
-                                </h3>
-                            </div>
-                            <div className="flex -space-x-2">
-                                {members.slice(0, 3).map(m => (
-                                    <img key={m.id} src={m.avatar} className={`w-7 h-7 rounded-full border-2 ${theme === 'dark' ? 'border-slate-800' : 'border-white'} shadow-sm`} />
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Member Cards */}
-                        {members.map(member => (
-                            <div
-                                key={member.id}
-                                onClick={() => onSelect(member.id)}
-                                className={`group flex items-center gap-3 p-3 rounded-2xl transition-all cursor-pointer border
-                                ${selectedId === member.id
-                                        ? 'bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border-indigo-500/50'
-                                        : theme === 'dark'
-                                            ? 'bg-white/5 border-white/5 hover:bg-white/10'
-                                            : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
-                                    }`}
+                    <div className="flex flex-col gap-3">
+                        {/* Summary Card - Hidden when collapsed */}
+                        {!isCollapsed && hasCircle && (
+                            <div className={`px-4 py-3 rounded-2xl border transition-all hover:scale-[1.02] flex items-center justify-between animate-in fade-in slide-in-from-top-2
+                      ${theme === 'dark'
+                                    ? 'bg-white/5 border-white/5 hover:bg-white/10'
+                                    : 'bg-slate-50 border-slate-100'}`}
                             >
-                                <div className="relative shrink-0">
-                                    <img
-                                        src={member.avatar}
-                                        className={`w-12 h-12 rounded-xl object-cover transition-all
-                          ${selectedId === member.id ? `ring-2 ring-indigo-500 ring-offset-2 ${theme === 'dark' ? 'ring-offset-slate-900' : 'ring-offset-white'}` : ''}
-                          ${member.isGhostMode ? 'blur-sm grayscale opacity-70' : ''}
-                        `}
-                                    />
-                                    <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] border ${theme === 'dark' ? 'bg-slate-800 border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}>
-                                        {getStatusIcon(member.status)}
+                                <div>
+                                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Live Status</p>
+                                    <h3 className={`text-base font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                        {members.filter(m => m.status !== 'Offline').length} Active
+                                    </h3>
+                                </div>
+                                <div className="flex -space-x-2">
+                                    {members.slice(0, 3).map(m => (
+                                        <img key={m.id} src={m.avatar} className={`w-7 h-7 rounded-full border-2 ${theme === 'dark' ? 'border-slate-800' : 'border-white'} shadow-sm`} />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Member Grid/List */}
+                        <div className={`grid gap-3 ${isCollapsed ? 'grid-cols-1' : 'grid-cols-1'}`}>
+                            {members.map(member => (
+                                <div
+                                    key={member.id}
+                                    onClick={() => onSelect(member.id)}
+                                    className={`group relative flex items-center gap-3 rounded-2xl transition-all cursor-pointer border
+                                    ${isCollapsed ? 'p-1.5 justify-center' : 'p-3'}
+                                    ${selectedId === member.id
+                                            ? 'bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border-indigo-500/50'
+                                            : theme === 'dark'
+                                                ? 'bg-white/5 border-white/5 hover:bg-white/10'
+                                                : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
+                                        }`}
+                                    title={isCollapsed ? member.name : undefined}
+                                >
+                                    <div className="relative shrink-0">
+                                        <img
+                                            src={member.avatar}
+                                            className={`rounded-xl object-cover transition-all
+                              ${isCollapsed ? 'w-10 h-10' : 'w-12 h-12'}
+                              ${selectedId === member.id ? `ring-2 ring-indigo-500 ring-offset-2 ${theme === 'dark' ? 'ring-offset-slate-900' : 'ring-offset-white'}` : ''}
+                              ${member.isGhostMode ? 'blur-sm grayscale opacity-70' : ''}
+                            `}
+                                        />
+                                        <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] border ${theme === 'dark' ? 'bg-slate-800 border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}>
+                                            {getStatusIcon(member.status)}
+                                        </div>
+
+                                        {member.isGhostMode && (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-xl backdrop-blur-[1px]">
+                                                <span className="text-base drop-shadow-md">🛡️</span>
+                                            </div>
+                                        )}
                                     </div>
 
-                                    {/* Privacy Shield Overlay if Ghost Mode */}
-                                    {member.isGhostMode && (
-                                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-xl backdrop-blur-[1px]">
-                                            <span className="text-base drop-shadow-md">🛡️</span>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="flex-1 text-left min-w-0">
-                                    <div className="flex justify-between items-start">
-                                        <div>
+                                    {!isCollapsed && (
+                                        <div className="flex-1 text-left min-w-0 animate-in fade-in slide-in-from-left-2">
                                             <h3 className={`font-black text-sm tracking-tight truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                                                 {member.name}
                                             </h3>
@@ -139,33 +156,29 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
                                                 </span>
                                             </div>
-
-                                            <p className="text-[10px] text-slate-500 truncate mt-0.5 font-medium">
-                                                {member.currentPlace
-                                                    ? `Made ${member.wayType ? member.wayType.replace('Way', ' Way') : 'their Way'} to ${member.currentPlace}`
-                                                    : (member.status === 'Driving' ? `${member.speed} mph` : member.status)}
-                                            </p>
                                         </div>
-                                    </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Stats Row - Compact or Hidden when collapsed */}
+                        {!isCollapsed && (
+                            <div className={`p-3 rounded-2xl border flex items-center justify-around animate-in fade-in slide-in-from-bottom-2
+                      ${theme === 'dark' ? 'bg-white/5 border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
+                                <div className="flex flex-col items-center gap-0.5">
+                                    <span className="text-xl">🌤️</span>
+                                    <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>72°F</span>
+                                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">Sunny</span>
+                                </div>
+                                <div className={`w-px h-8 ${theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'}`} />
+                                <div className="flex flex-col items-center gap-0.5 text-amber-500">
+                                    <span className="text-xl">⛽</span>
+                                    <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{avgGasPrice}</span>
+                                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">Gas</span>
                                 </div>
                             </div>
-                        ))}
-
-                        {/* Dashboard Stats Row */}
-                        <div className={`col-span-2 p-3 rounded-2xl border flex items-center justify-around
-                  ${theme === 'dark' ? 'bg-white/5 border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
-                            <div className="flex flex-col items-center gap-0.5">
-                                <span className="text-xl">🌤️</span>
-                                <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>72°F</span>
-                                <span className="text-[10px] text-slate-500">Sunny</span>
-                            </div>
-                            <div className={`w-px h-8 ${theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'}`} />
-                            <div className="flex flex-col items-center gap-0.5">
-                                <span className="text-xl">⛽</span>
-                                <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>$3.45</span>
-                                <span className="text-[10px] text-slate-500">Avg. Gas</span>
-                            </div>
-                        </div>
+                        )}
                     </div>
                 )}
             </div>

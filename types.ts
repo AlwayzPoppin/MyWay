@@ -8,6 +8,7 @@ export interface Location {
 export interface RouteStep {
   instruction: string;
   distance: string;
+  endLocation?: Location; // Coordinates for the end of this step
 }
 
 export interface IncidentReport {
