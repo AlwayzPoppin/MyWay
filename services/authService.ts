@@ -245,6 +245,7 @@ export interface MemberLocation {
     battery: number;
     signalQuality?: string;
     encryptedData?: string;
+    status?: string;
 }
 
 export const updateMemberLocation = async (

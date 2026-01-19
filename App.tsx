@@ -825,7 +825,10 @@ const App: React.FC = () => {
                 mapSkin={userSettings.mapSkin}
                 selectedMemberId={selectedMemberId}
                 center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined} // MapLibre needs [lng, lat]
-                onUserInteraction={() => { }}
+                onUserInteraction={() => {
+                  if (selectedMemberId) setSelectedMemberId(null);
+                  if (mapCenter) setMapCenter(undefined);
+                }}
                 activeRoute={activeRoute}
                 places={discoveredPlaces}
                 incidents={incidents}
@@ -851,7 +854,11 @@ const App: React.FC = () => {
                   setMapCenter(undefined);
                 }}
                 onBoundsChange={setMapBounds}
-                onUserInteraction={() => { }}
+                onUserInteraction={() => {
+                  if (selectedMemberId) setSelectedMemberId(null);
+                  // Leaflet MapView might handle center differently or need similar reset
+                  // keeping it consistent with 3D view logic
+                }}
                 center={mapCenter} // MapView (Leaflet) needs [lat, lng]
                 is3DMode={false}
               />

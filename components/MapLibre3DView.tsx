@@ -416,4 +416,4 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     );
 };
 
-export default MapLibre3DView;
+export default React.memo(MapLibre3DView);

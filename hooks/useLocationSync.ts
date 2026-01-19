@@ -49,12 +49,16 @@ export const useLocationSync = (
                         avatar: user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetId}`,
                         location: { lat: location.latitude, lng: location.longitude },
                         status: (location.speed && location.speed > 5) ? 'Driving' : 'Stationary',
-                        batteryLevel: 100,
+                        battery: 100,
                         membershipTier: profile?.membershipTier || 'free',
                         lastUpdated: new Date().toISOString(),
                         isGhostMode: false,
                         speed: Math.round(location.speed || 0),
-                        heading: location.heading || 0
+                        heading: location.heading || 0,
+                        role: 'Primary',
+                        safetyScore: 100,
+                        pathHistory: [],
+                        driveEvents: []
                     };
                     return [newSelf, ...prev.filter(m => m.id !== targetId)];
                 }
@@ -82,8 +86,21 @@ export const useLocationSync = (
 
                     const encrypted = await encryptLocation(location.latitude, location.longitude);
 
-                    // Prevent syncing if E2EE keys aren't ready yet (prevents "Encryption skipped" console spam)
-                    if (!encrypted) return;
+                    // UX Fix: If keys aren't ready, sync "Pending Keys" status so user doesn't appear offline
+                    if (!encrypted) {
+                        await updateMemberLocation(currentCircleId, user.uid, {
+                            lat: 0, // Fallback (Null Island) - receiver handles this
+                            lng: 0,
+                            speed: 0,
+                            heading: 0,
+                            accuracy: 0,
+                            timestamp: Date.now(),
+                            battery: 100,
+                            signalQuality: 'unknown',
+                            status: 'Pending Keys'
+                        });
+                        return;
+                    }
 
                     const fuzzy = getFuzzyLocation(location.latitude, location.longitude);
 
@@ -96,7 +113,8 @@ export const useLocationSync = (
                         timestamp: Date.now(),
                         battery: 100, // TODO: Real battery hook
                         signalQuality: location.signalQuality,
-                        encryptedData: encrypted
+                        encryptedData: encrypted,
+                        status: 'Online' // Default status when syncing normally
                     });
                 };
                 syncLocation();
@@ -137,7 +155,7 @@ export const useLocationSync = (
                         heading: loc.heading,
                         battery: loc.battery,
                         lastUpdated: new Date(loc.timestamp).toISOString(),
-                        status: (loc.speed > 5) ? 'Driving' : (loc.speed > 0.5) ? 'Moving' : 'Stationary',
+                        status: loc.status || ((loc.speed > 5) ? 'Driving' : (loc.speed > 0.5) ? 'Moving' : 'Stationary'),
                         signalQuality: loc.signalQuality
                     };
                 }));
