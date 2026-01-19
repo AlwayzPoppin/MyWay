@@ -3,13 +3,14 @@ import React, { useState } from 'react';
 
 interface SearchBoxProps {
   onSearch: (query: string) => void;
+  onLocate?: () => void;
   onQuickStop?: () => void;
   onTestDrive?: () => void;
   onCategorySearch?: (type: 'gas' | 'coffee' | 'food' | 'grocery') => void;
   theme: 'light' | 'dark';
 }
 
-const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onQuickStop, onTestDrive, onCategorySearch, theme }) => {
+const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onLocate, onQuickStop, onTestDrive, onCategorySearch, theme }) => {
   const [query, setQuery] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [showCategories, setShowCategories] = useState(false);
@@ -71,6 +72,16 @@ const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onQuickStop, onTestDriv
           />
 
           <div className="flex items-center gap-2 pr-1">
+            {onLocate && (
+              <button
+                type="button"
+                onClick={onLocate}
+                className="w-10 h-10 rounded-2xl bg-white/5 text-slate-300 flex items-center justify-center hover:bg-white/10 transition-all border border-white/5"
+                title="Current Location"
+              >
+                <span className="text-xl">🎯</span>
+              </button>
+            )}
             {onQuickStop && (
               <button
                 type="button"

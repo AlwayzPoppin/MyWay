@@ -17,7 +17,10 @@ interface MapViewProps {
   onBoundsChange?: (bounds: { north: number; south: number; east: number; west: number }) => void;
   onUserInteraction?: () => void;
   is3DMode?: boolean;
+  center?: [number, number]; // [lat, lng] for Leaflet
 }
+
+
 
 // Status-based halo colors with battery awareness
 const getStatusHalo = (member: FamilyMember, isGold: boolean) => {
@@ -306,13 +309,21 @@ const MapView: React.FC<MapViewProps> = ({
   onSelectMember,
   onBoundsChange,
   onUserInteraction,
-  is3DMode = false
+  is3DMode = false,
+  center
 }) => {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const trailsRef = useRef<Map<string, L.Polyline>>(new Map());
   const [mapReady, setMapReady] = useState(false);
+
+  // Fly to center when it changes
+  useEffect(() => {
+    if (mapRef.current && center && !isNaN(center[0]) && !isNaN(center[1])) {
+      mapRef.current.flyTo(center, 16);
+    }
+  }, [center]);
 
   // Initialize map
   useEffect(() => {

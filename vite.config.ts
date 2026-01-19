@@ -8,12 +8,13 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       port: 3000,
-      host: '0.0.0.0',
-      https: true, // Enable HTTPS for mobile GPS testing
+      host: 'localhost',
+      watch: {
+        usePolling: true,
+      },
     },
     plugins: [
       react(),
-      basicSsl() // Self-signed cert for local dev
     ],
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),

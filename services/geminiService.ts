@@ -77,7 +77,21 @@ export const generateBriefingAudio = async (insights: DailyInsight[]): Promise<s
 
 export const searchPlacesOnMap = async (query: string, currentLoc: { lat: number, lng: number }): Promise<Place[]> => {
   const ai = getAi();
-  const prompt = `Find 5 ${query} near [${currentLoc.lat}, ${currentLoc.lng}]. Return a JSON list of places. Each place must have name, location {lat, lng}, type (gas, food, coffee, other), and icon (emoji). Include brand colors if known.`;
+  const prompt = `You are a map search engine for the MyWay GPS app. 
+  User query: "${query}"
+  Current vicinity: [${currentLoc.lat}, ${currentLoc.lng}]
+  
+  If the query is a specific address or a famous landmark, find its exact coordinates. 
+  If it's a category (like "coffee" or "gas"), find 5 of the best/closest options.
+  
+  Return a JSON list of places. Each place must have:
+  - name: string
+  - location: {lat, lng}
+  - type: 'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result'
+  - icon: string (emoji)
+  - brandColor: string (hex, optional)
+  
+  Exclude the user's current location from results.`;
 
   try {
     const results = await withRetry(async () => {

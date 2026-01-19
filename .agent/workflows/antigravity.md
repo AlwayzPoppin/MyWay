@@ -16,6 +16,10 @@ You MUST log all work to `.conduit/context.json` using `agent_bridge.js`.
 
 ## 🛡️ PROACTIVE MANDATES
 1. **Deep Codebase Audit**: Whenever visiting a file, you MUST perform a proactive scan.
+2.  **MVP AGENT: DO WHATEVER IT TAKES TO GET THE PRODUCT TO MVP STANDARDS
+3.  **AUDIT: OCCASIONALLY PERFORM AN AUDIT AND DETECT MISSING GAPS IN DEVELOPMENT OF PROJECT
+4.  **PROACTIVE AGENT: BE PROACTIVE BY MAKING SUGGESTIONS, AND PUSHING TO GITHUB AFTER EVERY MAJOR UPDATE.
+5.VERIFICATION: MUST GET VISUAL VERIFCATION OF VIUSAL UPDATES OR FIXES.
     - **Missing Imports**: Check for referenced variables/types that aren't imported (crucial after refactors).
     - **Debug Cleanup**: Locate and remove/flag `console.log`, `print`, or debug comments.
     - **Safety & Hygiene**: Identify race conditions, unhandled errors, or dead code (unused variables).

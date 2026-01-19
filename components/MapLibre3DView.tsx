@@ -12,6 +12,10 @@ interface MapLibre3DViewProps {
     center?: [number, number]; // [lng, lat]
     zoom?: number;
     onUserInteraction?: () => void;
+    activeRoute?: any; // NavigationRoute | null
+    places?: any[]; // Place[]
+    incidents?: any[]; // IncidentReport[]
+    privacyZones?: any[]; // PrivacyZone[]
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
@@ -21,15 +25,22 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     selectedMemberId,
     center = [-80.8431, 35.2271], // NC default (Charlotte)
     zoom = 16,
-    onUserInteraction
+    onUserInteraction,
+    activeRoute,
+    places = [],
+    incidents = [],
+    privacyZones = []
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
     const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const [isMapReady, setIsMapReady] = React.useState(false);
+    const placesMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const incidentsMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
     // Get the skin style URL
     // If skin is default, respect the app theme (Light/Dark)
-    const skin = getMapSkin(mapSkin);
+    const skin = getMapSkin(mapSkin as MapSkinId);
     let styleUrl = skin.styleUrl;
 
     if (mapSkin === 'default' && theme === 'dark') {
@@ -42,18 +53,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         map.current = new maplibregl.Map({
             container: mapContainer.current,
             style: styleUrl,
-            center: center,
+            center: center as [number, number],
             zoom: zoom,
             pitch: 60, // Tilt for 3D effect
             bearing: -17.6, // Rotation
-            antialias: true
         });
 
         map.current.on('load', () => {
             if (!map.current) return;
 
             // Apply skin-specific color overrides
-            applySkinOverrides(map.current, mapSkin);
+            applySkinOverrides(map.current, mapSkin as MapSkinId);
 
             // CartoCSS styles don't have building heights, so we add a fill-extrusion layer
             // with procedural heights based on the building geometry
@@ -122,16 +132,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 map.current.on('sourcedata', (e) => {
                     if (e.isSourceLoaded && e.sourceId === source) {
                         const features = map.current?.querySourceFeatures(source, { sourceLayer });
-                        if (features && features.length > 0) {
-                            console.log('[3D] Sample feature properties:', features[0].properties);
-                        }
                     }
                 });
-            } else {
-                console.log('No building layer found in style, 3D buildings disabled');
             }
 
-            console.log(`MapLibre 3D initialized with skin: ${mapSkin}, pitch: ${map.current.getPitch()}`);
+            setIsMapReady(true);
         });
 
         // Track user interaction
@@ -146,6 +151,171 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             map.current = null;
         };
     }, [styleUrl, mapSkin]);
+
+    // Update Route Line
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+
+        const routeId = 'active-route-line';
+        const routeData = activeRoute && activeRoute.steps ? {
+            'type': 'Feature',
+            'properties': {},
+            'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                    [activeRoute.startLoc?.lng || activeRoute.steps[0]?.startLocation?.lng || center[0],
+                    activeRoute.startLoc?.lat || activeRoute.steps[0]?.startLocation?.lat || center[1]],
+                    ...activeRoute.steps.filter((s: any) => s.endLocation).map((s: any) => [s.endLocation.lng, s.endLocation.lat]),
+                    [activeRoute.destinationLoc.lng, activeRoute.destinationLoc.lat]
+                ]
+            }
+        } : null;
+
+        if (map.current.getSource(routeId)) {
+            (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(routeData as any || { type: 'FeatureCollection', features: [] });
+        } else if (routeData) {
+            map.current.addSource(routeId, {
+                'type': 'geojson',
+                'data': routeData as any
+            });
+
+            map.current.addLayer({
+                'id': routeId,
+                'type': 'line',
+                'source': routeId,
+                'layout': {
+                    'line-join': 'round',
+                    'line-cap': 'round'
+                },
+                'paint': {
+                    'line-color': '#6366f1',
+                    'line-width': 8,
+                    'line-opacity': 0.8
+                }
+            });
+
+            // Add a glow effect
+            map.current.addLayer({
+                'id': `${routeId}-glow`,
+                'type': 'line',
+                'source': routeId,
+                'layout': {
+                    'line-join': 'round',
+                    'line-cap': 'round'
+                },
+                'paint': {
+                    'line-color': '#818cf8',
+                    'line-width': 12,
+                    'line-opacity': 0.3
+                }
+            }, routeId);
+        }
+    }, [activeRoute, map.current?.isStyleLoaded()]);
+
+    // Update Places Markers
+    useEffect(() => {
+        if (!map.current) return;
+
+        places.forEach(place => {
+            if (!placesMarkersRef.current.has(place.id)) {
+                const el = document.createElement('div');
+                el.className = 'maplibre-place-marker';
+                el.innerHTML = `<div style="font-size: 24px;">${place.icon}</div>`;
+                el.style.cursor = 'pointer';
+
+                const marker = new maplibregl.Marker({ element: el })
+                    .setLngLat([place.location.lng, place.location.lat])
+                    .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<b>${place.name}</b>`))
+                    .addTo(map.current!);
+
+                placesMarkersRef.current.set(place.id, marker);
+            }
+        });
+
+        // Cleanup
+        placesMarkersRef.current.forEach((marker, id) => {
+            if (!places.find(p => p.id === id)) {
+                marker.remove();
+                placesMarkersRef.current.delete(id);
+            }
+        });
+    }, [places]);
+
+    // Update Incident Markers
+    useEffect(() => {
+        if (!map.current) return;
+
+        incidents.forEach(incident => {
+            if (!incidentsMarkersRef.current.has(incident.id)) {
+                const el = document.createElement('div');
+                el.className = 'maplibre-incident-marker';
+                el.innerHTML = `<div style="font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5))">⚠️</div>`;
+                el.style.cursor = 'pointer';
+
+                const marker = new maplibregl.Marker({ element: el })
+                    .setLngLat([incident.location.lng, incident.location.lat])
+                    .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<b>${incident.type.toUpperCase()}</b>`))
+                    .addTo(map.current!);
+
+                incidentsMarkersRef.current.set(incident.id, marker);
+            }
+        });
+
+        // Cleanup
+        incidentsMarkersRef.current.forEach((marker, id) => {
+            if (!incidents.find(i => i.id === id)) {
+                marker.remove();
+                incidentsMarkersRef.current.delete(id);
+            }
+        });
+    }, [incidents]);
+
+    // Update Privacy Zones
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+
+        privacyZones.forEach(zone => {
+            const sourceId = `privacy-zone-${zone.id}`;
+            if (!map.current?.getSource(sourceId)) {
+                // Simple circular approximation with 64 points
+                const points = 64;
+                const radius = zone.radius || 0.1; // km
+                const coords = [];
+                const distanceX = radius / (111.32 * Math.cos(zone.location.lat * Math.PI / 180));
+                const distanceY = radius / 110.574;
+
+                for (let i = 0; i < points; i++) {
+                    const theta = (i / points) * (2 * Math.PI);
+                    const x = distanceX * Math.cos(theta);
+                    const y = distanceY * Math.sin(theta);
+                    coords.push([zone.location.lng + x, zone.location.lat + y]);
+                }
+                coords.push(coords[0]);
+
+                map.current?.addSource(sourceId, {
+                    'type': 'geojson',
+                    'data': {
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'Polygon',
+                            'coordinates': [coords]
+                        },
+                        'properties': {}
+                    }
+                });
+
+                map.current?.addLayer({
+                    'id': sourceId,
+                    'type': 'fill',
+                    'source': sourceId,
+                    'paint': {
+                        'fill-color': '#6366f1',
+                        'fill-opacity': 0.2
+                    }
+                });
+            }
+        });
+    }, [privacyZones, map.current?.isStyleLoaded()]);
 
     // Update member markers
     useEffect(() => {
@@ -218,6 +388,24 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             });
         }
     }, [selectedMemberId, members]);
+
+    // Fly to center when it changes (e.g. from search)
+    useEffect(() => {
+        if (!map.current || !center) return;
+
+        // Check if we are already roughly at the center to avoid infinite loops or jitter
+        const currentCenter = map.current.getCenter();
+        const dist = Math.sqrt(Math.pow(currentCenter.lng - center[0], 2) + Math.pow(currentCenter.lat - center[1], 2));
+
+        if (dist > 0.0001) { // Only fly if the change is significant
+            map.current.flyTo({
+                center: center,
+                zoom: 17,
+                pitch: 60,
+                duration: 2000
+            });
+        }
+    }, [center]);
 
     return (
         <div

@@ -138,12 +138,12 @@ const App: React.FC = () => {
 
   // Auto-center effect (now derived from hook state)
   const [hasInitiallyCentered, setHasInitiallyCentered] = useState(false);
+  const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   useEffect(() => {
     if (userLocation && !hasInitiallyCentered) {
       const targetId = user?.uid || 'demo-you';
       setSelectedMemberId(targetId);
       setHasInitiallyCentered(true);
-      console.log(`[Location] Centering on ${targetId} at NC coordinates (or detected GPS)`);
     }
   }, [userLocation, hasInitiallyCentered, user]);
 
@@ -154,7 +154,6 @@ const App: React.FC = () => {
     const setupBackgroundListeners = async () => {
       // 1. App State Listener
       CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        console.log(`[Lifecycle] App is now ${isActive ? 'Active' : 'Background'}`);
         if (!isActive) {
           // When backgrounded, ensure location service continues in persistent mode
           // Native BackgroundGeolocation plugin handles the heavy lifting
@@ -247,7 +246,13 @@ const App: React.FC = () => {
     } else {
       setInsights(prev => prev.filter(i => i.id !== 'offline-status'));
     }
-  }, [isOffline]);
+
+    // Forensic Fix: Force 2D mode when offline to prevent raster/vector incompatibility
+    if (isOffline && is3DMode) {
+      set3DMode(false);
+      showNotification('Map switched to 2D for offline reliability', 3000);
+    }
+  }, [isOffline, is3DMode, set3DMode, showNotification]);
 
   const [geofences, setGeofences] = useState<Geofence[]>([]);
   const geofenceStatesRef = useRef<Record<string, Record<string, GeofenceStatus>>>({}); // { memberId: { geofenceId: 'INSIDE' | 'OUTSIDE' } }
@@ -286,7 +291,7 @@ const App: React.FC = () => {
         setRewards(firebaseRewards);
       } else {
         // Seed initial rewards if none exist
-        seedRewards().then(() => console.log('Initial rewards seeded!'));
+        seedRewards();
       }
     });
     return () => unsubscribe();
@@ -299,7 +304,7 @@ const App: React.FC = () => {
         setSponsoredPlaces(places);
       } else {
         // Seed default sponsored places if none exist
-        seedSponsoredPlaces().then(() => console.log('Sponsored places seeded!'));
+        seedSponsoredPlaces();
       }
     });
     return () => unsubscribe();
@@ -318,8 +323,7 @@ const App: React.FC = () => {
         setUserPlaces(places);
       } else {
         // Seed default "Home" place for new circles
-        seedDefaultPlaces(profile.familyCircleId, user.uid, userLocation || undefined)
-          .then(() => console.log('Default places seeded!'));
+        seedDefaultPlaces(profile.familyCircleId, user.uid, userLocation || undefined);
       }
     });
     return () => unsubscribe();
@@ -377,14 +381,13 @@ const App: React.FC = () => {
             const sharedSecret = await deriveSharedSecretKey(keys.privateKey, ownerPubKey);
             const unwrapped = await unwrapCircleKey(wrapped, sharedSecret);
             setFamilyKey(unwrapped);
-            console.log("🔐 E2EE Circle Key Synchronized via ECDH from Owner");
           }
         });
       }
     };
 
     initE2EE();
-  }, [user?.uid, profile?.familyCircleId, isOwner, !!currentCircle]);
+  }, [user?.uid, profile?.familyCircleId, isOwner, !!currentCircle, ecdhKeyPair, profile, currentCircle]);
 
 
   // Sync Audio Service state
@@ -457,7 +460,7 @@ const App: React.FC = () => {
         setUserSettings(prev => ({ ...prev, theme: profile.settings.theme }));
       }
     }
-  }, [user, profile]);
+  }, [user, profile, setMembers, setTheme]);
 
   // Subscribe to Geofences
   useEffect(() => {
@@ -550,7 +553,7 @@ const App: React.FC = () => {
         setNavState(newNavState);
       }
     }
-  }, [userLocation, isNavigating, activeRoute, navState, safetyScore]);
+  }, [userLocation, isNavigating, activeRoute, navState, safetyScore, showNotification]);
 
   // --- Geofence Logic (Modular) ---
   useEffect(() => {
@@ -562,8 +565,6 @@ const App: React.FC = () => {
           const transition = detectTransition(member.location, geofence, previousStatus);
 
           if (transition) {
-            console.log(`Geofence Transition: ${member.name} ${transition.to} ${geofence.name}`);
-
             if (!geofenceStatesRef.current[member.id]) {
               geofenceStatesRef.current[member.id] = {};
             }
@@ -587,7 +588,7 @@ const App: React.FC = () => {
         });
       });
     }
-  }, [members, geofences]);
+  }, [members, geofences, showNotification]);
 
   useEffect(() => {
     if (members.length === 0) return;
@@ -661,6 +662,23 @@ const App: React.FC = () => {
     startSearchTransition(async () => {
       const results = await searchPlacesOnMap(query, members[0].location);
       setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces, ...results]);
+
+      if (results.length > 0) {
+        // Find best match - if we searched for an address, it's usually the first result
+        const topResult = results[0];
+
+        // Smarter heuristic: If the query is long or has numbers, it's likely an address search
+        // In that case, we should fly the map to the result
+        const isLikelySpecific = query.length > 8 || /\d/.test(query);
+
+        if (isLikelySpecific) {
+          showNotification(`📍 Found ${topResult.name}`, 3000);
+          // Set center (Standardize to [lng, lat] internally for App state if possible, or convert per map)
+          // Let's use [lat, lng] for internal App state as it's more common in GPS logic
+          setMapCenter([topResult.location.lat, topResult.location.lng]);
+          setSelectedMemberId(null); // Clear selected member to allow centering on the search
+        }
+      }
     });
   };
 
@@ -806,7 +824,12 @@ const App: React.FC = () => {
                 theme={theme}
                 mapSkin={userSettings.mapSkin}
                 selectedMemberId={selectedMemberId}
-                onUserInteraction={() => setSelectedMemberId(null)}
+                center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined} // MapLibre needs [lng, lat]
+                onUserInteraction={() => { }}
+                activeRoute={activeRoute}
+                places={discoveredPlaces}
+                incidents={incidents}
+                privacyZones={privacyZones}
               />
             ) : (
               <MapView
@@ -819,10 +842,17 @@ const App: React.FC = () => {
                 activeRoute={activeRoute}
                 isNavigating={isNavigating || isDriveMode}
                 theme={theme}
-                onSelectPlace={(p) => handleStartNavigation(p.name)}
-                onSelectMember={setSelectedMemberId}
+                onSelectPlace={(place) => {
+                  setSelectedMemberId(null);
+                  setMapCenter([place.location.lat, place.location.lng]);
+                }}
+                onSelectMember={(id) => {
+                  setSelectedMemberId(id);
+                  setMapCenter(undefined);
+                }}
                 onBoundsChange={setMapBounds}
-                onUserInteraction={() => setSelectedMemberId(null)}
+                onUserInteraction={() => { }}
+                center={mapCenter} // MapView (Leaflet) needs [lat, lng]
                 is3DMode={false}
               />
             )}
@@ -932,6 +962,12 @@ const App: React.FC = () => {
                   <SearchBox
                     onSearch={handleDiscovery}
                     onCategorySearch={handleQuickSearch}
+                    onLocate={() => {
+                      const targetId = user?.uid || 'demo-you';
+                      setSelectedMemberId(targetId);
+                      setMapCenter(undefined); // Reset specific search center to follow user
+                      showNotification("📍 Centered on your location", 2000);
+                    }}
                     onQuickStop={() => setQuickStopOpen(true)}
                     onTestDrive={() => handleStartNavigation("Simulated Destination", true)}
                     theme={theme}
@@ -972,18 +1008,6 @@ const App: React.FC = () => {
 
               {/* Cluster 1: Intelligence & Navigation */}
               <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl">
-                <button
-                  onClick={() => {
-                    const targetId = user?.uid || 'demo-you';
-                    setSelectedMemberId(targetId);
-                    showNotification("📍 Centered on your location", 2000);
-                  }}
-                  className="w-11 h-11 rounded-2xl bg-white/5 text-slate-300 flex items-center justify-center hover:bg-white/10 transition-all"
-                  title="Current Location"
-                >
-                  <span className="text-xl">🎯</span>
-                </button>
-                <div className="w-8 h-px bg-white/10 self-center" />
                 <button
                   onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
                   className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all
@@ -1074,6 +1098,7 @@ const App: React.FC = () => {
                     }
                   }}
                   onSignOut={logout}
+                  currentLocation={userLocation || undefined}
                   onManageSubscription={async () => {
                     try {
                       await goToBillingPortal();

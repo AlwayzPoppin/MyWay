@@ -453,15 +453,36 @@
         "index.css"
       ],
       "timestamp": "2026-01-17T02:50:27.203Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "Mapped development drive to Z: and sanitized project path to MYWAY-GPS.",
+      "files": [],
+      "timestamp": "2026-01-19T17:08:51.628Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "Implemented address search improvements in geminiService.ts and App.tsx.",
+      "files": [],
+      "timestamp": "2026-01-19T17:08:51.826Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "Consolidated 'Current Location' tool into the SearchBox UI cluster.",
+      "files": [],
+      "timestamp": "2026-01-19T17:08:52.016Z"
     }
   ],
   "handoffs": [],
   "plans": [],
   "agentIntents": {
     "antigravity": {
-      "status": "idle",
-      "intent": "Waiting for task",
-      "lastUpdate": "2026-01-14T22:38:38.257Z"
+      "status": "working",
+      "intent": "Activating Antigravity tools and performing proactive audit",
+      "lastUpdate": "2026-01-19T17:08:42.433Z"
     },
     "gemini": {
       "status": "idle",
@@ -608,6 +629,15 @@
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-17T02:59:18.748Z",
-  "reservedFiles": {}
+  "lastSync": "2026-01-19T17:08:42.435Z",
+  "reservedFiles": {},
+  "version": "0.42.4",
+  "preferences": {
+    "sync": true,
+    "hideDone": false,
+    "autoRefresh": true,
+    "audioAlerts": true,
+    "hideDonePlans": false
+  },
+  "recentEvents": "[17:15] antigravity: AGENT UPDATE: antigravity [working] intent: \"Replaced OSMBuildings with MapLibre GL for 3D buildings\"\n[17:59] system: CONDUIT: [antigravity] Applied Refactor Lab patches: Driving behavior analysis, Roadside Assistance service, Hybrid BLE Mesh\n[18:10] system: CONDUIT: [antigravity] Implemented Generative 3D Map Skins: 6 themes (2 free, 4 Platinum), Settings UI, MapLibre integration\n[18:12] system: CONDUIT: [antigravity] Fixed Center on Location button - added selectedMemberId prop and flyTo effect to MapLibre3DView\n[12:08] antigravity: AGENT UPDATE: antigravity [working] intent: \"Activating Antigravity tools and performing proactive audit\"\n[12:08] system: CONDUIT: [antigravity] Mapped development drive to Z: and sanitized project path to MYWAY-GPS.\n[12:08] system: CONDUIT: [antigravity] Implemented address search improvements in geminiService.ts and App.tsx.\n[12:08] system: CONDUIT: [antigravity] Consolidated 'Current Location' tool into the SearchBox UI cluster."
 }

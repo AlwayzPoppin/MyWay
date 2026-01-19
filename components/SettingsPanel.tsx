@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { MAP_SKINS, MapSkinId, getAvailableSkins } from '../services/mapSkinService';
-import { PremiumUpsellModal } from './PremiumUpsellModal';
+import PremiumUpsellModal from './PremiumUpsellModal';
 import StorageManager from './StorageManager';
 import { Place } from '../types';
 
@@ -36,6 +36,7 @@ interface SettingsPanelProps {
     // New props for account management
     onSignOut?: () => void;
     onManageSubscription?: () => void;
+    currentLocation?: { lat: number, lng: number };
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -52,7 +53,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onAddPlace,
     onDeletePlace,
     onSignOut,
-    onManageSubscription
+    onManageSubscription,
+    currentLocation
 }) => {
     const [localSettings, setLocalSettings] = useState(settings);
     const [showAddPlace, setShowAddPlace] = useState(false);
@@ -69,8 +71,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <button
             onClick={() => onChange(!enabled)}
             className={`relative w - 12 h - 6 rounded - full transition - all ${enabled
-                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600'
-                    : theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'
+                ? 'bg-gradient-to-r from-indigo-500 to-purple-600'
+                : theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'
                 } `}
         >
             <div className={`absolute top - 0.5 w - 5 h - 5 rounded - full bg - white shadow - md transition - all ${enabled ? 'left-6' : 'left-0.5'
@@ -154,10 +156,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     key={t}
                                     onClick={() => updateSetting('theme', t)}
                                     className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.theme === t
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white'
-                                            : theme === 'dark'
-                                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white'
+                                        : theme === 'dark'
+                                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                         } `}
                                 >
                                     {t === 'auto' ? '🌓 Auto' : t === 'light' ? '☀️ Light' : '🌙 Dark'}
@@ -171,8 +173,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             value={localSettings.mapStyle}
                             onChange={(e) => updateSetting('mapStyle', e.target.value as UserSettings['mapStyle'])}
                             className={`px - 3 py - 2 rounded - xl text - sm outline - none ${theme === 'dark'
-                                    ? 'bg-white/5 text-white'
-                                    : 'bg-slate-100 text-slate-900'
+                                ? 'bg-white/5 text-white'
+                                : 'bg-slate-100 text-slate-900'
                                 } `}
                         >
                             <option value="standard">Standard</option>
@@ -188,10 +190,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     key={u}
                                     onClick={() => updateSetting('units', u)}
                                     className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.units === u
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white'
-                                            : theme === 'dark'
-                                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white'
+                                        : theme === 'dark'
+                                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                         } `}
                                 >
                                     {u === 'imperial' ? 'mi/mph' : 'km/kph'}
@@ -211,10 +213,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     key={p}
                                     onClick={() => updateSetting('aiPersonality', p)}
                                     className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.aiPersonality === p
-                                            ? 'bg-gradient-to-r from-teal-400 to-emerald-500 text-white'
-                                            : theme === 'dark'
-                                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        ? 'bg-gradient-to-r from-teal-400 to-emerald-500 text-white'
+                                        : theme === 'dark'
+                                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                         } `}
                                 >
                                     {p === 'grok' ? '🌶️ Grok' : p === 'newyork' ? '🗽 NY' : '🛡️ Standard'}
@@ -230,10 +232,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     key={g}
                                     onClick={() => updateSetting('aiGender', g)}
                                     className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.aiGender === g
-                                            ? 'bg-gradient-to-r from-teal-400 to-emerald-500 text-white'
-                                            : theme === 'dark'
-                                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        ? 'bg-gradient-to-r from-teal-400 to-emerald-500 text-white'
+                                        : theme === 'dark'
+                                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                         } `}
                                 >
                                     {g === 'male' ? '👨 Male' : '👩 Female'}
@@ -261,10 +263,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     disabled={isLocked}
                                     onClick={() => !isLocked && updateSetting('mapSkin', skin.id)}
                                     className={`relative p - 3 rounded - xl text - center transition - all ${isSelected
-                                            ? 'bg-gradient-to-br from-teal-400 to-emerald-500 text-white ring-2 ring-teal-300'
-                                            : isLocked
-                                                ? theme === 'dark' ? 'bg-white/5 text-slate-500 opacity-60' : 'bg-slate-100 text-slate-400 opacity-60'
-                                                : theme === 'dark' ? 'bg-white/5 text-slate-300 hover:bg-white/10' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        ? 'bg-gradient-to-br from-teal-400 to-emerald-500 text-white ring-2 ring-teal-300'
+                                        : isLocked
+                                            ? theme === 'dark' ? 'bg-white/5 text-slate-500 opacity-60' : 'bg-slate-100 text-slate-400 opacity-60'
+                                            : theme === 'dark' ? 'bg-white/5 text-slate-300 hover:bg-white/10' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                         } `}
                                 >
                                     <span className="text-2xl block mb-1">{skin.preview}</span>
@@ -383,7 +385,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                             onAddPlace({
                                                 name: newPlaceName.trim(),
                                                 icon: newPlaceIcon,
-                                                location: { lat: 35.2271, lng: -80.8431 }, // NC default (Charlotte)
+                                                location: currentLocation || { lat: 35.2271, lng: -80.8431 }, // Fallback to NC if location not available
                                                 radius: 0.003,
                                                 type: 'other'
                                             });
@@ -412,8 +414,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         <button
                             onClick={() => setShowAddPlace(true)}
                             className={`w - full py - 3 rounded - xl font - medium border - 2 border - dashed transition - all ${theme === 'dark'
-                                    ? 'border-white/20 text-slate-400 hover:border-white/40 hover:text-white'
-                                    : 'border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700'
+                                ? 'border-white/20 text-slate-400 hover:border-white/40 hover:text-white'
+                                : 'border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700'
                                 } `}
                         >
                             + Add New Place
@@ -430,8 +432,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             <button
                                 onClick={onOpenOfflineMaps}
                                 className={`px - 3 py - 1.5 rounded - lg text - xs font - bold transition - all border ${theme === 'dark'
-                                        ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
-                                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                    ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                     } `}
                             >
                                 Manage Maps
@@ -446,22 +448,22 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         <button
                             onClick={onManageSubscription}
                             className={`w - full py - 3 rounded - xl font - medium transition - colors ${theme === 'dark'
-                                    ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                 } `}
                         >
                             💳 Manage Subscription
                         </button>
                     )}
                     <button className={`w - full py - 3 rounded - xl font - medium transition - colors ${theme === 'dark'
-                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         } `}>
                         Manage Family Circle
                     </button>
                     <button className={`w - full py - 3 rounded - xl font - medium transition - colors ${theme === 'dark'
-                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         } `}>
                         Privacy Policy
                     </button>
