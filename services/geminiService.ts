@@ -1,14 +1,26 @@
 
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { Type, Modality, GoogleGenAI } from "@google/genai";
 import { FamilyMember, NavigationRoute, DailyInsight, Place } from "../types";
+import { functions } from './firebase';
+import { httpsCallable } from 'firebase/functions';
 
-const getAi = () => {
-  const key = (import.meta as any).env.VITE_GEMINI_API_KEY;
-  if (!key) {
-    console.warn("VITE_GEMINI_API_KEY is not defined");
-  }
-  return new GoogleGenAI({ apiKey: key || '' });
+// SECURE: API keys are handled server-side in Firebase Functions
+// We use a proxy function to avoid exposing keys in the client bundle.
+
+const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.0-flash-exp') => {
+  const geminiFn = httpsCallable<
+    { prompt: any; config?: any; model?: string },
+    { text: string; candidates: any[] }
+  >(functions, 'callGeminiAI');
+
+  const result = await geminiFn({ prompt, config, model });
+  return result.data;
 };
+
+// SECURITY FIX: Direct API key access has been removed to prevent exposure in client bundle.
+// The connectCoPilot function now requires a server-side WebSocket proxy which is not yet implemented.
+// All other Gemini calls route through the secure callGeminiProxy function.
+
 
 const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
   try {
@@ -55,34 +67,25 @@ export async function decodeAudioData(
 }
 
 export const generateBriefingAudio = async (insights: DailyInsight[]): Promise<string> => {
-  const ai = getAi();
   const text = insights.map(i => `${i.title}. ${i.description}`).join(' ');
   const prompt = `Read this family safety briefing cheerfully: ${text}`;
 
   return withRetry(async () => {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-exp",
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-        },
+    const data = await callGeminiProxy(prompt, {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
       },
     });
 
-    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
+    return data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
   });
 };
 
 export const searchPlacesOnMap = async (query: string, currentLoc: { lat: number, lng: number }): Promise<Place[]> => {
-  const ai = getAi();
-  const prompt = `You are a map search engine for the MyWay GPS app. 
+  const prompt = `You are a map search engine for the My Way GPS app. 
   User query: "${query}"
   Current vicinity: [${currentLoc.lat}, ${currentLoc.lng}]
-  
-  If the query is a specific address or a famous landmark, find its exact coordinates. 
-  If it's a category (like "coffee" or "gas"), find 5 of the best/closest options.
   
   Return a JSON list of places. Each place must have:
   - name: string
@@ -95,35 +98,31 @@ export const searchPlacesOnMap = async (query: string, currentLoc: { lat: number
 
   try {
     const results = await withRetry(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING },
-                location: {
-                  type: Type.OBJECT,
-                  properties: {
-                    lat: { type: Type.NUMBER },
-                    lng: { type: Type.NUMBER }
-                  },
-                  required: ["lat", "lng"]
+      const data = await callGeminiProxy(prompt, {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              location: {
+                type: Type.OBJECT,
+                properties: {
+                  lat: { type: Type.NUMBER },
+                  lng: { type: Type.NUMBER }
                 },
-                type: { type: Type.STRING, enum: ['gas', 'food', 'coffee', 'other'] },
-                icon: { type: Type.STRING },
-                brandColor: { type: Type.STRING }
+                required: ["lat", "lng"]
               },
-              required: ["name", "location", "type", "icon"]
-            }
+              type: { type: Type.STRING, enum: ['gas', 'food', 'coffee', 'other'] },
+              icon: { type: Type.STRING },
+              brandColor: { type: Type.STRING }
+            },
+            required: ["name", "location", "type", "icon"]
           }
         }
       });
-      return JSON.parse(response.text || "[]");
+      return JSON.parse(data.text || "[]");
     });
 
     return results.map((r: any, idx: number) => ({
@@ -139,49 +138,44 @@ export const searchPlacesOnMap = async (query: string, currentLoc: { lat: number
 
 export const getRouteToDestination = async (start: { lat: number, lng: number }, endName: string, members: FamilyMember[]): Promise<NavigationRoute> => {
   try {
-    const ai = getAi();
     const prompt = `Driving from [${start.lat}, ${start.lng}] to ${endName}. Family: ${members.map(m => m.name).join(',')}. Return JSON.`;
     const data = await withRetry(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              destinationName: { type: Type.STRING },
-              destinationLoc: { type: Type.OBJECT, properties: { lat: { type: Type.NUMBER }, lng: { type: Type.NUMBER } }, required: ["lat", "lng"] },
-              steps: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    instruction: { type: Type.STRING },
-                    distance: { type: Type.STRING },
-                    endLocation: {
-                      type: Type.OBJECT,
-                      properties: { lat: { type: Type.NUMBER }, lng: { type: Type.NUMBER } },
-                      required: ["lat", "lng"]
-                    }
-                  },
-                  required: ["instruction", "distance"] // endLocation optional for resilience
-                }
-              },
-              totalDistance: { type: Type.STRING },
-              totalTime: { type: Type.STRING },
-              safetyAdvisory: { type: Type.STRING }
+      const respData = await callGeminiProxy(prompt, {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            destinationName: { type: Type.STRING },
+            destinationLoc: { type: Type.OBJECT, properties: { lat: { type: Type.NUMBER }, lng: { type: Type.NUMBER } }, required: ["lat", "lng"] },
+            steps: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  instruction: { type: Type.STRING },
+                  distance: { type: Type.STRING },
+                  endLocation: {
+                    type: Type.OBJECT,
+                    properties: { lat: { type: Type.NUMBER }, lng: { type: Type.NUMBER } },
+                    required: ["lat", "lng"]
+                  }
+                },
+                required: ["instruction", "distance"]
+              }
             },
-            required: ["destinationName", "destinationLoc", "steps", "totalDistance", "totalTime"]
-          }
+            totalDistance: { type: Type.STRING },
+            totalTime: { type: Type.STRING },
+            safetyAdvisory: { type: Type.STRING }
+          },
+          required: ["destinationName", "destinationLoc", "steps", "totalDistance", "totalTime"]
         }
       });
-      return JSON.parse(response.text || "{}");
+      return JSON.parse(respData.text || "{}");
     });
     if (!data.steps || !Array.isArray(data.steps) || data.steps.length === 0) {
       throw new Error("Invalid route data received from AI");
     }
-    return data;
+    return { ...data, startLoc: start };
   } catch (e) {
     console.error("Routing Error:", e);
     return null as any;
@@ -189,53 +183,41 @@ export const getRouteToDestination = async (start: { lat: number, lng: number },
 };
 
 export const getFamilyInsights = async (members: FamilyMember[]): Promise<DailyInsight[]> => {
-  const ai = getAi();
   const context = members.map(m => `${m.name}: ${m.status}, ${m.battery}%`).join('\n');
   return withRetry(async () => {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: `Insights for: ${context}. Return JSON array.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              description: { type: Type.STRING },
-              category: { type: Type.STRING, enum: ['safety', 'efficiency', 'reminder'] }
-            },
-            required: ["title", "description", "category"]
-          }
+    const data = await callGeminiProxy(`Insights for: ${context}. Return JSON array.`, {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            description: { type: Type.STRING },
+            category: { type: Type.STRING, enum: ['safety', 'efficiency', 'reminder'] }
+          },
+          required: ["title", "description", "category"]
         }
       }
     });
-    return JSON.parse(response.text || "[]");
+    return JSON.parse(data.text || "[]");
   });
 };
 
 export const askOmni = async (query: string, members: FamilyMember[], history: any[]) => {
-  const ai = getAi();
   return withRetry(async () => {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-exp",
-      contents: [{ role: 'user', parts: [{ text: query }] }],
-      config: { tools: [{ googleMaps: {} }] },
+    const data = await callGeminiProxy([{ role: 'user', parts: [{ text: query }] }], {
+      tools: [{ googleMaps: {} }]
     });
-    const links = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((c: any) => c.maps ? { title: c.maps.title, uri: c.maps.uri } : null).filter(Boolean);
-    return { text: response.text || "", links };
+    const links = data.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((c: any) => c.maps ? { title: c.maps.title, uri: c.maps.uri } : null).filter(Boolean);
+    return { text: data.text || "", links };
   });
 };
 
 export const predictETA = async (member: FamilyMember, dest: string) => {
-  const ai = getAi();
   return withRetry(async () => {
-    const resp = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: `Predict ETA for ${member.name} to ${dest}.`,
-    });
-    return resp.text || "";
+    const data = await callGeminiProxy(`Predict ETA for ${member.name} to ${dest}.`);
+    return data.text || "";
   });
 };
 
@@ -247,32 +229,26 @@ export interface SafetyAdvisory {
 }
 
 export const getSafetyAdvisory = async (loc: { lat: number, lng: number }, context?: string): Promise<SafetyAdvisory | null> => {
-  const ai = getAi();
   const prompt = `Analyze safety risks at [${loc.lat}, ${loc.lng}]. Context: ${context || 'Driving'}. 
-  Include weather (mock potential local weather if not provided) and general traffic risks.
-  Return JSON: { title, description, severity, type }. High severity only for immediate danger.`;
+  Return JSON: { title, description, severity, type }.`;
 
   try {
     return withRetry(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              description: { type: Type.STRING },
-              severity: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
-              type: { type: Type.STRING, enum: ['weather', 'traffic', 'crime', 'other'] }
-            },
-            required: ["title", "description", "severity", "type"]
-          }
+      const data = await callGeminiProxy(prompt, {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            description: { type: Type.STRING },
+            severity: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
+            type: { type: Type.STRING, enum: ['weather', 'traffic', 'crime', 'other'] }
+          },
+          required: ["title", "description", "severity", "type"]
         }
       });
 
-      return JSON.parse(response.text || "null");
+      return JSON.parse(data.text || "null");
     });
   } catch (e) {
     console.error("Safety Advisory Error", e);
@@ -286,30 +262,25 @@ export interface MessageIntent {
 }
 
 export const parseMessageIntent = async (text: string): Promise<MessageIntent> => {
-  const ai = getAi();
   const prompt = `Analyze this family message: "${text}". 
   Is the sender asking for location, ETA, or a check-in? 
-  Return JSON: { intent: 'ask_location' | 'ask_eta' | 'check_in' | 'none', suggestedAction: string (short label like "Share ETA") }.`;
+  Return JSON: { intent: 'ask_location' | 'ask_eta' | 'check_in' | 'none', suggestedAction: string }.`;
 
   try {
     return withRetry(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              intent: { type: Type.STRING, enum: ['ask_location', 'ask_eta', 'check_in', 'none'] },
-              suggestedAction: { type: Type.STRING }
-            },
-            required: ["intent"]
-          }
+      const data = await callGeminiProxy(prompt, {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            intent: { type: Type.STRING, enum: ['ask_location', 'ask_eta', 'check_in', 'none'] },
+            suggestedAction: { type: Type.STRING }
+          },
+          required: ["intent"]
         }
       });
 
-      return JSON.parse(response.text || '{"intent":"none"}');
+      return JSON.parse(data.text || '{"intent":"none"}');
     });
   } catch (e) {
     console.error("Intent Detection Error", e);
@@ -318,57 +289,10 @@ export const parseMessageIntent = async (text: string): Promise<MessageIntent> =
 };
 
 export const connectCoPilot = (callbacks: any, settings: { personality: 'standard' | 'grok' | 'newyork', gender: 'male' | 'female' } = { personality: 'standard', gender: 'female' }) => {
-  const ai = getAi();
+  // SECURITY FIX: This function previously exposed the Gemini API key in the client bundle.
+  // Live streaming requires a server-side WebSocket proxy to keep the API key secure.
+  // Until that's implemented, this feature is disabled.
+  console.warn('🔒 CoPilot Live: Disabled for security. API key must be protected via server-side proxy.');
 
-  // Voice Mapping (Gemini 2.0 Models)
-  const voiceMap = {
-    standard: { male: 'Fenrir', female: 'Kore' },
-    grok: { male: 'Zephyr', female: 'Aoede' },
-    newyork: { male: 'Orion', female: 'Puck' }
-  };
-  const selectedVoice = voiceMap[settings.personality][settings.gender];
-
-  // Personality Mapping
-  const instructions = {
-    standard: `You are MyWay Co-Pilot, a helpful and safety-conscious driving assistant.
-               - Keep alerts brief and clear.
-               - Prioritize safety above all else.
-               - Maintain a professional, calm demeanor.`,
-    grok: `You are MyWay Grok, a witty, edgy, and brutally honest AI Co-Pilot. 
-           - Speak concisely and punchily. No long monologues.
-           - Use sarcasm when appropriate, especially for bad driving.
-           - If the user is safe, complement them with dry wit.
-           - Keep it cool, calm, and slightly detached.`,
-    newyork: `You are MyWay NY, a fast-talking, no-nonsense New York driving assistant.
-              - Speak fast and direct. Time is money.
-              - Don't sugarcoat safety alerts. "Yo, watch the road!"
-              - If traffic is bad, commiserate with typical NY frustration.
-              - Be helpful but brisk. You got places to be.`
-  };
-
-  return ai.live.connect({
-    model: 'gemini-2.0-flash-exp',
-    config: {
-      systemInstruction: {
-        parts: [{ text: instructions[settings.personality] }]
-      },
-      responseModalities: [Modality.AUDIO],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } } },
-      inputAudioTranscription: {},
-      outputAudioTranscription: {},
-    },
-    callbacks: {
-      onmessage: async (msg) => {
-        if (msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) callbacks.onAudio(msg.serverContent.modelTurn.parts[0].inlineData.data);
-        if (msg.serverContent?.interrupted) callbacks.onInterrupted();
-        if (msg.serverContent?.outputTranscription) callbacks.onTranscription(msg.serverContent.outputTranscription.text, false);
-        if (msg.serverContent?.inputTranscription) callbacks.onTranscription(msg.serverContent.inputTranscription.text, true);
-        if (msg.toolCall && callbacks.onFunctionCall) {
-          for (const fc of msg.toolCall.functionCalls) {
-            const result = await callbacks.onFunctionCall(fc);
-          }
-        }
-      }
-    }
-  });
+  throw new Error('CoPilot Live streaming is temporarily disabled. The feature requires a secure server-side WebSocket proxy to protect the API key.');
 };

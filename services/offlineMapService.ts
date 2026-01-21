@@ -108,12 +108,27 @@ class OfflineMapService {
             throw new Error('Service Worker not ready');
         }
 
+        const currentSize = await this.getCacheSize();
+        const estimated = this.estimateTileCount(bounds, zoomMin, zoomMax);
+        // SYNC: This value MUST match MAX_TILES in public/sw.js (line ~78)
+        const MAX_TILES = 2000;
+
+        if (currentSize + estimated > MAX_TILES) {
+            console.warn(`[OfflineMapService] Download would exceed limit: ${currentSize + estimated} / ${MAX_TILES}`);
+            // We still try, but sw.js will enforce the hard stop. 
+            // Better to alert the user here if we had a UI for it.
+        }
+
         const tileUrls = this.getTileUrls(bounds, zoomMin, zoomMax);
 
         return new Promise((resolve, reject) => {
             const channel = new MessageChannel();
 
             channel.port1.onmessage = (event) => {
+                if (event.data.type === 'CACHE_ERROR') {
+                    reject(new Error(event.data.message));
+                }
+
                 if (event.data.type === 'CACHE_PROGRESS') {
                     onProgress?.(event.data.cached, event.data.total);
                 }

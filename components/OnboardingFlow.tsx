@@ -74,21 +74,21 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, theme }) =>
     const steps: OnboardingStep[] = [
         {
             id: 'welcome',
-            title: 'Welcome to MyWay',
+            title: 'Welcome to My Way',
             description: 'Your family\'s intelligent navigation companion. Track loved ones, discover places, and drive safer together.',
             icon: '🗺️'
         },
         {
             id: 'location',
             title: 'Enable Location',
-            description: 'MyWay needs your location to show nearby places, track your journey, and share your position with family.',
+            description: 'My Way needs your location to show nearby places, track your journey, and share your position with family.',
             icon: '📍',
             action: requestLocation
         },
         {
             id: 'notifications',
-            title: 'Stay Informed',
-            description: 'Get alerts when family members arrive, leave, or need assistance. Never miss an important update.',
+            title: 'My Way Premium',
+            description: 'Unlock 3D maps, 90-day history, and priority AI assistance with My Way Gold or Platinum.',
             icon: '🔔',
             action: requestNotifications,
             optional: true

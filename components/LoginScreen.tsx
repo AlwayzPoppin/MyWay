@@ -55,7 +55,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 {/* Logo */}
                 <div className="text-center mb-8">
                     <div className="w-20 h-20 mx-auto mb-4">
-                        <img src="/logo.png" alt="MyWay" className="w-full h-full object-contain" />
+                        <img src="/logo.png" alt="My Way" className="w-full h-full object-contain" />
                     </div>
                     <h1 className="text-3xl font-bold" style={{ fontFamily: 'Poppins, sans-serif' }}>
                         <span className={isDark ? 'text-white' : 'text-slate-800'}>My</span>

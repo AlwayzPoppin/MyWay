@@ -10,7 +10,7 @@ interface SafetyAlertsProps {
 
 interface Alert {
     id: string;
-    type: 'low_battery' | 'crash_detected' | 'traffic' | 'unsafe_area' | 'arrived' | 'prediction';
+    type: 'low_battery' | 'crash_detected' | 'traffic' | 'unsafe_area' | 'arrived' | 'prediction' | 'sos_alert' | 'geofence_transition';
     memberId: string;
     memberName: string;
     message: string;
@@ -66,7 +66,26 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({ members, onDismiss, onSendR
                 }
             }
 
-            // Arrival notification
+            // SOS alert
+            if (member.sosActive) {
+                const alertId = `sos-${member.id}`;
+                if (!dismissedIds.has(alertId)) {
+                    newAlerts.push({
+                        id: alertId,
+                        type: 'sos_alert',
+                        memberId: member.id,
+                        memberName: member.name,
+                        message: `🚨 EMERGENCY: ${member.name} needs help!`,
+                        icon: '🛡️',
+                        priority: 'critical',
+                        timestamp: new Date(),
+                        actionLabel: 'Navigate to Them',
+                        actionType: 'navigate'
+                    });
+                }
+            }
+
+            // Arrival notification (Existing)
             if (member.status === 'Arrived' && member.currentPlace) {
                 const alertId = `arrived-${member.id}-${member.currentPlace}`;
                 if (!dismissedIds.has(alertId)) {
@@ -102,6 +121,9 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({ members, onDismiss, onSendR
 
     const getPriorityStyles = (priority: Alert['priority'], type: Alert['type']) => {
         // Specific override for low battery
+        if (type === 'sos_alert') {
+            return 'bg-red-600 border-red-400 text-white shadow-red-500/50 animate-pulse';
+        }
         if (type === 'low_battery') {
             return 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400';
         }

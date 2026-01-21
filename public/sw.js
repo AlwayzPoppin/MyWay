@@ -74,7 +74,7 @@ self.addEventListener('message', (event) => {
     }
 });
 
-// Limit cache size to avoid storage quota issues
+// SYNC: This value MUST match MAX_TILES in services/offlineMapService.ts (line ~113)
 const MAX_TILES = 2000; // ~40-60MB depending on tile complexity
 
 async function enforceLimits() {
@@ -107,15 +107,33 @@ async function getCacheSize(client) {
 // Call enforceLimits after caching operations
 async function cacheTiles(tileUrls, client) {
     const cache = await caches.open(TILE_CACHE_NAME);
+    const existingKeys = await cache.keys();
+    let currentCount = existingKeys.length;
+
     let cached = 0;
     const total = tileUrls.length;
 
+    if (currentCount >= MAX_TILES) {
+        console.warn(`[SW] Cache limit reached (${currentCount}/${MAX_TILES}). Skipping download.`);
+        client.postMessage({
+            type: 'CACHE_ERROR',
+            message: 'Cache limit reached. Please clear some space.'
+        });
+        return;
+    }
+
     for (const url of tileUrls) {
+        if (currentCount >= MAX_TILES) {
+            console.warn(`[SW] Cache limit reached during download. Halting.`);
+            break;
+        }
+
         try {
             const response = await fetch(url);
             if (response.ok) {
                 await cache.put(url, response);
                 cached++;
+                currentCount++;
             }
 
             // Report progress
@@ -129,13 +147,23 @@ async function cacheTiles(tileUrls, client) {
         }
     }
 
-    // Clean up if we exceeded limits
+    // Clean up if we exceeded limits (extra safety)
     await enforceLimits();
 
     client.postMessage({
         type: 'CACHE_COMPLETE',
         cached,
     });
+}
+
+async function clearTileCache(client) {
+    try {
+        await caches.delete(TILE_CACHE_NAME);
+        console.log('[SW] Tile cache cleared');
+        client.postMessage({ type: 'CACHE_CLEARED' });
+    } catch (error) {
+        console.error('[SW] Failed to clear cache:', error);
+    }
 }
 
 /**

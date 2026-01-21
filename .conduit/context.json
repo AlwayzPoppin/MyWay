@@ -7,312 +7,6 @@
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:38:49.974Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/BentoSidebar.tsx",
-      "files": [
-        "components/BentoSidebar.tsx"
-      ],
-      "timestamp": "2026-01-17T01:39:38.805Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:40:08.611Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/BentoSidebar.tsx",
-      "files": [
-        "components/BentoSidebar.tsx"
-      ],
-      "timestamp": "2026-01-17T01:45:25.825Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SearchBox.tsx",
-      "files": [
-        "components/SearchBox.tsx"
-      ],
-      "timestamp": "2026-01-17T01:45:27.699Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:50:43.833Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SearchBox.tsx",
-      "files": [
-        "components/SearchBox.tsx"
-      ],
-      "timestamp": "2026-01-17T01:50:45.560Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SearchBox.tsx",
-      "files": [
-        "components/SearchBox.tsx"
-      ],
-      "timestamp": "2026-01-17T01:51:05.588Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:54:48.352Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:54:57.917Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:55:19.961Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: hooks/useLocationSync.ts",
-      "files": [
-        "hooks/useLocationSync.ts"
-      ],
-      "timestamp": "2026-01-17T01:59:07.955Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:59:10.416Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-17T01:59:11.841Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/geolocationService.ts",
-      "files": [
-        "services/geolocationService.ts"
-      ],
-      "timestamp": "2026-01-17T01:59:13.834Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T01:59:29.575Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/userPlacesService.ts",
-      "files": [
-        "services/userPlacesService.ts"
-      ],
-      "timestamp": "2026-01-17T02:04:02.922Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapLibre3DView.tsx",
-      "files": [
-        "components/MapLibre3DView.tsx"
-      ],
-      "timestamp": "2026-01-17T02:04:05.165Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SettingsPanel.tsx",
-      "files": [
-        "components/SettingsPanel.tsx"
-      ],
-      "timestamp": "2026-01-17T02:04:07.178Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/geolocationService.ts",
-      "files": [
-        "services/geolocationService.ts"
-      ],
-      "timestamp": "2026-01-17T02:04:09.176Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: hooks/useLocationSync.ts",
-      "files": [
-        "hooks/useLocationSync.ts"
-      ],
-      "timestamp": "2026-01-17T02:09:12.461Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T02:09:14.368Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T02:12:16.819Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapLibre3DView.tsx",
-      "files": [
-        "components/MapLibre3DView.tsx"
-      ],
-      "timestamp": "2026-01-17T02:16:16.493Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapLibre3DView.tsx",
-      "files": [
-        "components/MapLibre3DView.tsx"
-      ],
-      "timestamp": "2026-01-17T02:16:41.940Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T02:24:07.740Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/InsightsBar.tsx",
-      "files": [
-        "components/InsightsBar.tsx"
-      ],
-      "timestamp": "2026-01-17T02:24:26.939Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T02:24:34.652Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-17T02:24:52.844Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SearchBox.tsx",
-      "files": [
-        "components/SearchBox.tsx"
-      ],
-      "timestamp": "2026-01-17T02:24:58.569Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: App.tsx",
-      "files": [
-        "App.tsx"
-      ],
-      "timestamp": "2026-01-17T02:25:14.977Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/meshService.ts",
-      "files": [
-        "services/meshService.ts"
-      ],
-      "timestamp": "2026-01-17T02:36:36.135Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/cryptoService.ts",
-      "files": [
-        "services/cryptoService.ts"
-      ],
-      "timestamp": "2026-01-17T02:36:41.358Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/chatService.ts",
-      "files": [
-        "services/chatService.ts"
-      ],
-      "timestamp": "2026-01-17T02:36:43.317Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
       "action": "File modified: components/StorageManager.tsx",
       "files": [
         "components/StorageManager.tsx"
@@ -474,6 +168,289 @@
       "action": "Consolidated 'Current Location' tool into the SearchBox UI cluster.",
       "files": [],
       "timestamp": "2026-01-19T17:08:52.016Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "Viewed: .agent/workflows/gemini.md",
+      "files": [
+        ".agent/workflows/gemini.md"
+      ],
+      "timestamp": "2026-01-21T13:13:05.474Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-21T13:16:37.616Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-21T13:17:43.400Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-21T13:18:19.954Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-21T13:18:53.111Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-21T13:23:07.118Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-21T13:38:31.404Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: hooks/useLocationSync.ts",
+      "files": [
+        "hooks/useLocationSync.ts"
+      ],
+      "timestamp": "2026-01-21T14:07:50.913Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: types.ts",
+      "files": [
+        "types.ts"
+      ],
+      "timestamp": "2026-01-21T14:13:26.016Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "Files modified: android/app/src/main/assets/public/assets/index-BNswLEUf.js, android/app/src/main/assets/public/assets/index-Gf11Lfgc.js, android/app/src/main/assets/public/assets/web-CAxmZH89.js, android/app/src/main/assets/public/assets/web-Cts6ISfd.js, android/app/src/main/assets/public/assets/web-DnUvKdbx.js (+8 more)",
+      "files": [
+        "android/app/src/main/assets/public/assets/index-BNswLEUf.js",
+        "android/app/src/main/assets/public/assets/index-Gf11Lfgc.js",
+        "android/app/src/main/assets/public/assets/web-CAxmZH89.js",
+        "android/app/src/main/assets/public/assets/web-Cts6ISfd.js",
+        "android/app/src/main/assets/public/assets/web-DnUvKdbx.js"
+      ],
+      "timestamp": "2026-01-21T15:46:05.720Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-21T15:52:42.711Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-21T15:53:43.622Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-21T15:54:05.446Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: hooks/useLocationSync.ts",
+      "files": [
+        "hooks/useLocationSync.ts"
+      ],
+      "timestamp": "2026-01-21T16:04:42.605Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/geminiService.ts",
+      "files": [
+        "services/geminiService.ts"
+      ],
+      "timestamp": "2026-01-21T16:05:42.217Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/geminiService.ts",
+      "files": [
+        "services/geminiService.ts"
+      ],
+      "timestamp": "2026-01-21T16:06:06.402Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-21T16:06:30.629Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/offlineMapService.ts",
+      "files": [
+        "services/offlineMapService.ts"
+      ],
+      "timestamp": "2026-01-21T16:07:01.461Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: public/sw.js",
+      "files": [
+        "public/sw.js"
+      ],
+      "timestamp": "2026-01-21T16:07:03.730Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-21T16:14:49.248Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-21T16:16:04.270Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-21T16:16:35.138Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-21T16:17:02.165Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/navigationEngine.ts",
+      "files": [
+        "services/navigationEngine.ts"
+      ],
+      "timestamp": "2026-01-21T16:18:10.496Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-21T16:20:00.409Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-21T16:23:18.881Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/osrmService.ts",
+      "files": [
+        "services/osrmService.ts"
+      ],
+      "timestamp": "2026-01-21T16:28:05.905Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/weatherService.ts",
+      "files": [
+        "services/weatherService.ts"
+      ],
+      "timestamp": "2026-01-21T16:28:08.173Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/navigationEngine.ts",
+      "files": [
+        "services/navigationEngine.ts"
+      ],
+      "timestamp": "2026-01-21T16:33:59.741Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-21T16:35:01.484Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-21T16:37:26.507Z"
     }
   ],
   "handoffs": [],
@@ -497,139 +474,60 @@
     "staged": [],
     "modified": [
       ".conduit/context.json",
-      ".conduit/history.json",
+      ".gitignore",
       "App.tsx",
-      "agent_bridge.js",
+      "README.md",
+      "android/app/capacitor.build.gradle",
+      "android/capacitor.settings.gradle",
       "components/BentoSidebar.tsx",
       "components/DriveModeHUD.tsx",
-      "components/Header.tsx",
       "components/InsightsBar.tsx",
+      "components/LoginScreen.tsx",
+      "components/MapLibre3DView.tsx",
       "components/MapView.tsx",
-      "components/MessagingPanel.tsx",
+      "components/OfflineMapManager.tsx",
+      "components/OnboardingFlow.tsx",
+      "components/PremiumUpsellModal.tsx",
+      "components/QuickActions.tsx",
+      "components/SafetyAlerts.tsx",
       "components/SearchBox.tsx",
       "components/SettingsPanel.tsx",
-      "index.html",
-      "index.tsx",
-      "package-lock.json",
-      "package.json",
-      "public/sw.js",
-      "services/authService.ts",
-      "services/firebase.ts",
-      "services/geminiService.ts",
-      "services/geolocationService.ts",
-      "services/placesService.ts",
-      "services/stripeService.ts",
-      "ts_errors_2.txt",
-      "tsconfig.json",
-      "types.ts",
-      "vite.config.ts",
-      ".firebaserc",
-      "agent_bridge.cjs",
-      "android/.gitignore",
-      "android/app/.gitignore",
-      "android/app/build.gradle",
-      "android/app/capacitor.build.gradle",
-      "android/app/proguard-rules.pro",
-      "android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java",
-      "android/app/src/main/AndroidManifest.xml",
-      "android/app/src/main/java/com/myway/app/MainActivity.java",
-      "android/app/src/main/res/drawable-land-hdpi/splash.png",
-      "android/app/src/main/res/drawable-land-mdpi/splash.png",
-      "android/app/src/main/res/drawable-land-xhdpi/splash.png",
-      "android/app/src/main/res/drawable-land-xxhdpi/splash.png",
-      "android/app/src/main/res/drawable-land-xxxhdpi/splash.png",
-      "android/app/src/main/res/drawable-port-hdpi/splash.png",
-      "android/app/src/main/res/drawable-port-mdpi/splash.png",
-      "android/app/src/main/res/drawable-port-xhdpi/splash.png",
-      "android/app/src/main/res/drawable-port-xxhdpi/splash.png",
-      "android/app/src/main/res/drawable-port-xxxhdpi/splash.png",
-      "android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
-      "android/app/src/main/res/drawable/ic_launcher_background.xml",
-      "android/app/src/main/res/drawable/splash.png",
-      "android/app/src/main/res/layout/activity_main.xml",
-      "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
-      "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
-      "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
-      "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
-      "android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
-      "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
-      "android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
-      "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
-      "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
-      "android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
-      "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
-      "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
-      "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
-      "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
-      "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
-      "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
-      "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
-      "android/app/src/main/res/values/ic_launcher_background.xml",
-      "android/app/src/main/res/values/strings.xml",
-      "android/app/src/main/res/values/styles.xml",
-      "android/app/src/main/res/xml/file_paths.xml",
-      "android/app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java",
-      "android/build.gradle",
-      "android/capacitor.settings.gradle",
-      "android/gradle.properties",
-      "android/gradle/wrapper/gradle-wrapper.jar",
-      "android/gradle/wrapper/gradle-wrapper.properties",
-      "android/gradlew",
-      "android/gradlew.bat",
-      "android/settings.gradle",
-      "android/variables.gradle",
-      "capacitor.config.ts",
-      "components/MapLibre3DView.tsx",
-      "components/OnboardingFlow.tsx",
-      "components/OverlayManager.tsx",
+      "components/Sidebar.tsx",
       "components/StorageManager.tsx",
-      "contexts/UIContext.tsx",
-      "firebase.json",
       "functions/.env",
       "functions/lib/index.js",
       "functions/lib/index.js.map",
       "functions/package-lock.json",
       "functions/package.json",
       "functions/src/index.ts",
-      "functions/tsconfig.json",
-      "hooks/useCoPilot.ts",
       "hooks/useLocationSync.ts",
       "index.css",
-      "ios/.gitignore",
-      "ios/App/App.xcodeproj/project.pbxproj",
-      "ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist",
-      "ios/App/App/AppDelegate.swift",
-      "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
-      "ios/App/App/Assets.xcassets/AppIcon.appiconset/Contents.json",
-      "ios/App/App/Assets.xcassets/Contents.json",
-      "ios/App/App/Assets.xcassets/Splash.imageset/Contents.json",
-      "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732-1.png",
-      "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732-2.png",
-      "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732.png",
-      "ios/App/App/Base.lproj/LaunchScreen.storyboard",
-      "ios/App/App/Base.lproj/Main.storyboard",
-      "ios/App/App/Info.plist",
-      "ios/App/CapApp-SPM/.gitignore",
-      "ios/App/CapApp-SPM/Package.swift",
-      "ios/App/CapApp-SPM/README.md",
-      "ios/App/CapApp-SPM/Sources/CapApp-SPM/CapApp-SPM.swift",
-      "ios/debug.xcconfig",
-      "postcss.config.js",
-      "services/audioService.ts",
-      "services/chatService.ts",
+      "index.html",
+      "public/manifest.json",
+      "public/sw.js",
+      "services/authService.ts",
       "services/cryptoService.ts",
-      "services/mapSkinService.ts",
-      "services/meshService.ts",
+      "services/emailService.ts",
+      "services/geminiService.ts",
+      "services/geolocationService.ts",
       "services/navigationEngine.ts",
-      "services/roadsideService.ts",
+      "services/offlineMapService.ts",
+      "services/placesService.ts",
       "services/sponsoredPlacesService.ts",
       "services/userPlacesService.ts",
-      "tailwind.config.js"
+      "types.ts",
+      ".env",
+      "MYWAY-GPS.code-workspace",
+      "components/ErrorBoundary.tsx",
+      "components/PlaceDetailPanel.tsx",
+      "install_log.txt",
+      "services/osrmService.ts",
+      "services/weatherService.ts"
     ],
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-19T17:50:32.249Z",
+  "lastSync": "2026-01-21T16:37:26.510Z",
   "reservedFiles": {},
   "version": "0.42.4",
   "preferences": {

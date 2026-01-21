@@ -12,6 +12,7 @@ interface MapLibre3DViewProps {
     center?: [number, number]; // [lng, lat]
     zoom?: number;
     onUserInteraction?: () => void;
+    onMapReady?: () => void;
     activeRoute?: any; // NavigationRoute | null
     places?: any[]; // Place[]
     incidents?: any[]; // IncidentReport[]
@@ -23,9 +24,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     theme,
     mapSkin = 'default',
     selectedMemberId,
-    center = [-80.8431, 35.2271], // NC default (Charlotte)
+    center,
     zoom = 16,
     onUserInteraction,
+    onMapReady,
     activeRoute,
     places = [],
     incidents = [],
@@ -35,6 +37,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const map = useRef<maplibregl.Map | null>(null);
     const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const [isMapReady, setIsMapReady] = React.useState(false);
+    const [styleVersion, setStyleVersion] = React.useState(0); // Track style reloads to re-render layers
     const placesMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const incidentsMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
@@ -53,41 +56,36 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         map.current = new maplibregl.Map({
             container: mapContainer.current,
             style: styleUrl,
-            center: center as [number, number],
+            center: (center || (members[0] ? [members[0].location.lng, members[0].location.lat] : [-122.4194, 37.7749])) as [number, number],
             zoom: zoom,
             pitch: 60, // Tilt for 3D effect
             bearing: -17.6, // Rotation
         });
 
-        map.current.on('load', () => {
+        const apply3DBuildingLayer = () => {
             if (!map.current) return;
 
             // Apply skin-specific color overrides
             applySkinOverrides(map.current, mapSkin as MapSkinId);
 
-            // CartoCSS styles don't have building heights, so we add a fill-extrusion layer
-            // with procedural heights based on the building geometry
             const layers = map.current.getStyle().layers || [];
-
-            // Find existing building layer
             const buildingLayer = layers.find(
                 (layer: any) => layer.id.includes('building') && layer.type === 'fill'
             );
 
             if (buildingLayer) {
-                // Get the source and source-layer from existing building layer
                 const source = (buildingLayer as any).source;
                 const sourceLayer = (buildingLayer as any)['source-layer'];
-
-                // Add 3D extrusion layer before labels
                 const labelLayerId = layers.find(
                     (layer: any) => layer.type === 'symbol' && layer.layout?.['text-field']
                 )?.id;
 
-                // Remove old flat building layer
                 map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'none');
 
-                // Add new 3D building layer
+                if (map.current.getLayer('buildings-3d')) {
+                    map.current.removeLayer('buildings-3d');
+                }
+
                 map.current.addLayer({
                     'id': 'buildings-3d',
                     'source': source,
@@ -107,13 +105,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                                 ['has', 'render_height'], ['get', 'render_height'],
                                 ['has', 'height'], ['get', 'height'],
                                 ['has', 'levels'], ['*', ['get', 'levels'], 3],
-                                10 // Fallback for residential/unknown info
+                                10
                             ],
                             17, ['case',
                                 ['has', 'render_height'], ['*', ['get', 'render_height'], 1.5],
                                 ['has', 'height'], ['*', ['get', 'height'], 1.5],
-                                ['has', 'levels'], ['*', ['get', 'levels'], 4.5], // Exaggerate height slightly for effect
-                                20 // Fallback
+                                ['has', 'levels'], ['*', ['get', 'levels'], 4.5],
+                                20
                             ]
                         ],
                         'fill-extrusion-base': [
@@ -125,18 +123,20 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         'fill-extrusion-opacity': 0.85
                     }
                 }, labelLayerId);
-
-                console.log('[3D] Added extrusion layer:', { source, sourceLayer, theme });
-
-                // Diagnostic: Check if we actually have data
-                map.current.on('sourcedata', (e) => {
-                    if (e.isSourceLoaded && e.sourceId === source) {
-                        const features = map.current?.querySourceFeatures(source, { sourceLayer });
-                    }
-                });
             }
+        };
 
+        map.current.on('load', () => {
+            apply3DBuildingLayer();
             setIsMapReady(true);
+            onMapReady?.();
+        });
+
+        // Audit Fix: Handle style background updates reactively
+        // Increment styleVersion to trigger re-render of dynamic layers (routes, privacy zones)
+        map.current.on('style.load', () => {
+            apply3DBuildingLayer();
+            setStyleVersion(v => v + 1);
         });
 
         // Track user interaction
@@ -150,7 +150,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             map.current?.remove();
             map.current = null;
         };
-    }, [styleUrl, mapSkin]);
+    }, []); // Only init once
+
+    // Audit Fix: Reactively update styleUrl when skin changes
+    useEffect(() => {
+        if (map.current && styleUrl) {
+            map.current.setStyle(styleUrl);
+        }
+    }, [styleUrl]);
 
     // Update Route Line
     useEffect(() => {
@@ -210,7 +217,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }, routeId);
         }
-    }, [activeRoute, map.current?.isStyleLoaded()]);
+    }, [activeRoute, isMapReady, styleVersion]); // styleVersion triggers re-render on skin change
 
     // Update Places Markers
     useEffect(() => {
@@ -317,13 +324,78 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         });
     }, [privacyZones, map.current?.isStyleLoaded()]);
 
-    // Update member markers
+    // Update member markers and accuracy circles
     useEffect(() => {
-        if (!map.current) return;
+        if (!map.current || !isMapReady) return;
 
-        members.forEach(member => {
+        // Audit Fix: Filter out members at (0,0) to prevent Null Island markers when E2EE decryption fails
+        const validMembers = members.filter(m => m.location.lat !== 0 || m.location.lng !== 0);
+
+        validMembers.forEach(member => {
             const position: [number, number] = [member.location.lng, member.location.lat];
 
+            // --- Accuracy Circle ---
+            const circleSourceId = `accuracy-circle-${member.id}`;
+            if (member.accuracy && member.accuracy > 0) {
+                // Convert accuracy (meters) to approximate degrees
+                const radiusInDegrees = member.accuracy / 111320; // ~111km per degree at equator
+
+                // Generate circle coordinates
+                const points = 64;
+                const coords: [number, number][] = [];
+                for (let i = 0; i <= points; i++) {
+                    const angle = (i / points) * 2 * Math.PI;
+                    const lng = member.location.lng + radiusInDegrees * Math.cos(angle) / Math.cos(member.location.lat * Math.PI / 180);
+                    const lat = member.location.lat + radiusInDegrees * Math.sin(angle);
+                    coords.push([lng, lat]);
+                }
+
+                const circleData: GeoJSON.Feature = {
+                    type: 'Feature',
+                    properties: {},
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [coords]
+                    }
+                };
+
+                if (map.current.getSource(circleSourceId)) {
+                    (map.current.getSource(circleSourceId) as maplibregl.GeoJSONSource).setData(circleData);
+                } else {
+                    map.current.addSource(circleSourceId, { type: 'geojson', data: circleData });
+                    map.current.addLayer({
+                        id: circleSourceId,
+                        type: 'fill',
+                        source: circleSourceId,
+                        paint: {
+                            'fill-color': '#6366f1',
+                            'fill-opacity': 0.15
+                        }
+                    });
+                    // Add border
+                    map.current.addLayer({
+                        id: `${circleSourceId}-border`,
+                        type: 'line',
+                        source: circleSourceId,
+                        paint: {
+                            'line-color': '#6366f1',
+                            'line-width': 2,
+                            'line-opacity': 0.4
+                        }
+                    });
+                }
+            } else {
+                // Remove accuracy circle if no accuracy data
+                if (map.current.getLayer(circleSourceId)) {
+                    map.current.removeLayer(circleSourceId);
+                    map.current.removeLayer(`${circleSourceId}-border`);
+                }
+                if (map.current.getSource(circleSourceId)) {
+                    map.current.removeSource(circleSourceId);
+                }
+            }
+
+            // --- Member Marker ---
             if (markersRef.current.has(member.id)) {
                 // Update existing marker
                 markersRef.current.get(member.id)?.setLngLat(position);
@@ -350,14 +422,24 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         });
 
-        // Cleanup old markers
+        // Cleanup old markers and accuracy circles
         markersRef.current.forEach((marker, id) => {
             if (!members.find(m => m.id === id)) {
                 marker.remove();
                 markersRef.current.delete(id);
+
+                // Also cleanup accuracy circle
+                const circleSourceId = `accuracy-circle-${id}`;
+                if (map.current?.getLayer(circleSourceId)) {
+                    map.current.removeLayer(circleSourceId);
+                    map.current.removeLayer(`${circleSourceId}-border`);
+                }
+                if (map.current?.getSource(circleSourceId)) {
+                    map.current.removeSource(circleSourceId);
+                }
             }
         });
-    }, [members]);
+    }, [members, isMapReady]);
 
     // Fly to first member on mount
     useEffect(() => {
@@ -411,7 +493,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         <div
             ref={mapContainer}
             className="w-full h-full"
-            style={{ minHeight: '100vh' }}
+            style={{
+                minHeight: '100vh',
+                background: theme === 'dark' ? '#0f172a' : '#f1f5f9'
+            }}
         />
     );
 };

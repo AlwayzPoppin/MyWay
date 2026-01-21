@@ -74,4 +74,4 @@ const InsightsBar: React.FC<InsightsBarProps> = ({ insights, theme, onReconnect 
   );
 };
 
-export default InsightsBar;
+export default React.memo(InsightsBar);

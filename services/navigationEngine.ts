@@ -1,7 +1,8 @@
 import { Location, NavigationRoute } from '../types';
 
 // Constants
-const STEP_COMPLETION_RADIUS_METERS = 30; // Within 30m counts as "arrived" at step
+// Audit Fix: Increased from 30m to 50m to account for real-world GPS drift (typically 10-50m)
+const STEP_COMPLETION_RADIUS_METERS = 50;
 const OFF_ROUTE_THRESHOLD_METERS = 100;
 
 // Driving Behavior Thresholds
@@ -32,34 +33,52 @@ const getDistanceMeters = (loc1: Location, loc2: Location): number => {
     return R * c;
 };
 
+// Helper to calculate bearing between two points
+const getBearing = (start: Location, end: Location): number => {
+    const startLat = start.lat * Math.PI / 180;
+    const startLng = start.lng * Math.PI / 180;
+    const endLat = end.lat * Math.PI / 180;
+    const endLng = end.lng * Math.PI / 180;
+
+    const y = Math.sin(endLng - startLng) * Math.cos(endLat);
+    const x = Math.cos(startLat) * Math.sin(endLat) -
+        Math.sin(startLat) * Math.cos(endLat) * Math.cos(endLng - startLng);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
+
 // Helper to calculate distance from a point to a line segment
 const getDistanceToSegmentMeters = (p: Location, a: Location, b: Location): number => {
-    const dR = 6371e3;
+    // Audit Fix (Round 5): Upgrade to Haversine Cross-Track Distance
+    // This provides spherical accuracy across all latitudes.
+    const R = 6371000; // Earth radius in meters
 
-    // Project P onto line segment AB (using flat approximation for short distances)
-    const x = p.lng;
-    const y = p.lat;
-    const x1 = a.lng;
-    const y1 = a.lat;
-    const x2 = b.lng;
-    const y2 = b.lat;
+    // 1. Distance from 'a' to 'p'
+    const d13 = getDistanceMeters(a, p);
+    if (d13 === 0) return 0;
 
-    const dx = x2 - x1;
-    const dy = y2 - y1;
+    // 2. Bearings
+    const theta13 = getBearing(a, p) * Math.PI / 180;
+    const theta12 = getBearing(a, b) * Math.PI / 180;
 
-    if (dx === 0 && dy === 0) return getDistanceMeters(p, a);
+    // 3. Cross-track distance formula
+    const dxt = Math.asin(Math.sin(d13 / R) * Math.sin(theta13 - theta12)) * R;
 
-    const t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy);
+    // 4. Robust Projection Check (Spherical Component)
+    // Use the angular difference between (a->p) and (a->b)
+    const deltaTheta = theta13 - theta12;
+    const cosDelta = Math.cos(deltaTheta);
 
-    if (t <= 0) return getDistanceMeters(p, a);
-    if (t >= 1) return getDistanceMeters(p, b);
+    // If angle is > 90 degrees (cos < 0), point is behind 'a'
+    if (cosDelta < 0) return d13;
 
-    const projection = {
-        lng: x1 + t * dx,
-        lat: y1 + t * dy
-    };
+    // 5. Along-track distance check
+    // dat = spherical distance along segment from 'a' to the projection of 'p'
+    const dat = Math.atan2(Math.sin(d13 / R) * cosDelta, Math.cos(d13 / R)) * R;
+    const d12 = getDistanceMeters(a, b);
 
-    return getDistanceMeters(p, projection);
+    if (dat > d12) return getDistanceMeters(p, b);
+
+    return Math.abs(dxt);
 };
 
 export const updateNavigationState = (
@@ -80,17 +99,38 @@ export const updateNavigationState = (
     const prevStep = currentStepIndex === 0 ? { endLocation: startLoc } : steps[currentStepIndex - 1];
 
     // Use startLoc as fallback for first step if prevStep.endLocation is missing
-    const segmentStart = prevStep.endLocation || startLoc;
+    // Audit Fix: Add currentLocation as final fallback to prevent crash if startLoc is undefined
+    const segmentStart = prevStep.endLocation || startLoc || currentLocation;
     const segmentEnd = currentStep.endLocation || (currentStepIndex === steps.length - 1 ? route.destinationLoc : null);
 
-    if (!segmentEnd) return currentState;
+    if (!segmentStart || !segmentEnd) return currentState;
 
     const distToTarget = getDistanceMeters(currentLocation, segmentEnd);
     const distToSegment = getDistanceToSegmentMeters(currentLocation, segmentStart, segmentEnd);
 
     const isOffRoute = distToSegment > OFF_ROUTE_THRESHOLD_METERS;
 
-    // Check for step completion
+    // GPS DRIFT FIX: Check if we're much closer to the NEXT step than current
+    // This handles cases where GPS drift causes the user to miss the exact waypoint
+    if (currentStepIndex + 1 < steps.length) {
+        const nextStep = steps[currentStepIndex + 1];
+        const nextStepEnd = nextStep.endLocation || route.destinationLoc;
+        if (nextStepEnd) {
+            const distToNextStep = getDistanceMeters(currentLocation, nextStepEnd);
+            // If we're significantly closer to the next waypoint (< 50% of current distance),
+            // we've clearly passed the current one - advance the step
+            if (distToNextStep < distToTarget * 0.5 && distToTarget > STEP_COMPLETION_RADIUS_METERS) {
+                return {
+                    currentStepIndex: currentStepIndex + 1,
+                    distanceToNextStep: distToNextStep,
+                    isOffRoute: false,
+                    hasArrived: false
+                };
+            }
+        }
+    }
+
+    // Check for step completion (standard radius check)
     if (distToTarget < STEP_COMPLETION_RADIUS_METERS) {
         const nextIndex = currentStepIndex + 1;
         if (nextIndex >= steps.length) {

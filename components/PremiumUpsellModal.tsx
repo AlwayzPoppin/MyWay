@@ -21,7 +21,7 @@ const PremiumUpsellModal: React.FC<PremiumUpsellModalProps> = ({ onClose, onUpgr
       <div className={`relative w-full max-w-lg rounded-[3rem] overflow-hidden border shadow-[0_50px_100px_rgba(0,0,0,0.8)] animate-in zoom-in duration-500 ${isDark ? 'bg-[#050914] border-white/10' : 'bg-white border-slate-200'}`}>
         <div className={`h-48 bg-gradient-to-br ${gold.color} p-10 relative overflow-hidden flex flex-col justify-end`}>
           <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 blur-[80px] rounded-full translate-x-20 -translate-y-20" />
-          <h2 className="text-4xl font-black text-black tracking-tighter leading-[0.8]">MYWAY<br /><span className="text-2xl opacity-60">{isAnnual ? 'ANNUAL' : 'MONTHLY'}</span></h2>
+          <h2 className="text-4xl font-black text-black tracking-tighter leading-[0.8]">MY WAY<br /><span className="text-2xl opacity-60">{isAnnual ? 'ANNUAL' : 'MONTHLY'}</span></h2>
           <p className="text-black/60 text-[10px] font-black uppercase tracking-widest mt-2">{gold.description}</p>
           <button onClick={onClose} className="absolute top-6 right-6 w-10 h-10 rounded-full bg-black/20 flex items-center justify-center text-black hover:bg-black/30 transition-all font-bold">✕</button>
         </div>

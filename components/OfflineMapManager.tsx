@@ -79,7 +79,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, th
                     <div>
                         <h2 className="font-black text-lg tracking-tight">Offline Maps</h2>
                         <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-                            Save maps for emergency offline use
+                            Save maps for emergency offline use. <span className="text-amber-500 font-semibold">(2D Only)</span>
                         </p>
                     </div>
                 </div>

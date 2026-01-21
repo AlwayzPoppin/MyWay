@@ -18,11 +18,20 @@ const StorageManager: React.FC<StorageManagerProps> = ({ theme }) => {
     }, []);
 
     const clearCache = async () => {
+        // 1. Clear Browser Caches (Tiles/Assets)
         if ('caches' in window) {
             const keys = await caches.keys();
             await Promise.all(keys.map(key => caches.delete(key)));
-            window.location.reload();
         }
+
+        // 2. Clear Local Storage (State, Keys, Settings)
+        localStorage.clear();
+
+        // 3. Clear Session Storage
+        sessionStorage.clear();
+
+        // 4. Force Reload to reset app state
+        window.location.reload();
     };
 
     const usageMB = (usage / 1024 / 1024).toFixed(1);

@@ -22,6 +22,7 @@ export interface IncidentReport {
 export interface NavigationRoute {
   destinationName: string;
   destinationLoc: Location;
+  startLoc?: Location; // Start location for navigation engine
   steps: RouteStep[];
   totalDistance: string;
   totalTime: string;
@@ -43,6 +44,8 @@ export interface FamilyMember {
   role: string;
   avatar: string;
   location: Location;
+  accuracy?: number;
+  signalQuality?: 'excellent' | 'good' | 'poor';
   heading?: number;
   battery: number;
   speed: number;
@@ -54,6 +57,7 @@ export interface FamilyMember {
   driveEvents: { type: 'hard_brake' | 'rapid_accel' | 'speeding'; count: number }[];
   destination?: string;
   isGhostMode?: boolean;
+  sosActive?: boolean;
   membershipTier: 'free' | 'gold' | 'platinum';
   wayType?: 'HisWay' | 'HerWay' | 'NoWay';
 }

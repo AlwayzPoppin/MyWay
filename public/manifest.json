@@ -1,6 +1,6 @@
 {
-    "name": "MyWay - Family GPS",
-    "short_name": "MyWay",
+    "name": "My Way - Family GPS",
+    "short_name": "My Way",
     "description": "Real-time family location sharing with premium features",
     "start_url": "/",
     "display": "standalone",

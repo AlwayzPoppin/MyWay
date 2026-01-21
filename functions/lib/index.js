@@ -33,10 +33,43 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.geocodeAddress = exports.searchPlaces = void 0;
+exports.geocodeAddress = exports.searchPlaces = exports.callGeminiAI = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
+const generative_ai_1 = require("@google/generative-ai");
 admin.initializeApp();
+// Gemini AI Proxy
+// This function secures your Gemini API key by keeping it server-side
+exports.callGeminiAI = functions.https.onCall(async (data, context) => {
+    var _a;
+    const { prompt, config, model = 'gemini-2.0-flash-exp' } = data;
+    if (!prompt) {
+        throw new functions.https.HttpsError('invalid-argument', 'Prompt is required.');
+    }
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || ((_a = functions.config().google) === null || _a === void 0 ? void 0 : _a.gemini_api_key);
+    if (!apiKey) {
+        console.error('Gemini API key not configured');
+        throw new functions.https.HttpsError('internal', 'AI configuration error.');
+    }
+    try {
+        const genAI = new generative_ai_1.GoogleGenerativeAI(apiKey);
+        const aiModel = genAI.getGenerativeModel({ model });
+        const result = await aiModel.generateContent({
+            contents: Array.isArray(prompt) ? prompt : [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: config
+        });
+        const response = await result.response;
+        return {
+            text: response.text(),
+            candidates: response.candidates || []
+        };
+    }
+    catch (error) {
+        console.error('callGeminiAI runtime error:', error);
+        // Standardize error to ensure onCall handles the response/CORS correctly
+        throw new functions.https.HttpsError('internal', error.message || 'AI service failed');
+    }
+});
 // Google Places API Proxy
 // This function secures your API key by keeping it server-side
 exports.searchPlaces = functions.https.onCall(async (data, context) => {

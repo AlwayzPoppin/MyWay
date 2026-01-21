@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Reward } from './types';
-import Sidebar from './components/Sidebar';
+// Sidebar removed - replaced by BentoSidebar
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import MapView from './components/MapView';
@@ -26,16 +26,17 @@ import OfflineMapManager from './components/OfflineMapManager';
 import BentoSidebar from './components/BentoSidebar';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
+import PlaceDetailPanel from './components/PlaceDetailPanel';
 import { useAuth } from './contexts/AuthContext';
 import { useUI } from './contexts/UIContext';
 import OverlayManager from './components/OverlayManager';
 import {
   getFamilyInsights,
-  getRouteToDestination,
   searchPlacesOnMap,
   getSafetyAdvisory,
   SafetyAdvisory
 } from './services/geminiService';
+import { getRouteFromOSRM, geocodePlace } from './services/osrmService';
 import { geolocationService } from './services/geolocationService';
 import {
   updateMemberLocation,
@@ -48,14 +49,16 @@ import {
   updateUserProfile,
   getUserProfile,
   deliverWrappedKey,
-  getWrappedKeyForUser
+  getWrappedKeyForUser,
+  triggerSOS,
+  clearSOS
 } from './services/authService';
 import { createCheckoutSession, goToBillingPortal } from './services/stripeService';
 import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceService';
 import { sendArrivalAlert, sendDepartureAlert } from './services/emailService';
 import { subscribeToRewards, seedRewards } from './services/rewardsService';
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores } from './services/placesService';
-import { subscribeToUserPlaces, seedDefaultPlaces, UserPlace, addUserPlace, deleteUserPlace } from './services/userPlacesService';
+import { subscribeToUserPlaces, UserPlace, addUserPlace, deleteUserPlace } from './services/userPlacesService';
 import { subscribeSponsoredPlaces, seedSponsoredPlaces, SponsoredPlace } from './services/sponsoredPlacesService';
 import { updateNavigationState, NavigationState } from './services/navigationEngine';
 import {
@@ -69,13 +72,18 @@ import {
   importPublicKey,
   deriveSharedSecretKey,
   wrapCircleKey,
-  unwrapCircleKey
+  unwrapCircleKey,
+  exportKeyPairJWK,
+  importKeyPairJWK,
+  saveKeyPairToSecureStorage,
+  loadKeyPairFromSecureStorage
 } from './services/cryptoService';
 import { startMeshHeartbeat, subscribeToMesh, MeshNode } from './services/meshService';
 import { audioService } from './services/audioService';
 import { SUBSCRIPTION_TIERS } from './config/subscriptions';
 import { useLocationSync } from './hooks/useLocationSync';
 import { useCoPilot } from './hooks/useCoPilot';
+import { getWeather, WeatherData } from './services/weatherService';
 
 // SPONSORED_PLACES now loaded from Firebase - see useEffect below
 
@@ -119,10 +127,16 @@ const App: React.FC = () => {
   } = useUI();
 
   const [isSearching, startSearchTransition] = React.useTransition();
-  const [isSimulationActive, setIsSimulationActive] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => {
     return !localStorage.getItem('myway_onboarding_complete');
   });
+  const [isMapReady, setIsMapReady] = useState(false);
+
+  const [geofences, setGeofences] = useState<Geofence[]>([]);
+  const [memberStatuses, setMemberStatuses] = useState<Record<string, GeofenceStatus>>({});
+  const [weather, setWeather] = useState<WeatherData>({ temp: 72, condition: 'Sunny', icon: '☀️' });
+  const lastWeatherUpdateRef = useRef<{ lat: number; lng: number; time: number }>({ lat: 0, lng: 0, time: 0 });
+  const userLocationRef = useRef<{ lat: number; lng: number } | null>(null); // For stable weather polling
 
   // --- HOOKS ---
   const {
@@ -130,7 +144,16 @@ const App: React.FC = () => {
     setMembers, // Exposed for manual updates if needed (e.g. ghost mode toggles)
     locationError,
     userLocation
-  } = useLocationSync(user, profile, isSimulationActive, profile?.familyCircleId);
+  } = useLocationSync(
+    user,
+    profile,
+    profile?.familyCircleId,
+    geofences,
+    (t) => {
+      const message = t.to === 'INSIDE' ? `📍 Entered ${t.geofence.name}` : `🚶 Left ${t.geofence.name}`;
+      showNotification(message, 5000);
+    }
+  );
 
   // Resolution logic: Prefer live data, fallback to empty (GPS will populate 'you' via hook)
   const members = liveMembers;
@@ -185,6 +208,7 @@ const App: React.FC = () => {
   const [incidents, setIncidents] = useState<IncidentReport[]>([]);
   const [insights, setInsights] = useState<DailyInsight[]>([]);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [activeRoute, setActiveRoute] = useState<NavigationRoute | null>(null);
   const [navState, setNavState] = useState<NavigationState>({
     currentStepIndex: 0,
@@ -216,6 +240,25 @@ const App: React.FC = () => {
 
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [avgGasPrice, setAvgGasPrice] = useState('$3.45');
+
+  // PERFORMANCE: Memoized callbacks for map components to preserve React.memo optimization
+  // Without these, inline arrow functions create new references on every render,
+  // breaking memoization and causing expensive map redraws on each GPS update
+  const handleSelectPlace = useCallback((place: Place) => {
+    setSelectedMemberId(null);
+    setSelectedPlace(place);
+    setMapCenter([place.location.lat, place.location.lng]);
+  }, []);
+
+  const handleSelectMember = useCallback((id: string) => {
+    setSelectedMemberId(id);
+    setMapCenter(undefined);
+  }, []);
+
+  const handleMapInteraction = useCallback(() => {
+    setSelectedMemberId(null);
+    setMapCenter(undefined);
+  }, []);
 
   // Online/Offline listeners
   useEffect(() => {
@@ -254,7 +297,6 @@ const App: React.FC = () => {
     }
   }, [isOffline, is3DMode, set3DMode, showNotification]);
 
-  const [geofences, setGeofences] = useState<Geofence[]>([]);
   const geofenceStatesRef = useRef<Record<string, Record<string, GeofenceStatus>>>({}); // { memberId: { geofenceId: 'INSIDE' | 'OUTSIDE' } }
   const profilesRef = useRef<Record<string, any>>({}); // Store profile info like email for fast lookup
   // Keep membersRef in sync (Handled by hook now, but removing older dup definition)
@@ -319,12 +361,7 @@ const App: React.FC = () => {
     }
 
     const unsubscribe = subscribeToUserPlaces(profile.familyCircleId, (places) => {
-      if (places.length > 0) {
-        setUserPlaces(places);
-      } else {
-        // Seed default "Home" place for new circles
-        seedDefaultPlaces(profile.familyCircleId, user.uid, userLocation || undefined);
-      }
+      setUserPlaces(places);
     });
     return () => unsubscribe();
   }, [user?.uid, profile?.familyCircleId, userLocation]);
@@ -334,45 +371,129 @@ const App: React.FC = () => {
     setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces]);
   }, [sponsoredPlaces, userPlaces]);
 
+  // Live Weather Updates
+  // Audit Fix: Keep ref in sync with userLocation to avoid effect re-running on every GPS update
+  useEffect(() => {
+    userLocationRef.current = userLocation;
+  }, [userLocation]);
+
+  useEffect(() => {
+    // Initial check - only run if we've ever had a location
+    if (!userLocationRef.current) return;
+
+    const fetchWeather = async () => {
+      const loc = userLocationRef.current;
+      if (!loc) return;
+
+      const now = Date.now();
+      const moved = Math.sqrt(Math.pow(loc.lat - lastWeatherUpdateRef.current.lat, 2) + Math.pow(loc.lng - lastWeatherUpdateRef.current.lng, 2)) * 111.32;
+
+      const shouldFetch = lastWeatherUpdateRef.current.time === 0 || moved > 5 || (now - lastWeatherUpdateRef.current.time) > 1800000;
+
+      if (shouldFetch) {
+        console.log(`🌤️ Weather: Fetching for [${loc.lat}, ${loc.lng}] (Initial: ${lastWeatherUpdateRef.current.time === 0})`);
+        const data = await getWeather(loc.lat, loc.lng);
+        console.log(`🌤️ Weather Result: ${data.temp}°F ${data.condition}`);
+        setWeather(data);
+        lastWeatherUpdateRef.current = { lat: loc.lat, lng: loc.lng, time: now };
+      }
+    };
+
+    fetchWeather();
+    const interval = setInterval(fetchWeather, 600000); // Check every 10 mins (stable, not reset by GPS updates)
+    return () => clearInterval(interval);
+  }, []); // Empty deps - interval is stable, uses ref for current location
+
 
   // --- ADVANCED E2EE ORCHESTRATION ---
   useEffect(() => {
     if (!user) return;
 
     const initE2EE = async () => {
-      // 1. Generate local ECDH KeyPair if not exists
+      // 1. Try to load local ECDH KeyPair from persistent storage
       let keys = ecdhKeyPair;
+
       if (!keys) {
-        keys = await generateECDHKeyPair();
-        setEcdhKeyPair(keys);
+        // Migration + Load from Secure Storage (IndexedDB)
+        const savedKeys = await loadKeyPairFromSecureStorage(user.uid);
+        if (savedKeys) {
+          try {
+            keys = await importKeyPairJWK(savedKeys);
+            console.log("🔐 Restored E2EE Keys from Secure Storage (IndexedDB)");
+          } catch (e) {
+            console.error("Failed to restore keys from IDB", e);
+          }
+        }
+
+        // Check legacy localStorage for migration
+        const legacyKeys = localStorage.getItem(`myway_ecdh_${user.uid}`);
+        if (!keys && legacyKeys) {
+          try {
+            const jwk = JSON.parse(legacyKeys);
+            keys = await importKeyPairJWK(jwk);
+            await saveKeyPairToSecureStorage(user.uid, jwk);
+            localStorage.removeItem(`myway_ecdh_${user.uid}`);
+            console.log("🔐 Migrated E2EE Keys from LocalStorage to Secure Storage");
+          } catch (e) {
+            console.error("Migration failed", e);
+          }
+        }
       }
 
-      // 2. Sync Public Key to Profile
+      // 2. Generate new keys if none found or restored
+      if (!keys) {
+        keys = await generateECDHKeyPair();
+        const jwk = await exportKeyPairJWK(keys);
+        await saveKeyPairToSecureStorage(user.uid, jwk);
+        console.log("🔐 Generated and persisted new E2EE Keys in Secure Storage");
+      }
+
+      setEcdhKeyPair(keys);
+
+      // 3. Sync Public Key to Profile
       const pubKeyBase64 = await exportPublicKey(keys.publicKey);
       if (profile && profile.ecdhPublicKey !== pubKeyBase64) {
         updateUserProfile(user.uid, { ecdhPublicKey: pubKeyBase64 });
       }
 
-      // 3. OWNER LOGIC: Deliver keys to circle members
+      // 4. OWNER LOGIC: Retrieve existing key or generate new one
       if (isOwner && currentCircle) {
         const circleMembers = await getCircleMembers(currentCircle.id);
 
-        // In this strategic demo, we generate the circle key if it's not set locally.
-        // In a real app, the owner would unwrap it from a master recovery key.
-        const ownerCircleKey = await generateFamilyKey();
-        setFamilyKey(ownerCircleKey);
+        // CRITICAL FIX: First check if owner already has a wrapped key (persisted from previous session)
+        // This prevents generating a new key on every app load which would make old data undecryptable
+        getWrappedKeyForUser(currentCircle.id, user.uid, async (existingWrapped) => {
+          let circleKey: CryptoKey;
 
-        for (const member of circleMembers) {
-          if (member.uid !== user.uid && member.ecdhPublicKey) {
-            const memberPubKey = await importPublicKey(member.ecdhPublicKey);
-            const sharedSecret = await deriveSharedSecretKey(keys.privateKey, memberPubKey);
-            const wrapped = await wrapCircleKey(ownerCircleKey, sharedSecret);
-            await deliverWrappedKey(currentCircle.id, member.uid, wrapped);
+          if (existingWrapped) {
+            // Retrieve existing key - derive shared secret with ourselves (owner-to-owner)
+            const sharedSecret = await deriveSharedSecretKey(keys.privateKey, keys.publicKey);
+            circleKey = await unwrapCircleKey(existingWrapped, sharedSecret);
+            console.log('🔐 E2EE: Retrieved existing circle key');
+          } else {
+            // No existing key - generate new one and wrap for ourselves
+            circleKey = await generateFamilyKey();
+            const selfSharedSecret = await deriveSharedSecretKey(keys.privateKey, keys.publicKey);
+            const selfWrapped = await wrapCircleKey(circleKey, selfSharedSecret);
+            await deliverWrappedKey(currentCircle.id, user.uid, selfWrapped);
+            console.log('🔐 E2EE: Generated and stored new circle key');
           }
-        }
+
+          setFamilyKey(circleKey);
+
+          // Distribute to other members
+          for (const member of circleMembers) {
+            if (member.uid !== user.uid && member.ecdhPublicKey) {
+              const memberPubKey = await importPublicKey(member.ecdhPublicKey);
+              const sharedSecret = await deriveSharedSecretKey(keys.privateKey, memberPubKey);
+              const wrapped = await wrapCircleKey(circleKey, sharedSecret);
+              await deliverWrappedKey(currentCircle.id, member.uid, wrapped);
+            }
+          }
+        });
       }
 
-      // 4. MEMBER LOGIC: Wait for key delivery from owner
+      // 5. MEMBER LOGIC: Wait for key delivery from owner
       if (!isOwner && currentCircle) {
         getWrappedKeyForUser(currentCircle.id, user.uid, async (wrapped) => {
           const ownerProfile = await getUserProfile(currentCircle.ownerId);
@@ -387,7 +508,7 @@ const App: React.FC = () => {
     };
 
     initE2EE();
-  }, [user?.uid, profile?.familyCircleId, isOwner, !!currentCircle, ecdhKeyPair, profile, currentCircle]);
+  }, [user?.uid, profile?.familyCircleId, isOwner, !!currentCircle, profile, currentCircle]);
 
 
   // Sync Audio Service state
@@ -398,16 +519,28 @@ const App: React.FC = () => {
   // Initialize members from auth profile
   useEffect(() => {
     if (user && profile) {
+      const savedLKL = localStorage.getItem('myway_last_known_location');
+      let initialLoc = { lat: 0, lng: 0 }; // Clean start
+
+      if (savedLKL) {
+        try {
+          initialLoc = JSON.parse(savedLKL);
+          console.log("📍 LKL: Restored last known location on startup");
+        } catch (e) {
+          console.warn("Failed to parse LKL", e);
+        }
+      }
+
       setMembers([
         {
           id: user.uid,
           name: profile.displayName || 'You',
           role: 'Primary',
           avatar: profile.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}&backgroundColor=b6e3f4`,
-          location: { lat: 37.7749, lng: -122.4194 },
+          location: initialLoc,
           battery: 100,
           speed: 0,
-          lastUpdated: 'Waiting for signal...',
+          lastUpdated: savedLKL ? 'Recently' : 'Searching for GPS...',
           status: 'Offline',
           safetyScore: 98,
           pathHistory: [],
@@ -467,16 +600,6 @@ const App: React.FC = () => {
     if (profile?.familyCircleId) {
       const unsubscribe = subscribeToGeofences(profile.familyCircleId, (circlesGeofences) => {
         setGeofences(circlesGeofences);
-
-        // If no geofences exist, let's create a default "Home" one for demo purposes if the user is the owner
-        if (circlesGeofences.length === 0 && profile.uid === user?.uid) {
-          addGeofence(profile.familyCircleId, {
-            name: 'Home',
-            lat: 37.7749,
-            lng: -122.4194,
-            radius: 100
-          });
-        }
       });
       return () => unsubscribe();
     }
@@ -559,8 +682,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (members.length > 0 && geofences.length > 0) {
       members.forEach(member => {
+        // IGNORE: Members waiting for their first real signal (prevents alerting on demo coords)
+        if (member.lastUpdated === 'Waiting for signal...') return;
+
         const memberGeofenceStates = geofenceStatesRef.current[member.id] || {};
         geofences.forEach(geofence => {
+          const isKnown = !!memberGeofenceStates[geofence.id];
           const previousStatus = memberGeofenceStates[geofence.id] || 'OUTSIDE';
           const transition = detectTransition(member.location, geofence, previousStatus);
 
@@ -569,6 +696,13 @@ const App: React.FC = () => {
               geofenceStatesRef.current[member.id] = {};
             }
             geofenceStatesRef.current[member.id][geofence.id] = transition.to;
+
+            // PRIME: If this is the first time we've seen this member/geofence combo, 
+            // DON'T alert. Just record the state. This fixes "Cold Start" noise.
+            if (!isKnown) {
+              console.log(`📍 Geofence Primary: Initialized ${member.name} as ${transition.to} for ${geofence.name}`);
+              return;
+            }
 
             // Trigger alerts
             const recipients = members.map(m => m.id === member.id ? '' : (profilesRef.current[m.id]?.email || '')).filter(e => e !== '');
@@ -603,11 +737,11 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [members.length]);
 
-  const handleToggleGhost = (memberId: string) => {
+  const handleToggleGhost = useCallback((memberId: string) => {
     setMembers(prev => prev.map(m => m.id === memberId ? { ...m, isGhostMode: !m.isGhostMode } : m));
-  };
+  }, [setMembers]);
 
-  const handleUpgrade = async (tierId: string) => {
+  const handleUpgrade = useCallback(async (tierId: string) => {
     try {
       const tier = SUBSCRIPTION_TIERS[tierId];
       if (!tier) return;
@@ -618,46 +752,9 @@ const App: React.FC = () => {
     } catch (err: any) {
       showNotification(`❌ Error: ${err.message}`, 5000);
     }
-  };
+  }, [showNotification]);
 
-  if (authLoading) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#050914] text-white">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
-          <p className="font-bold tracking-widest animate-pulse">LOADING MYWAY...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <LoginScreen
-        theme={theme}
-        onSignInWithGoogle={signInWithGoogle}
-        onSignInWithEmail={signInWithEmail}
-        onSignUpWithEmail={signUpWithEmail}
-        onSendMagicLink={sendMagicLink}
-        magicLinkSent={emailLinkSent}
-        loading={authLoading}
-        error={authError}
-        onClearError={clearError}
-      />
-    );
-  }
-
-  // Show onboarding for first-time users
-  if (showOnboarding) {
-    return (
-      <OnboardingFlow
-        theme={theme}
-        onComplete={() => setShowOnboarding(false)}
-      />
-    );
-  }
-
-  const handleDiscovery = (query: string) => {
+  const handleDiscovery = useCallback((query: string) => {
     if (members.length === 0) return;
     startSearchTransition(async () => {
       const results = await searchPlacesOnMap(query, members[0].location);
@@ -680,10 +777,10 @@ const App: React.FC = () => {
         }
       }
     });
-  };
+  }, [members, sponsoredPlaces, userPlaces, showNotification]);
 
   // Quick search handlers for category buttons (GAS, COFFEE, FOOD, GROCERY)
-  const handleQuickSearch = (type: 'gas' | 'coffee' | 'food' | 'grocery') => {
+  const handleQuickSearch = useCallback((type: 'gas' | 'coffee' | 'food' | 'grocery') => {
     if (members.length === 0) return;
     const location = members[0].location;
 
@@ -716,34 +813,33 @@ const App: React.FC = () => {
 
       setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces, ...results]);
     });
-  };
+  }, [members, sponsoredPlaces, userPlaces]);
 
-  const handleStartNavigation = async (dest: string, simulate: boolean = false) => {
+  const handleStartNavigation = useCallback(async (dest: string) => {
     if (members.length === 0) return;
 
     try {
-      showNotification(`🧭 ${simulate ? 'Calculating simulation route...' : 'Preparing navigation...'}`, 5000);
+      showNotification(`🧭 Preparing navigation...`, 5000);
 
-      const route = await getRouteToDestination(members[0].location, dest, members);
+      // Guard: Prevent navigation starting from Africa (0,0)
+      if (members[0].location.lat === 0 && members[0].location.lng === 0) {
+        showNotification("⚠️ Still waiting for high-precision GPS lock. Please wait a moment...", 4000);
+        return;
+      }
+
+      // First, geocode the destination to get coordinates
+      const destLocation = await geocodePlace(dest);
+      if (!destLocation) {
+        showNotification("❌ Could not find destination. Please try a different address.", 4000);
+        return;
+      }
+
+      // Use OSRM for deterministic routing (real roads from OpenStreetMap)
+      const route = await getRouteFromOSRM(members[0].location, dest, destLocation);
 
       if (!route || !route.steps) {
         showNotification("❌ Could not calculate route. Please try again.", 4000);
         return;
-      }
-
-      if (simulate) {
-        // Extract simulation points from range steps
-        const simulationPoints = route.steps
-          .filter(s => s.endLocation)
-          .map(s => s.endLocation!);
-
-        // Add start and end
-        if (members[0].location) simulationPoints.unshift(members[0].location);
-        simulationPoints.push(route.destinationLoc);
-
-        geolocationService.setSimulationRoute(simulationPoints);
-        setIsSimulationActive(true);
-        geolocationService.setSimulationMode(true);
       }
 
       setActiveRoute(route);
@@ -760,7 +856,56 @@ const App: React.FC = () => {
       console.error("Navigation startup error:", error);
       showNotification("❌ Failed to start navigation.", 3000);
     }
-  };
+  }, [members, showNotification]);
+
+  // NEW: Automatic Rerouting Detection (Audit Round 5)
+  useEffect(() => {
+    if (isNavigating && navState.isOffRoute && activeRoute) {
+      console.warn("Off route detected! Triggering automatic rerouting...");
+      showNotification("🔄 Off route! Recalculating...", 4000);
+      handleStartNavigation(activeRoute.destinationName);
+    }
+  }, [isNavigating, navState.isOffRoute, activeRoute, handleStartNavigation, showNotification]);
+
+  if (authLoading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#050914] text-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          <p className="font-bold tracking-widest animate-pulse">LOADING MY WAY...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <LoginScreen
+        theme={theme}
+        onSignInWithGoogle={signInWithGoogle}
+        onSignInWithEmail={signInWithEmail}
+        onSignUpWithEmail={signUpWithEmail}
+        onSendMagicLink={sendMagicLink}
+        magicLinkSent={emailLinkSent}
+        loading={authLoading}
+        error={authError}
+        onClearError={clearError}
+      />
+    );
+  }
+
+  // Show onboarding for first-time users
+  if (showOnboarding) {
+    return (
+      <OnboardingFlow
+        theme={theme}
+        onComplete={() => setShowOnboarding(false)}
+      />
+    );
+  }
+
+
+
 
 
   return (
@@ -780,16 +925,19 @@ const App: React.FC = () => {
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
             avgGasPrice={avgGasPrice}
+            showNotification={showNotification}
+            onOpenSettings={() => setSettingsOpen(true)}
+            weather={weather}
           />
         )}
 
-        {/* Top Left Profile/Settings FAB (Replaces Header) */}
-        {!isDriveMode && (
+        {/* Mobile-only Profile/Settings FAB - Desktop has this in sidebar */}
+        {!isDriveMode && isMobile && (
           <button
             onClick={() => setSettingsOpen(true)}
-            className={`absolute top-4 left-4 z-[90] group flex items-center gap-3 transition-all duration-300 ${!isMobile ? 'hover:scale-105' : ''}`}
+            className="absolute top-4 left-4 z-[90] group flex items-center gap-3 transition-all duration-300"
           >
-            <div className={`relative w-11 h-11 md:w-12 md:h-12 rounded-full border-2 overflow-hidden shadow-2xl transition-all duration-300
+            <div className={`relative w-11 h-11 rounded-full border-2 overflow-hidden shadow-2xl transition-all duration-300
               ${theme === 'dark' ? 'bg-slate-800 border-white/20' : 'bg-white border-slate-200'}
               ${members[0]?.membershipTier === 'gold' ? 'border-amber-500' : ''}`}
             >
@@ -799,12 +947,6 @@ const App: React.FC = () => {
                 className="w-full h-full object-cover"
               />
             </div>
-            {!isMobile && (
-              <div className={`px-4 py-2 rounded-xl shadow-lg backdrop-blur-md font-bold text-sm border
-                 ${theme === 'dark' ? 'bg-black/50 border-white/10 text-white' : 'bg-white/80 border-slate-200 text-slate-800'}`}>
-                Settings
-              </div>
-            )}
           </button>
         )}
 
@@ -825,10 +967,8 @@ const App: React.FC = () => {
                 mapSkin={userSettings.mapSkin}
                 selectedMemberId={selectedMemberId}
                 center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined} // MapLibre needs [lng, lat]
-                onUserInteraction={() => {
-                  if (selectedMemberId) setSelectedMemberId(null);
-                  if (mapCenter) setMapCenter(undefined);
-                }}
+                onUserInteraction={handleMapInteraction}
+                onMapReady={() => setIsMapReady(true)}
                 activeRoute={activeRoute}
                 places={discoveredPlaces}
                 incidents={incidents}
@@ -845,20 +985,11 @@ const App: React.FC = () => {
                 activeRoute={activeRoute}
                 isNavigating={isNavigating || isDriveMode}
                 theme={theme}
-                onSelectPlace={(place) => {
-                  setSelectedMemberId(null);
-                  setMapCenter([place.location.lat, place.location.lng]);
-                }}
-                onSelectMember={(id) => {
-                  setSelectedMemberId(id);
-                  setMapCenter(undefined);
-                }}
+                onSelectPlace={handleSelectPlace}
+                onSelectMember={handleSelectMember}
                 onBoundsChange={setMapBounds}
-                onUserInteraction={() => {
-                  if (selectedMemberId) setSelectedMemberId(null);
-                  // Leaflet MapView might handle center differently or need similar reset
-                  // keeping it consistent with 3D view logic
-                }}
+                onUserInteraction={handleMapInteraction}
+                onMapReady={() => setIsMapReady(true)}
                 center={mapCenter} // MapView (Leaflet) needs [lat, lng]
                 is3DMode={false}
               />
@@ -898,8 +1029,6 @@ const App: React.FC = () => {
                   setDriveMode(false);
                   setIsNavigating(false);
                   setActiveRoute(null);
-                  geolocationService.setSimulationMode(false);
-                  setIsSimulationActive(false);
                 }}
                 speed={members.find(m => m.id === user?.uid)?.speed || 0}
                 theme={theme}
@@ -947,21 +1076,49 @@ const App: React.FC = () => {
               )}
 
               {/* Member detail panel - desktop only, mobile uses BottomSheet */}
+              {/* Member detail panel - desktop only, mobile uses BottomSheet */}
               {selectedMemberId && !isPrivacyOpen && !isRewardsOpen && !isMobile && (() => {
                 const selectedMember = members.find(m => m.id === selectedMemberId);
                 return selectedMember ? (
                   <OverlayManager>
-                    <div className="absolute z-[80] left-8 top-32 w-80">
+                    <div className="absolute z-[80] left-8 top-32 w-80 flex flex-col gap-4">
                       <MemberDetailPanel
                         member={selectedMember}
                         onClose={() => setSelectedMemberId(null)}
                         onToggleGhost={selectedMemberId === user?.uid ? () => handleToggleGhost(user?.uid || '') : undefined}
                         theme={theme}
                       />
+                      {/* Audit Round 5: Integrated QuickActions */}
+                      <QuickActions
+                        member={selectedMember}
+                        isCurrentUser={selectedMemberId === user?.uid}
+                        onCheckIn={() => showNotification(`✅ Check-in request sent to ${selectedMember.name}`, 3000)}
+                        onSendEmoji={(emoji) => showNotification(`✨ Sent ${emoji} to ${selectedMember.name}`, 2000)}
+                        onCall={() => showNotification(`📞 Calling ${selectedMember.name}...`, 3000)}
+                        onNavigateTo={() => handleStartNavigation(selectedMember.name)}
+                        theme={theme}
+                      />
                     </div>
                   </OverlayManager>
                 ) : null;
               })()}
+
+              {/* Place detail panel */}
+              {selectedPlace && !isMobile && (
+                <OverlayManager>
+                  <div className="absolute z-[80] left-8 top-32 w-80">
+                    <PlaceDetailPanel
+                      place={selectedPlace}
+                      onClose={() => setSelectedPlace(null)}
+                      onNavigate={() => {
+                        handleStartNavigation(selectedPlace.name);
+                        setSelectedPlace(null);
+                      }}
+                      theme={theme}
+                    />
+                  </div>
+                </OverlayManager>
+              )}
 
               {/* Unified Command Center - Bottom Center Single Bar */}
               <OverlayManager>
@@ -976,7 +1133,6 @@ const App: React.FC = () => {
                       showNotification("📍 Centered on your location", 2000);
                     }}
                     onQuickStop={() => setQuickStopOpen(true)}
-                    onTestDrive={() => handleStartNavigation("Simulated Destination", true)}
                     theme={theme}
                   />
                 </div>
@@ -1005,7 +1161,7 @@ const App: React.FC = () => {
               {/* Mesh Status (If active) */}
               {meshNodes.length > 0 && (
                 <div className="bg-indigo-500/90 backdrop-blur-md text-white border border-white/20 p-2 rounded-2xl shadow-2xl animate-pulse flex flex-col items-center mb-2">
-                  <span className="text-[10px] font-black uppercase tracking-tighter">MESH ACTIVE</span>
+                  <span className="text-[10px] font-black uppercase tracking-tighter">MESH SIMULATED</span>
                   <div className="flex gap-2 items-baseline">
                     <span className="text-xl font-black">{meshNodes.length}</span>
                     <span className="text-[9px] font-bold opacity-70">NODES</span>
@@ -1045,9 +1201,15 @@ const App: React.FC = () => {
                 <button
                   onClick={() => {
                     const confirmed = confirm('🚨 EMERGENCY SOS\n\nAlert circle members?');
-                    if (confirmed) showNotification('🆘 SOS Alert sent!', 5000);
+                    if (confirmed && user && profile?.familyCircleId) {
+                      triggerSOS(profile.familyCircleId, user.uid);
+                      showNotification('🆘 SOS Alert sent!', 5000);
+                    }
                   }}
-                  className="w-11 h-11 rounded-2xl bg-red-600/80 text-white flex items-center justify-center hover:bg-red-700 transition-all shadow-lg animate-pulse hover:animate-none ring-2 ring-red-500/50"
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all shadow-lg ring-2
+                    ${members.find(m => m.id === user?.uid)?.sosActive
+                      ? 'bg-red-700 animate-bounce ring-red-400'
+                      : 'bg-red-600/80 hover:bg-red-700 animate-pulse hover:animate-none ring-red-500/50'}`}
                   title="Emergency SOS"
                 >
                   <span className="text-xl">🛡️</span>
@@ -1113,6 +1275,8 @@ const App: React.FC = () => {
                       showNotification(`❌ ${err.message}`, 5000);
                     }
                   }}
+                  onShowPrivacy={() => window.open('https://myway-gps.com/privacy', '_blank')}
+                  onManageCircle={() => showNotification('🔄 Family Circle management is moving to its own dashboard soon!', 5000)}
                 />
               </div>
             </OverlayManager>
@@ -1144,8 +1308,41 @@ const App: React.FC = () => {
           />
         )
       }
+
+      {/* Mobile Place Detail Bottom Sheet */}
+      {isMobile && selectedPlace && !isDriveMode && (
+        <OverlayManager>
+          <div className="absolute z-[150] inset-x-0 bottom-0 p-4">
+            <PlaceDetailPanel
+              place={selectedPlace}
+              onClose={() => setSelectedPlace(null)}
+              onNavigate={() => {
+                handleStartNavigation(selectedPlace.name);
+                setSelectedPlace(null);
+              }}
+              theme={theme}
+            />
+          </div>
+        </OverlayManager>
+      )}
+      {!isMapReady && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#0f172a] text-white">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-20 h-20 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            <p className="font-bold tracking-widest animate-pulse">PREPARING MAP...</p>
+          </div>
+        </div>
+      )}
     </div >
   );
 };
 
-export default App;
+import ErrorBoundary from './components/ErrorBoundary';
+
+const AppWrapper: React.FC = () => (
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
+
+export default AppWrapper;

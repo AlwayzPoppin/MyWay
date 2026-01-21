@@ -1,6 +1,6 @@
 <div align="center">
   <img src="public/logo.png" alt="MyWay Logo" width="80" />
-  <h1>MyWay - Family GPS Tracker</h1>
+  <h1>My Way - Family GPS Tracker</h1>
   <p><strong>Real-time family location sharing with premium features</strong></p>
 
   ![React](https://img.shields.io/badge/React-19-blue?logo=react)

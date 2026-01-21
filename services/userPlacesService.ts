@@ -91,29 +91,4 @@ export const deleteUserPlace = async (
     await remove(ref(database, `places/${circleId}/${placeId}`));
 };
 
-// Seed default places for a new circle (called once when circle is created)
-export const seedDefaultPlaces = async (
-    circleId: string,
-    userId: string,
-    userLocation?: { lat: number; lng: number }
-): Promise<void> => {
-    const existingPlaces = await getUserPlaces(circleId);
-    if (existingPlaces.length > 0) return; // Already has places
 
-    const defaultLocation = userLocation || { lat: 35.2271, lng: -80.8431 };
-
-    const defaultPlaces: Omit<UserPlace, 'id' | 'createdAt'>[] = [
-        {
-            name: 'Home',
-            location: defaultLocation,
-            radius: 0.003,
-            type: 'home',
-            icon: '🏠',
-            createdBy: userId
-        }
-    ];
-
-    for (const place of defaultPlaces) {
-        await addUserPlace(circleId, place, userId);
-    }
-};

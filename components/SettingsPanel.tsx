@@ -4,6 +4,7 @@ import { MAP_SKINS, MapSkinId, getAvailableSkins } from '../services/mapSkinServ
 import PremiumUpsellModal from './PremiumUpsellModal';
 import StorageManager from './StorageManager';
 import { Place } from '../types';
+import { geocodePlace } from '../services/osrmService';
 
 export interface UserSettings {
     theme: 'light' | 'dark' | 'auto';
@@ -36,6 +37,8 @@ interface SettingsPanelProps {
     // New props for account management
     onSignOut?: () => void;
     onManageSubscription?: () => void;
+    onShowPrivacy?: () => void;
+    onManageCircle?: () => void;
     currentLocation?: { lat: number, lng: number };
 }
 
@@ -54,12 +57,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onDeletePlace,
     onSignOut,
     onManageSubscription,
+    onShowPrivacy,
+    onManageCircle,
     currentLocation
 }) => {
     const [localSettings, setLocalSettings] = useState(settings);
     const [showAddPlace, setShowAddPlace] = useState(false);
     const [newPlaceName, setNewPlaceName] = useState('');
     const [newPlaceIcon, setNewPlaceIcon] = useState('📍');
+    const [newPlaceAddress, setNewPlaceAddress] = useState('');
+    const [isGeocoding, setIsGeocoding] = useState(false);
 
     const updateSetting = <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
         const updated = { ...localSettings, [key]: value };
@@ -70,28 +77,28 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     const ToggleSwitch = ({ enabled, onChange }: { enabled: boolean; onChange: (val: boolean) => void }) => (
         <button
             onClick={() => onChange(!enabled)}
-            className={`relative w - 12 h - 6 rounded - full transition - all ${enabled
+            className={`relative w-12 h-6 rounded-full transition-all ${enabled
                 ? 'bg-gradient-to-r from-indigo-500 to-purple-600'
                 : theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'
                 } `}
         >
-            <div className={`absolute top - 0.5 w - 5 h - 5 rounded - full bg - white shadow - md transition - all ${enabled ? 'left-6' : 'left-0.5'
+            <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all ${enabled ? 'left-6' : 'left-0.5'
                 } `} />
         </button>
     );
 
     const SectionTitle = ({ children }: { children: React.ReactNode }) => (
-        <h3 className={`text - xs font - bold uppercase tracking - wider mb - 3 ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'
+        <h3 className={`text-xs font-bold uppercase tracking-wider mb-3 ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'
             } `}>
             {children}
         </h3>
     );
 
     const SettingRow = ({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) => (
-        <div className={`flex items - center justify - between py - 3 border - b ${theme === 'dark' ? 'border-white/5' : 'border-slate-100'
+        <div className={`flex items-center justify-between py-3 border-b ${theme === 'dark' ? 'border-white/5' : 'border-slate-100'
             } `}>
             <div>
-                <p className={`font - medium ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>{label}</p>
+                <p className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>{label}</p>
                 {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
             </div>
             {children}
@@ -99,21 +106,21 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     );
 
     return (
-        <div className={`flex flex - col max - h - full rounded - 3xl overflow - hidden shadow - 2xl border
+        <div className={`flex flex-col max-h-full rounded-3xl overflow-hidden shadow-2xl border
       ${theme === 'dark'
                 ? 'bg-slate-900/95 border-white/10'
                 : 'bg-white/95 border-slate-200'
             } `}
         >
             {/* Header */}
-            <div className={`p - 6 border - b ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} `}>
+            <div className={`p-6 border-b ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} `}>
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className={`text - xl font - bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
+                    <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
                         Settings
                     </h2>
                     <button
                         onClick={onClose}
-                        className={`w - 10 h - 10 flex items - center justify - center rounded - full text - lg font - bold transition - all
+                        className={`w-10 h-10 flex items-center justify-center rounded-full text-lg font-bold transition-all
                             ${theme === 'dark'
                                 ? 'bg-white/10 text-white hover:bg-red-500/80 hover:text-white'
                                 : 'bg-slate-200 text-slate-700 hover:bg-red-500 hover:text-white'
@@ -132,7 +139,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         className="w-16 h-16 rounded-2xl object-cover"
                     />
                     <div>
-                        <p className={`font - bold text - lg ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
+                        <p className={`font-bold text-lg ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
                             {userName}
                         </p>
                         <p className="text-sm text-slate-500">Family Circle Admin</p>
@@ -142,7 +149,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
             {/* Settings content - scrollable with visible scrollbar */}
             <div
-                className={`flex - 1 overflow - y - auto p - 6 space - y - 6 scrollbar - visible ${theme === 'light' ? 'scrollbar-visible-light' : ''} `}
+                className={`flex-1 overflow-y-auto p-6 space-y-6 scrollbar-visible ${theme === 'light' ? 'scrollbar-visible-light' : ''} `}
                 style={{ maxHeight: 'calc(100vh - 280px)' }}
             >
 
@@ -155,7 +162,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <button
                                     key={t}
                                     onClick={() => updateSetting('theme', t)}
-                                    className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.theme === t
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${localSettings.theme === t
                                         ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white'
                                         : theme === 'dark'
                                             ? 'bg-white/5 text-slate-300 hover:bg-white/10'
@@ -172,7 +179,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         <select
                             value={localSettings.mapStyle}
                             onChange={(e) => updateSetting('mapStyle', e.target.value as UserSettings['mapStyle'])}
-                            className={`px - 3 py - 2 rounded - xl text - sm outline - none ${theme === 'dark'
+                            className={`px-3 py-2 rounded-xl text-sm outline-none ${theme === 'dark'
                                 ? 'bg-white/5 text-white'
                                 : 'bg-slate-100 text-slate-900'
                                 } `}
@@ -189,7 +196,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <button
                                     key={u}
                                     onClick={() => updateSetting('units', u)}
-                                    className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.units === u
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${localSettings.units === u
                                         ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white'
                                         : theme === 'dark'
                                             ? 'bg-white/5 text-slate-300 hover:bg-white/10'
@@ -212,7 +219,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <button
                                     key={p}
                                     onClick={() => updateSetting('aiPersonality', p)}
-                                    className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.aiPersonality === p
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${localSettings.aiPersonality === p
                                         ? 'bg-gradient-to-r from-teal-400 to-emerald-500 text-white'
                                         : theme === 'dark'
                                             ? 'bg-white/5 text-slate-300 hover:bg-white/10'
@@ -231,7 +238,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <button
                                     key={g}
                                     onClick={() => updateSetting('aiGender', g)}
-                                    className={`px - 3 py - 1.5 rounded - lg text - xs font - bold capitalize transition - all ${localSettings.aiGender === g
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${localSettings.aiGender === g
                                         ? 'bg-gradient-to-r from-teal-400 to-emerald-500 text-white'
                                         : theme === 'dark'
                                             ? 'bg-white/5 text-slate-300 hover:bg-white/10'
@@ -262,7 +269,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     key={skin.id}
                                     disabled={isLocked}
                                     onClick={() => !isLocked && updateSetting('mapSkin', skin.id)}
-                                    className={`relative p - 3 rounded - xl text - center transition - all ${isSelected
+                                    className={`relative p-3 rounded-xl text-center transition-all ${isSelected
                                         ? 'bg-gradient-to-br from-teal-400 to-emerald-500 text-white ring-2 ring-teal-300'
                                         : isLocked
                                             ? theme === 'dark' ? 'bg-white/5 text-slate-500 opacity-60' : 'bg-slate-100 text-slate-400 opacity-60'
@@ -314,22 +321,22 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 {/* My Places */}
                 <div>
                     <SectionTitle>My Places</SectionTitle>
-                    <div className={`space - y - 2 mb - 3`}>
+                    <div className={`space-y-2 mb-3`}>
                         {userPlaces.length === 0 ? (
-                            <p className={`text - sm ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'} `}>
+                            <p className={`text-sm ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'} `}>
                                 No saved places yet. Add your first place below.
                             </p>
                         ) : (
                             userPlaces.map(place => (
                                 <div
                                     key={place.id}
-                                    className={`flex items - center justify - between p - 3 rounded - xl ${theme === 'dark' ? 'bg-white/5' : 'bg-slate-100'
+                                    className={`flex items-center justify-between p-3 rounded-xl ${theme === 'dark' ? 'bg-white/5' : 'bg-slate-100'
                                         } `}
                                 >
                                     <div className="flex items-center gap-3">
                                         <span className="text-xl">{place.icon}</span>
                                         <div>
-                                            <p className={`font - medium ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
+                                            <p className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
                                                 {place.name}
                                             </p>
                                             <p className="text-xs text-slate-500">
@@ -352,12 +359,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
                     {/* Add Place Form */}
                     {showAddPlace ? (
-                        <div className={`p - 4 rounded - 2xl border ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-100'} `}>
+                        <div className={`p-4 rounded-2xl border ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-100'} `}>
                             <div className="flex items-center gap-2 mb-3">
                                 <select
                                     value={newPlaceIcon}
                                     onChange={(e) => setNewPlaceIcon(e.target.value)}
-                                    className={`px - 2 py - 2 rounded - lg text - lg ${theme === 'dark' ? 'bg-white/10 text-white' : 'bg-slate-200 text-slate-900'} `}
+                                    className={`px-2 py-2 rounded-lg text-lg ${theme === 'dark' ? 'bg-white/10 text-white' : 'bg-slate-200 text-slate-900'} `}
                                 >
                                     <option value="📍">📍</option>
                                     <option value="🏠">🏠 Home</option>
@@ -373,37 +380,59 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     placeholder="Place name..."
                                     value={newPlaceName}
                                     onChange={(e) => setNewPlaceName(e.target.value)}
-                                    className={`flex - 1 px - 3 py - 2 rounded - lg outline - none ${theme === 'dark' ? 'bg-white/10 text-white placeholder-slate-500' : 'bg-slate-200 text-slate-900 placeholder-slate-400'
+                                    className={`flex-1 px-3 py-2 rounded-lg outline-none ${theme === 'dark' ? 'bg-white/10 text-white placeholder-slate-500' : 'bg-slate-200 text-slate-900 placeholder-slate-400'
+                                        } `}
+                                />
+                            </div>
+                            <div className="mb-3">
+                                <input
+                                    type="text"
+                                    placeholder="Enter address (e.g. 123 Main St, New York)..."
+                                    value={newPlaceAddress}
+                                    onChange={(e) => setNewPlaceAddress(e.target.value)}
+                                    className={`w-full px-3 py-2 rounded-lg outline-none ${theme === 'dark' ? 'bg-white/10 text-white placeholder-slate-500' : 'bg-slate-200 text-slate-900 placeholder-slate-400'
                                         } `}
                                 />
                             </div>
                             <div className="flex gap-2">
                                 <button
-                                    onClick={() => {
-                                        if (onAddPlace && newPlaceName.trim()) {
-                                            // Uses current user location or defaults
-                                            onAddPlace({
-                                                name: newPlaceName.trim(),
-                                                icon: newPlaceIcon,
-                                                location: currentLocation || { lat: 35.2271, lng: -80.8431 }, // Fallback to NC if location not available
-                                                radius: 0.003,
-                                                type: 'other'
-                                            });
-                                            setNewPlaceName('');
-                                            setNewPlaceIcon('📍');
-                                            setShowAddPlace(false);
+                                    onClick={async () => {
+                                        if (onAddPlace && newPlaceName.trim() && newPlaceAddress.trim()) {
+                                            setIsGeocoding(true);
+                                            const coords = await geocodePlace(newPlaceAddress.trim());
+
+                                            if (coords) {
+                                                onAddPlace({
+                                                    name: newPlaceName.trim(),
+                                                    icon: newPlaceIcon,
+                                                    location: { lat: coords.lat, lng: coords.lng },
+                                                    radius: 0.003,
+                                                    type: 'other'
+                                                });
+                                                setNewPlaceName('');
+                                                setNewPlaceAddress('');
+                                                setNewPlaceIcon('📍');
+                                                setShowAddPlace(false);
+                                            } else {
+                                                alert("❌ Could not find that address. Please try a more specific one.");
+                                            }
+                                            setIsGeocoding(false);
                                         }
                                     }}
-                                    className="flex-1 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold text-sm"
+                                    disabled={isGeocoding || !newPlaceName.trim() || !newPlaceAddress.trim()}
+                                    className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${isGeocoding || !newPlaceName.trim() || !newPlaceAddress.trim()
+                                        ? 'bg-slate-500/50 text-slate-300 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:shadow-lg'
+                                        }`}
                                 >
-                                    ✓ Save Place
+                                    {isGeocoding ? '📍 Verifying...' : '✓ Save Place'}
                                 </button>
                                 <button
                                     onClick={() => {
                                         setShowAddPlace(false);
                                         setNewPlaceName('');
                                     }}
-                                    className={`px - 4 py - 2 rounded - lg font - bold text - sm ${theme === 'dark' ? 'bg-white/10 text-white' : 'bg-slate-200 text-slate-700'
+                                    className={`px-4 py-2 rounded-lg font-bold text-sm ${theme === 'dark' ? 'bg-white/10 text-white' : 'bg-slate-200 text-slate-700'
                                         } `}
                                 >
                                     Cancel
@@ -413,7 +442,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     ) : (
                         <button
                             onClick={() => setShowAddPlace(true)}
-                            className={`w - full py - 3 rounded - xl font - medium border - 2 border - dashed transition - all ${theme === 'dark'
+                            className={`w-full py-3 rounded-xl font-medium border-2 border-dashed transition-all ${theme === 'dark'
                                 ? 'border-white/20 text-slate-400 hover:border-white/40 hover:text-white'
                                 : 'border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700'
                                 } `}
@@ -431,7 +460,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         <SettingRow label="Offline Maps" description="Manage downloaded regions">
                             <button
                                 onClick={onOpenOfflineMaps}
-                                className={`px - 3 py - 1.5 rounded - lg text - xs font - bold transition - all border ${theme === 'dark'
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${theme === 'dark'
                                     ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
                                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                     } `}
@@ -447,7 +476,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     {onManageSubscription && (
                         <button
                             onClick={onManageSubscription}
-                            className={`w - full py - 3 rounded - xl font - medium transition - colors ${theme === 'dark'
+                            className={`w-full py-3 rounded-xl font-medium transition-colors ${theme === 'dark'
                                 ? 'bg-white/5 text-slate-300 hover:bg-white/10'
                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                 } `}
@@ -455,16 +484,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             💳 Manage Subscription
                         </button>
                     )}
-                    <button className={`w - full py - 3 rounded - xl font - medium transition - colors ${theme === 'dark'
-                        ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        } `}>
+                    <button
+                        onClick={onManageCircle}
+                        className={`w-full py-3 rounded-xl font-medium transition-colors ${theme === 'dark'
+                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            } `}>
                         Manage Family Circle
                     </button>
-                    <button className={`w - full py - 3 rounded - xl font - medium transition - colors ${theme === 'dark'
-                        ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        } `}>
+                    <button
+                        onClick={onShowPrivacy}
+                        className={`w-full py-3 rounded-xl font-medium transition-colors ${theme === 'dark'
+                            ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            } `}>
                         Privacy Policy
                     </button>
                     <button
@@ -490,11 +523,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
 
             {/* Version */}
-            <div className={`p - 4 text - center border - t ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} `}>
-                <p className="text-xs text-slate-500">MyWay v1.0.0</p>
+            <div className={`p-4 text-center border-t ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} `}>
+                <p className="text-xs text-slate-500">My Way v1.0.0</p>
             </div>
         </div>
     );
 };
 
-export default SettingsPanel;
+export default React.memo(SettingsPanel);

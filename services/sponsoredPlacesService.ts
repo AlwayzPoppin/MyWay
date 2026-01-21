@@ -48,7 +48,7 @@ export const seedSponsoredPlaces = async (): Promise<void> => {
     const defaultSponsored: Omit<SponsoredPlace, 'id'>[] = [
         {
             name: 'Shell Premium',
-            location: { lat: 37.7880, lng: -122.4100 },
+            location: { lat: 0, lng: 0 }, // To be updated via admin dashboard
             radius: 0.005,
             type: 'sponsored',
             icon: '⛽',

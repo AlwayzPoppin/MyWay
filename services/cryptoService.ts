@@ -11,6 +11,50 @@ export const setFamilyKey = (key: CryptoKey) => {
     familyKey = key;
 };
 
+// --- SECURE STORAGE (IndexedDB) ---
+const DB_NAME = 'MyWaySecurity';
+const STORE_NAME = 'E2EEKeys';
+
+const getIDB = (): Promise<IDBDatabase> => {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, 1);
+        request.onupgradeneeded = () => {
+            request.result.createObjectStore(STORE_NAME);
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+};
+
+export const saveKeyPairToSecureStorage = async (uid: string, jwk: any) => {
+    try {
+        const db = await getIDB();
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(jwk, uid);
+        return new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
+    } catch (e) {
+        console.error("IDB Save Failed", e);
+    }
+};
+
+export const loadKeyPairFromSecureStorage = async (uid: string) => {
+    try {
+        const db = await getIDB();
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const request = tx.objectStore(STORE_NAME).get(uid);
+        return new Promise<any>((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    } catch (e) {
+        console.error("IDB Load Failed", e);
+        return null;
+    }
+};
+
 export const generateFamilyKey = async () => {
     return await window.crypto.subtle.generateKey(
         { name: 'AES-GCM', length: 256 },
@@ -43,6 +87,30 @@ export const importPublicKey = async (base64Key: string): Promise<CryptoKey> => 
         true,
         []
     );
+};
+
+export const exportKeyPairJWK = async (keyPair: CryptoKeyPair): Promise<{ publicKey: JsonWebKey, privateKey: JsonWebKey }> => {
+    const publicKey = await window.crypto.subtle.exportKey('jwk', keyPair.publicKey);
+    const privateKey = await window.crypto.subtle.exportKey('jwk', keyPair.privateKey);
+    return { publicKey, privateKey };
+};
+
+export const importKeyPairJWK = async (jwk: { publicKey: JsonWebKey, privateKey: JsonWebKey }): Promise<CryptoKeyPair> => {
+    const publicKey = await window.crypto.subtle.importKey(
+        'jwk',
+        jwk.publicKey,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        []
+    );
+    const privateKey = await window.crypto.subtle.importKey(
+        'jwk',
+        jwk.privateKey,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        ['deriveKey', 'deriveBits']
+    );
+    return { publicKey, privateKey };
 };
 
 export const deriveSharedSecretKey = async (privateKey: CryptoKey, publicKey: CryptoKey): Promise<CryptoKey> => {
@@ -169,5 +237,7 @@ export const decryptMessage = async (text: string): Promise<string> => {
 };
 
 export const getFuzzyLocation = (lat: number, lng: number): { lat: number, lng: number } => {
-    return { lat: lat + (Math.random() - 0.5) * 0.01, lng: lng + (Math.random() - 0.5) * 0.01 };
+    // Audit Fix: 0.01 was ~1km which felt like "guessing". 
+    // 0.002 is ~200m, keeping privacy while feeling more steady.
+    return { lat: lat + (Math.random() - 0.5) * 0.002, lng: lng + (Math.random() - 0.5) * 0.002 };
 };

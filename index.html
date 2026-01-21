@@ -12,8 +12,8 @@
   <meta name="theme-color" content="#050914" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="description" content="MyWay - Real-time family GPS tracking with premium features" />
-  <title>MyWay</title>
+  <meta name="description" content="My Way - Real-time family GPS tracking with premium features" />
+  <title>My Way</title>
   <!-- Standard Tailwind CDN for Rapid Prototyping - Switch to PostCSS for Prod -->
   <!-- Tailwind CDN removed in favor of PostCSS build -->
   <link
@@ -367,9 +367,9 @@
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js')
-          .then(reg => console.log('MyWay: Service Worker registered', reg.scope))
+          .then(reg => console.log('My Way: Service Worker registered', reg.scope))
           .catch(err => {
-            console.warn('MyWay: Service Worker registration failed', err);
+            console.warn('My Way: Service Worker registration failed', err);
             if (window.location.protocol === 'https:' && window.location.hostname === 'localhost') {
               console.info('💡 TIP: SSL errors on localhost are common. Try proceeding in "Insecure" mode or check your certificate.');
             }

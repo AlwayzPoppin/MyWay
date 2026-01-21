@@ -42,13 +42,13 @@ export const sendWelcomeEmail = async (emailAddress: string, familyName: string)
     return sendEmail({
         to: emailAddress,
         message: {
-            subject: `Welcome to the ${familyName} Family Circle on MyWay!`,
+            subject: `Welcome to the ${familyName} Family Circle on My Way!`,
             html: `
-        <h1>Welcome to MyWay!</h1>
+        <h1>Welcome to My Way!</h1>
         <p>You have been added to the <strong>${familyName}</strong> family circle.</p>
         <p>You can now share your location and stay connected with your family safely.</p>
         <br/>
-        <p>Stay safe,<br/>The MyWay Team</p>
+        <p>Stay safe,<br/>The My Way Team</p>
       `
         }
     });
@@ -86,7 +86,7 @@ export const sendArrivalAlert = async (recipients: string[], memberName: string,
         <p><strong>${memberName}</strong> has just arrived at <strong>${placeName}</strong>.</p>
         <p>Time: ${new Date().toLocaleTimeString()}</p>
         <br/>
-        <p>MyWay Automated Alert</p>
+        <p>My Way Automated Alert</p>
       `
         }
     });
@@ -105,7 +105,7 @@ export const sendDepartureAlert = async (recipients: string[], memberName: strin
         <p><strong>${memberName}</strong> has just left <strong>${placeName}</strong>.</p>
         <p>Time: ${new Date().toLocaleTimeString()}</p>
         <br/>
-        <p>MyWay Automated Alert</p>
+        <p>My Way Automated Alert</p>
       `
         }
     });

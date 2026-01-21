@@ -37,7 +37,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onLocate, onQuickStop, 
             : 'opacity-20 bg-amber-500'}`}
       />
 
-      <div className="relative flex items-center bg-[#0f172a]/95 backdrop-blur-xl rounded-[2.5rem] p-2 border border-white/10 shadow-2xl gap-2">
+      <div className="relative flex items-center glass-panel rounded-[2.5rem] p-2 shadow-2xl gap-2">
         {/* POI Fast-Action Cluster (Integrated Left) */}
         <div className="flex gap-1.5 pl-1">
           {categories.map((cat, idx) => (

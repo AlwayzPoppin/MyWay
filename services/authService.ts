@@ -246,6 +246,7 @@ export interface MemberLocation {
     signalQuality?: string;
     encryptedData?: string;
     status?: string;
+    sosActive?: boolean;
 }
 
 export const updateMemberLocation = async (
@@ -254,6 +255,24 @@ export const updateMemberLocation = async (
     location: MemberLocation
 ): Promise<void> => {
     await set(ref(database, `locations/${circleId}/${userId}`), location);
+};
+
+export const triggerSOS = async (circleId: string, userId: string): Promise<void> => {
+    const locRef = ref(database, `locations/${circleId}/${userId}`);
+    const snapshot = await get(locRef);
+    if (snapshot.exists()) {
+        const currentLoc = snapshot.val();
+        await set(locRef, { ...currentLoc, sosActive: true, timestamp: Date.now() });
+    }
+};
+
+export const clearSOS = async (circleId: string, userId: string): Promise<void> => {
+    const locRef = ref(database, `locations/${circleId}/${userId}`);
+    const snapshot = await get(locRef);
+    if (snapshot.exists()) {
+        const currentLoc = snapshot.val();
+        await set(locRef, { ...currentLoc, sosActive: false, timestamp: Date.now() });
+    }
 };
 
 export const subscribeToFamilyLocations = (

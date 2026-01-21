@@ -37,3 +37,51 @@
 .leaflet-control-attribution a {
     color: #fbbf24 !important;
 }
+
+/* Premium Vibe Utilities */
+.glass-panel {
+    background: rgba(15, 23, 42, 0.7) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37) !important;
+}
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.03) !important;
+    backdrop-filter: blur(8px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.glass-card:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    transform: translateY(-2px);
+}
+
+.glow-primary {
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+}
+
+.glow-error {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+}
+
+.premium-gradient {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+}
+
+.accent-gradient {
+    background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%);
+}
+
+/* Micro-animations */
+@keyframes pulse-subtle {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+.animate-pulse-subtle {
+    animation: pulse-subtle 3s infinite ease-in-out;
+}

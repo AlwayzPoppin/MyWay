@@ -1,7 +1,45 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 admin.initializeApp();
+
+// Gemini AI Proxy
+// This function secures your Gemini API key by keeping it server-side
+export const callGeminiAI = functions.https.onCall(async (data, context) => {
+    const { prompt, config, model = 'gemini-2.0-flash-exp' } = data;
+
+    if (!prompt) {
+        throw new functions.https.HttpsError('invalid-argument', 'Prompt is required.');
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || functions.config().google?.gemini_api_key;
+
+    if (!apiKey) {
+        console.error('Gemini API key not configured');
+        throw new functions.https.HttpsError('internal', 'AI configuration error.');
+    }
+
+    try {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const aiModel = genAI.getGenerativeModel({ model });
+
+        const result = await aiModel.generateContent({
+            contents: Array.isArray(prompt) ? prompt : [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: config
+        });
+
+        const response = await result.response;
+        return {
+            text: response.text(),
+            candidates: response.candidates || []
+        };
+    } catch (error: any) {
+        console.error('callGeminiAI runtime error:', error);
+        // Standardize error to ensure onCall handles the response/CORS correctly
+        throw new functions.https.HttpsError('internal', error.message || 'AI service failed');
+    }
+});
 
 // Google Places API Proxy
 // This function secures your API key by keeping it server-side

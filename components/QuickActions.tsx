@@ -8,6 +8,7 @@ interface QuickActionsProps {
     onCall: () => void;
     onNavigateTo: () => void;
     theme: 'light' | 'dark';
+    isCurrentUser?: boolean;
 }
 
 const QuickActions: React.FC<QuickActionsProps> = ({
@@ -16,7 +17,8 @@ const QuickActions: React.FC<QuickActionsProps> = ({
     onSendEmoji,
     onCall,
     onNavigateTo,
-    theme
+    theme,
+    isCurrentUser = false
 }) => {
     const reactions = ['👋', '❤️', '👍', '🏠', '☕', '🍕'];
 
@@ -91,7 +93,7 @@ const QuickActions: React.FC<QuickActionsProps> = ({
             </div>
 
             {/* "I'm Safe" button for self */}
-            {member.name === 'You' && (
+            {isCurrentUser && (
                 <button
                     onClick={onCheckIn}
                     className="w-full mt-4 py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-sm hover:opacity-90 transition-all shadow-lg shadow-green-500/30"

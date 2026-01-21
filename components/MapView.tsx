@@ -16,6 +16,7 @@ interface MapViewProps {
   onSelectMember?: (memberId: string) => void;
   onBoundsChange?: (bounds: { north: number; south: number; east: number; west: number }) => void;
   onUserInteraction?: () => void;
+  onMapReady?: () => void;
   is3DMode?: boolean;
   center?: [number, number]; // [lat, lng] for Leaflet
 }
@@ -51,18 +52,31 @@ const getStatusHalo = (member: FamilyMember, isGold: boolean) => {
   }
 };
 
+// PERFORMANCE: Icon cache to prevent DOM thrashing
+const memberIconCache: Record<string, L.DivIcon> = {};
+const placeIconCache: Record<string, L.DivIcon> = {};
+const clusterIconCache: Record<string, L.DivIcon> = {};
+
 // Create member marker with status halo and 3D depth
 const createMemberMarker = (member: FamilyMember, isGold: boolean, is3D: boolean = false) => {
-  const halo = getStatusHalo(member, isGold);
   const isYou = member.name === 'You';
   const isMoving = member.status === 'Driving' || member.status === 'Moving';
+  const roundedSpeed = Math.round(member.speed);
+  const isLowBattery = member.battery <= 20;
+
+  // Cache key based on visual-impact properties
+  const cacheKey = `${member.id}-${member.status}-${roundedSpeed}-${isLowBattery}-${isGold}-${isYou}-${is3D}-${member.isGhostMode}-${member.avatar}`;
+
+  if (memberIconCache[cacheKey]) return memberIconCache[cacheKey];
+
+  const halo = getStatusHalo(member, isGold);
 
   // 3D shadow for depth effect
   const shadowStyle = `
     filter: drop-shadow(0 8px 16px rgba(0,0,0,0.4)) drop-shadow(0 4px 6px rgba(0,0,0,0.3));
   `;
 
-  return L.divIcon({
+  const icon = L.divIcon({
     className: 'custom-marker',
     html: `
       <div style="
@@ -111,7 +125,7 @@ const createMemberMarker = (member: FamilyMember, isGold: boolean, is3D: boolean
           width: 52px;
           height: 52px;
           border-radius: 50%;
-          border: 3px solid ${member.battery <= 20 ? '#ef4444' : (isMoving ? '#22c55e' : '#ffffff')};
+          border: 3px solid ${isLowBattery ? '#ef4444' : (isMoving ? '#22c55e' : '#ffffff')};
           box-shadow: 0 0 0 2px ${halo.color}, 0 4px 12px rgba(0,0,0,0.5);
           overflow: hidden;
           background: linear-gradient(135deg, #1e293b, #0f172a);
@@ -164,7 +178,7 @@ const createMemberMarker = (member: FamilyMember, isGold: boolean, is3D: boolean
         ` : ''}
         
         <!-- Speed indicator for moving members -->
-        ${isMoving && member.speed > 0 ? `
+        ${isMoving && roundedSpeed > 0 ? `
           <div style="
             position: absolute;
             top: auto;
@@ -182,7 +196,7 @@ const createMemberMarker = (member: FamilyMember, isGold: boolean, is3D: boolean
             white-space: nowrap;
             border: 2px solid white;
           ">
-            ${Math.round(member.speed)} mph
+            ${roundedSpeed} mph
           </div>
         ` : ''}
       </div>
@@ -190,12 +204,17 @@ const createMemberMarker = (member: FamilyMember, isGold: boolean, is3D: boolean
     iconSize: [72, 72],
     iconAnchor: [36, 36]
   });
+
+  memberIconCache[cacheKey] = icon;
+  return icon;
 };
 
 // Create place marker
 const createPlaceMarker = (place: Place) => {
+  if (placeIconCache[place.id]) return placeIconCache[place.id];
+
   const isSponsored = place.type === 'sponsored';
-  return L.divIcon({
+  const icon = L.divIcon({
     className: 'place-marker',
     html: `
       <div style="
@@ -233,6 +252,9 @@ const createPlaceMarker = (place: Place) => {
     iconSize: [48, 48],
     iconAnchor: [24, 24]
   });
+
+  placeIconCache[place.id] = icon;
+  return icon;
 };
 
 // --- CLUSTERING HELPER ---
@@ -275,7 +297,10 @@ const getClusters = (members: FamilyMember[], zoom: number): Cluster[] => {
 
 // Create cluster marker icon
 const createClusterMarker = (cluster: Cluster) => {
-  return L.divIcon({
+  const cacheKey = `${cluster.members.length}-${cluster.members.map(m => m.id).sort().join(',')}`;
+  if (clusterIconCache[cacheKey]) return clusterIconCache[cacheKey];
+
+  const icon = L.divIcon({
     className: 'cluster-marker',
     html: `
       <div style="
@@ -293,6 +318,9 @@ const createClusterMarker = (cluster: Cluster) => {
     iconSize: [48, 48],
     iconAnchor: [24, 24]
   });
+
+  clusterIconCache[cacheKey] = icon;
+  return icon;
 };
 
 const MapView: React.FC<MapViewProps> = ({
@@ -309,6 +337,7 @@ const MapView: React.FC<MapViewProps> = ({
   onSelectMember,
   onBoundsChange,
   onUserInteraction,
+  onMapReady,
   is3DMode = false,
   center
 }) => {
@@ -316,6 +345,7 @@ const MapView: React.FC<MapViewProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const trailsRef = useRef<Map<string, L.Polyline>>(new Map());
+  const accuracyCirclesRef = useRef<Map<string, L.Circle>>(new Map());
   const [mapReady, setMapReady] = useState(false);
 
   // Fly to center when it changes
@@ -329,10 +359,11 @@ const MapView: React.FC<MapViewProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    const defaultCenter: [number, number] = [35.2271, -80.8431];
+    // Default to Null Island if no center provided - app will flyTo real location on first lock
+    const defaultCenter: [number, number] = [0, 0];
 
     mapRef.current = L.map(mapContainerRef.current, {
-      center: defaultCenter,
+      center: center || defaultCenter,
       zoom: 12,
       zoomControl: false,
       attributionControl: false
@@ -368,6 +399,7 @@ const MapView: React.FC<MapViewProps> = ({
 
     setTimeout(() => {
       setMapReady(true);
+      onMapReady?.();
       // Emit initial bounds
       if (mapRef.current && onBoundsChange) {
         const bounds = mapRef.current.getBounds();
@@ -404,70 +436,130 @@ const MapView: React.FC<MapViewProps> = ({
     L.tileLayer(tileUrl, { maxZoom: 19 }).addTo(mapRef.current);
   }, [theme]);
 
-  // Update member markers (CLUSTERING ENABLED)
+  // PERFORMANCE OPTIMIZATION: Throttled clustering
+  const lastClusteringTimeRef = useRef<number>(0);
+  const clusterMappingRef = useRef<Cluster[]>([]);
+
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
 
-    // Get current zoom for clustering - simpler than listening to zoomend for now
     const zoom = mapRef.current.getZoom();
-    const clusters = getClusters(members, zoom);
+    const now = Date.now();
 
-    // Clear markers not in new clusters (simple diff)
-    // For this optimization, we'll do a full refresh if count changes to avoid complex diffing logic in this phase
-    // In a prod app, we'd use a robust diff or Leaflet.markercluster
+    // Only re-run heavy clustering logic every 1.5 seconds OR on zoom change
+    const shouldRecluster = now - lastClusteringTimeRef.current > 1500;
 
-    // Iterate clusters
-    clusters.forEach(cluster => {
-      // If single member, use standard logic
-      if (cluster.members.length === 1) {
-        const member = cluster.members[0];
-        const isGold = member.membershipTier === 'gold' || member.membershipTier === 'platinum';
-        const position: [number, number] = [member.location.lat, member.location.lng];
+    if (shouldRecluster) {
+      // Audit Fix: Filter out members at (0,0) to prevent Null Island markers when E2EE decryption fails
+      const validMembers = members.filter(m => m.location.lat !== 0 || m.location.lng !== 0);
+      clusterMappingRef.current = getClusters(validMembers, zoom);
+      lastClusteringTimeRef.current = now;
 
-        if (markersRef.current.has(cluster.id)) {
-          const marker = markersRef.current.get(cluster.id)!;
-          marker.setLatLng(position);
-          marker.setIcon(createMemberMarker(member, isGold, is3DMode));
+      const newKeys = new Set(clusterMappingRef.current.map(c => c.id));
+
+      // Cleanup old markers
+      markersRef.current.forEach((marker, id) => {
+        if (!newKeys.has(id)) {
+          marker.remove();
+          markersRef.current.delete(id);
+        }
+      });
+    }
+
+    // UPDATE POSITIONS (Independent of clustering cycle - runs every 1Hz)
+    clusterMappingRef.current.forEach(cluster => {
+      // Re-calculate average position for the cluster based on CURRENT member positions
+      // Even if we don't re-cluster (member stays in same cluster), their movement shifts the center
+      let avgLat = 0, avgLng = 0;
+      cluster.members.forEach(m => {
+        const liveMember = members.find(lm => lm.id === m.id) || m;
+        avgLat += liveMember.location.lat;
+        avgLng += liveMember.location.lng;
+      });
+      const position: [number, number] = [avgLat / cluster.members.length, avgLng / cluster.members.length];
+
+      if (markersRef.current.has(cluster.id)) {
+        const marker = markersRef.current.get(cluster.id)!;
+        marker.setLatLng(position);
+
+        // Update icon/state
+        if (cluster.members.length === 1) {
+          const m = members.find(lm => lm.id === cluster.members[0].id) || cluster.members[0];
+          const isGold = m.membershipTier === 'gold' || m.membershipTier === 'platinum';
+          marker.setIcon(createMemberMarker(m, isGold, is3DMode));
         } else {
-          const marker = L.marker(position, {
-            icon: createMemberMarker(member, isGold, is3DMode),
-            zIndexOffset: member.name === 'You' ? 1000 : 0
-          }).addTo(mapRef.current!);
-          marker.on('click', () => onSelectMember?.(member.id));
-          markersRef.current.set(cluster.id, marker);
+          marker.setIcon(createClusterMarker(cluster));
         }
       } else {
-        // Render Cluster
-        const position: [number, number] = [cluster.lat, cluster.lng];
-        if (markersRef.current.has(cluster.id)) {
-          const marker = markersRef.current.get(cluster.id)!;
-          marker.setLatLng(position);
-          marker.setIcon(createClusterMarker(cluster));
+        // Create new marker if it doesn't exist (happens on first run or re-cluster session)
+        const isSingle = cluster.members.length === 1;
+        const icon = isSingle
+          ? createMemberMarker(cluster.members[0], cluster.members[0].membershipTier === 'gold', is3DMode)
+          : createClusterMarker(cluster);
+
+        const marker = L.marker(position, {
+          icon,
+          zIndexOffset: isSingle && cluster.members[0].name === 'You' ? 1000 : (isSingle ? 0 : 500)
+        }).addTo(mapRef.current!);
+
+        if (isSingle) {
+          marker.on('click', () => onSelectMember?.(cluster.members[0].id));
         } else {
-          const marker = L.marker(position, {
-            icon: createClusterMarker(cluster),
-            zIndexOffset: 500
-          }).addTo(mapRef.current!);
           marker.on('click', () => {
-            mapRef.current?.flyTo(position, mapRef.current.getZoom() + 2);
+            mapRef.current?.flyTo(position, (mapRef.current?.getZoom() || 12) + 2);
           });
-          markersRef.current.set(cluster.id, marker);
+        }
+        markersRef.current.set(cluster.id, marker);
+      }
+    });
+
+  }, [members, mapReady, onSelectMember, is3DMode]);
+
+  // Update accuracy circles for GPS uncertainty visualization
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+
+    members.forEach(member => {
+      const circleId = `accuracy-${member.id}`;
+      const position: [number, number] = [member.location.lat, member.location.lng];
+
+      if (member.accuracy && member.accuracy > 0) {
+        if (accuracyCirclesRef.current.has(circleId)) {
+          // Update existing circle
+          const circle = accuracyCirclesRef.current.get(circleId)!;
+          circle.setLatLng(position);
+          circle.setRadius(member.accuracy);
+        } else {
+          // Create new accuracy circle
+          const circle = L.circle(position, {
+            radius: member.accuracy,
+            color: '#6366f1',
+            fillColor: '#6366f1',
+            fillOpacity: 0.15,
+            weight: 2,
+            opacity: 0.4
+          }).addTo(mapRef.current!);
+
+          accuracyCirclesRef.current.set(circleId, circle);
+        }
+      } else {
+        // Remove circle if no accuracy data
+        if (accuracyCirclesRef.current.has(circleId)) {
+          accuracyCirclesRef.current.get(circleId)?.remove();
+          accuracyCirclesRef.current.delete(circleId);
         }
       }
     });
 
-    // Cleanup old keys
-    const newKeys = new Set(clusters.map(c => c.id));
-    markersRef.current.forEach((marker, id) => {
-      if (!newKeys.has(id)) {
-        marker.remove();
-        markersRef.current.delete(id);
+    // Cleanup circles for removed members
+    accuracyCirclesRef.current.forEach((circle, id) => {
+      const memberId = id.replace('accuracy-', '');
+      if (!members.find(m => m.id === memberId)) {
+        circle.remove();
+        accuracyCirclesRef.current.delete(id);
       }
     });
-
-    // Trails logic remains separate (omitted for brevity in this specific patch, assuming trails work on member IDs)
-    // Note: Trails might look weird if clustered, but usually clusters happen at low zoom where trails are less visible
-  }, [members, mapReady, onSelectMember, is3DMode]);
+  }, [members, mapReady]);
 
 
   // Update place markers
@@ -505,13 +597,76 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [selectedMemberId, members]);
 
+  // Render active navigation route as a polyline
+  const routeLineRef = useRef<L.Polyline | null>(null);
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+
+    // Remove existing route line
+    if (routeLineRef.current) {
+      routeLineRef.current.remove();
+      routeLineRef.current = null;
+    }
+
+    // Draw new route if available
+    if (activeRoute && activeRoute.steps && activeRoute.steps.length > 0) {
+      const coordinates: [number, number][] = [];
+
+      // Add start location
+      if (activeRoute.startLoc) {
+        coordinates.push([activeRoute.startLoc.lat, activeRoute.startLoc.lng]);
+      }
+
+      // Add step end locations
+      activeRoute.steps.forEach((step: any) => {
+        if (step.endLocation) {
+          coordinates.push([step.endLocation.lat, step.endLocation.lng]);
+        }
+      });
+
+      // Add destination
+      if (activeRoute.destinationLoc) {
+        coordinates.push([activeRoute.destinationLoc.lat, activeRoute.destinationLoc.lng]);
+      }
+
+      if (coordinates.length >= 2) {
+        // Create a styled polyline
+        routeLineRef.current = L.polyline(coordinates, {
+          color: '#6366f1',
+          weight: 6,
+          opacity: 0.8,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(mapRef.current);
+
+        // Add a glow effect with a second, wider line
+        const glowLine = L.polyline(coordinates, {
+          color: '#818cf8',
+          weight: 12,
+          opacity: 0.3
+        }).addTo(mapRef.current);
+
+        // Store glow line for cleanup
+        routeLineRef.current.on('remove', () => {
+          glowLine.remove();
+        });
+
+        // Fit the map to show the entire route
+        mapRef.current.fitBounds(routeLineRef.current.getBounds(), {
+          padding: [50, 50],
+          maxZoom: 15
+        });
+      }
+    }
+  }, [activeRoute, mapReady]);
+
   return (
     <div className="w-full h-full relative">
       <div
         ref={mapContainerRef}
         className="w-full h-full"
         style={{
-          background: theme === 'dark' ? '#0a0f1e' : '#f8fafc',
+          background: theme === 'dark' ? '#0f172a' : '#f1f5f9',
           filter: theme === 'dark' ? 'contrast(1.2) brightness(1.2)' : 'none'
         }}
       />
@@ -529,4 +684,4 @@ const MapView: React.FC<MapViewProps> = ({
   );
 };
 
-export default MapView;
+export default React.memo(MapView);

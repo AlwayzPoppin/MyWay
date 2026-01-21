@@ -21,18 +21,13 @@ export type ErrorCallback = (error: GeolocationError) => void;
 
 class GeolocationService {
     private watchId: number | null = null;
-    private isSimulating: boolean = false;
-    private simulationInterval: any = null;
+    private readonly ACCURACY_THRESHOLD = 150; // Relaxed: Allow up to 150m for real-world reliability
 
     isSupported(): boolean {
         return 'geolocation' in navigator;
     }
 
     async getCurrentPosition(): Promise<GeolocationState> {
-        if (this.isSimulating) {
-            return this.getMockPosition();
-        }
-
         return new Promise((resolve, reject) => {
             if (!this.isSupported()) {
                 reject({ code: 0, message: 'Geolocation not supported' });
@@ -65,11 +60,6 @@ class GeolocationService {
     }
 
     watchPosition(onLocation: LocationCallback, onError?: ErrorCallback): void {
-        if (this.isSimulating) {
-            this.startSimulation(onLocation);
-            return;
-        }
-
         if (!this.isSupported()) {
             onError?.({ code: 0, message: 'Geolocation not supported' });
             return;
@@ -95,105 +85,14 @@ class GeolocationService {
             navigator.geolocation.clearWatch(this.watchId);
             this.watchId = null;
         }
-        if (this.simulationInterval) {
-            clearInterval(this.simulationInterval);
-            this.simulationInterval = null;
-        }
-    }
-
-    // Simulation Methods
-    // Production guard: Simulation is disabled in production builds
-    setSimulationMode(active: boolean) {
-        const isProduction = (import.meta as any).env?.PROD || false;
-        if (isProduction && active) {
-            console.warn('Simulation mode is disabled in production builds');
-            return;
-        }
-        this.isSimulating = active;
-        if (!active) this.stopWatching();
-    }
-
-    private currentRoutePoints: { lat: number; lng: number }[] = [];
-    private currentRouteIndex = 0;
-
-    setSimulationRoute(points: { lat: number; lng: number }[]) {
-        this.currentRoutePoints = points;
-        this.currentRouteIndex = 0;
-    }
-
-    private startSimulation(onLocation: LocationCallback) {
-        // If we have a route, follow it
-        // Otherwise, move in a circle around SF
-
-        this.simulationInterval = setInterval(() => {
-            let lat, lng, speed, heading;
-
-            if (this.currentRoutePoints.length > 0) {
-                // Determine current segment
-                // Simplified: Just jump to next point every 3 seconds for testing "arrival"
-                // Or: Interpolate. Let's do simple interpolation for smoothness.
-
-                const targetPoint = this.currentRoutePoints[this.currentRouteIndex];
-
-                // For this simulation, we'll just teleport slowly towards the target to trigger "Arrived" logic
-                // Actually, let's just emit the target point directly to ensure we hit the waypoint radius
-                // But we need to move THROUGH the points.
-
-                if (targetPoint) {
-                    lat = targetPoint.lat;
-                    lng = targetPoint.lng;
-                    speed = 45; // mph
-                    heading = 0;
-
-                    // Move to next point for next tick
-                    this.currentRouteIndex = (this.currentRouteIndex + 1) % this.currentRoutePoints.length;
-                    // In a real app we'd stop at the end, but let's loop or stop?
-                    if (this.currentRouteIndex === 0) {
-                        // End of route - stop simulation? 
-                        // For now, loop to verify behavior or just hold
-                    }
-                } else {
-                    lat = 35.2271; lng = -80.8431;
-                }
-            } else {
-                // Default circle logic
-                const time = Date.now() / 1000;
-                lat = 35.2271 + Math.sin(time) * 0.01;
-                lng = -80.8431 + Math.cos(time) * 0.01;
-                speed = 30;
-                heading = (time * 180 / Math.PI) % 360;
-            }
-
-            onLocation({
-                latitude: lat,
-                longitude: lng,
-                accuracy: 5,
-                heading: heading || 0,
-                speed: speed || 0,
-                timestamp: Date.now(),
-                signalQuality: 'excellent'
-            });
-        }, 3000); // 3-second updates
-    }
-
-    private getMockPosition(): GeolocationState {
-        return {
-            latitude: 35.2271,
-            longitude: -80.8431,
-            accuracy: 5,
-            heading: null,
-            speed: 0,
-            timestamp: Date.now(),
-            signalQuality: 'excellent'
-        };
     }
 
     private parsePosition(position: GeolocationPosition): GeolocationState {
         const accuracy = position.coords.accuracy;
         let quality: GeolocationState['signalQuality'] = 'excellent';
 
-        if (accuracy > 50) quality = 'poor';
-        else if (accuracy > 20) quality = 'good';
+        if (accuracy > this.ACCURACY_THRESHOLD) quality = 'poor';
+        else if (accuracy > 40) quality = 'good';
 
         return {
             latitude: position.coords.latitude,

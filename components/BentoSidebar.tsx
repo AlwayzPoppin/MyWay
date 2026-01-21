@@ -12,6 +12,13 @@ interface BentoSidebarProps {
     onCreateCircle: (name: string) => Promise<any>;
     onJoinCircle: (code: string) => Promise<any>;
     avgGasPrice?: string;
+    showNotification?: (msg: string, duration?: number) => void;
+    onOpenSettings?: () => void;
+    weather?: {
+        temp: number;
+        condition: string;
+        icon: string;
+    };
 }
 
 const BentoSidebar: React.FC<BentoSidebarProps> = ({
@@ -23,7 +30,10 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     inviteCode,
     onCreateCircle,
     onJoinCircle,
-    avgGasPrice = '$3.45'
+    avgGasPrice = '$3.45',
+    showNotification,
+    onOpenSettings,
+    weather = { temp: 72, condition: 'Sunny', icon: '☀️' }
 }) => {
     const [isCollapsed, setIsCollapsed] = React.useState(false);
 
@@ -38,23 +48,37 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     };
 
     return (
-        <div className={`relative h-full overflow-y-auto no-scrollbar border-r backdrop-blur-2xl transition-all duration-500 ease-in-out
+        <div className={`relative h-full overflow-y-auto no-scrollbar border-r transition-all duration-500 ease-in-out
           ${isCollapsed ? 'w-20' : 'w-80'}
           ${theme === 'dark'
-                ? 'bg-[#050505]/95 border-white/5'
+                ? 'glass-panel'
                 : 'bg-white/95 border-slate-200'}`}
         >
-            {/* Collapse Toggle */}
-            <button
-                onClick={() => setIsCollapsed(!isCollapsed)}
-                className={`absolute top-4 right-4 z-[100] w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-110 active:scale-90
-                    ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
-                title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-            >
-                <span className={`text-xs transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`}>
-                    ◀️
-                </span>
-            </button>
+            {/* Top buttons row */}
+            <div className="absolute top-4 right-4 z-[100] flex items-center gap-2">
+                {/* Settings Button */}
+                {onOpenSettings && (
+                    <button
+                        onClick={onOpenSettings}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-110 active:scale-90
+                            ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
+                        title="Settings"
+                    >
+                        <span className="text-xs">⚙️</span>
+                    </button>
+                )}
+                {/* Collapse Toggle */}
+                <button
+                    onClick={() => setIsCollapsed(!isCollapsed)}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-110 active:scale-90
+                        ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
+                    title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+                >
+                    <span className={`text-xs transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`}>
+                        ◀️
+                    </span>
+                </button>
+            </div>
 
             <div className={`mt-14 space-y-4 px-3 transition-opacity duration-300 ${isCollapsed ? 'opacity-100' : 'opacity-100'}`}>
                 {/* Header Section */}
@@ -68,7 +92,9 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                 onClick={() => {
                                     if (inviteCode) {
                                         navigator.clipboard.writeText(inviteCode);
-                                        alert(`Invite Code: ${inviteCode} copied to clipboard!`);
+                                        if (showNotification) {
+                                            showNotification(`📋 Invite code copied: ${inviteCode}`, 3000);
+                                        }
                                     }
                                 }}
                                 className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all
@@ -118,9 +144,9 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                     className={`group relative flex items-center gap-3 rounded-2xl transition-all cursor-pointer border
                                     ${isCollapsed ? 'p-1.5 justify-center' : 'p-3'}
                                     ${selectedId === member.id
-                                            ? 'bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border-indigo-500/50'
+                                            ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border-indigo-500/50 glow-primary'
                                             : theme === 'dark'
-                                                ? 'bg-white/5 border-white/5 hover:bg-white/10'
+                                                ? 'glass-card'
                                                 : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
                                         }`}
                                     title={isCollapsed ? member.name : undefined}
@@ -167,9 +193,9 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                             <div className={`p-3 rounded-2xl border flex items-center justify-around animate-in fade-in slide-in-from-bottom-2
                       ${theme === 'dark' ? 'bg-white/5 border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
                                 <div className="flex flex-col items-center gap-0.5">
-                                    <span className="text-xl">🌤️</span>
-                                    <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>72°F</span>
-                                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">Sunny</span>
+                                    <span className="text-xl">{weather.icon}</span>
+                                    <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{weather.temp}°F</span>
+                                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">{weather.condition}</span>
                                 </div>
                                 <div className={`w-px h-8 ${theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'}`} />
                                 <div className="flex flex-col items-center gap-0.5 text-amber-500">
@@ -186,4 +212,4 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     );
 };
 
-export default BentoSidebar;
+export default React.memo(BentoSidebar);
