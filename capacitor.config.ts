@@ -14,7 +14,11 @@ const config: CapacitorConfig = {
     BackgroundGeolocation: {
       iconColor: '#6366f1',
       notificationTitle: 'MyWay is active',
-      notificationText: 'Sharing location with your circle'
+      notificationText: 'Sharing location with your circle',
+      // LAUNCH FIX: Enable background persistence for iOS/Android
+      startOnBoot: true,
+      stopOnTerminate: false,
+      locationProvider: 1 // ACTIVITY_PROVIDER for better battery efficiency
     },
     LocalNotifications: {
       smallIcon: 'ic_stat_name',

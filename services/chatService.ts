@@ -49,7 +49,8 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
                     if (decrypted) content = decrypted;
                 }
             } catch (e) {
-                // Fallback to plaintext if decryption fails (legacy messages)
+                // SECURITY FIX: Don't leak encrypted data or raw content on decryption failure
+                content = "[Encrypted Message]";
             }
 
             return {
