@@ -7,24 +7,6 @@
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-21T15:53:43.622Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-21T15:54:05.446Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
       "action": "File modified: hooks/useLocationSync.ts",
       "files": [
         "hooks/useLocationSync.ts"
@@ -455,6 +437,24 @@
         "components/MapView.tsx"
       ],
       "timestamp": "2026-01-22T02:08:42.329Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-22T02:22:12.420Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-22T02:23:00.701Z"
     }
   ],
   "handoffs": [],
@@ -478,16 +478,12 @@
     "staged": [],
     "modified": [
       ".conduit/context.json",
-      "App.tsx",
-      "components/MapLibre3DView.tsx",
-      "components/MapView.tsx",
-      "package-lock.json",
-      "package.json"
+      "components/MapLibre3DView.tsx"
     ],
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-22T02:09:53.862Z",
+  "lastSync": "2026-01-22T02:23:00.727Z",
   "reservedFiles": {},
   "version": "0.42.4",
   "preferences": {

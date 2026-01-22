@@ -387,7 +387,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         if (!map.current || !isMapReady) return;
 
         // Audit Fix: Filter out members at (0,0) to prevent Null Island markers when E2EE decryption fails
-        const validMembers = members.filter(m => m.location.lat !== 0 || m.location.lng !== 0);
+        // FIX: Use && not || - exclude ONLY when BOTH lat AND lng are 0
+        const validMembers = members.filter(m => !(m.location.lat === 0 && m.location.lng === 0));
 
         validMembers.forEach(member => {
             const position: [number, number] = [member.location.lng, member.location.lat];
@@ -471,6 +472,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           box-shadow: 0 4px 12px rgba(0,0,0,0.4);
           cursor: pointer;
         `;
+
+                // UNIFIED MAP: Add click handler for onSelectMember callback
+                el.addEventListener('click', () => {
+                    onSelectMember?.(member.id);
+                });
 
                 const marker = new maplibregl.Marker({ element: el })
                     .setLngLat(position)
