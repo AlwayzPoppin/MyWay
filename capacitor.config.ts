@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
   },
   plugins: {
     Geolocation: {
-      permissions: ['location']
+      permissions: ['location', 'always'] // 'always' enables background location on iOS
     },
     BackgroundGeolocation: {
       iconColor: '#6366f1',

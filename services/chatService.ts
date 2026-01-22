@@ -51,6 +51,7 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
             } catch (e) {
                 // SECURITY FIX: Don't leak encrypted data or raw content on decryption failure
                 content = "[Encrypted Message]";
+                console.warn("Decryption failed for message:", doc.id);
             }
 
             return {
