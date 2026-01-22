@@ -479,15 +479,11 @@
   "gitStatus": {
     "branch": "main",
     "staged": [],
-    "modified": [
-      ".conduit/context.json",
-      "capacitor.config.ts",
-      "services/chatService.ts"
-    ],
+    "modified": [],
     "untracked": [],
-    "hasChanges": true
+    "hasChanges": false
   },
-  "lastSync": "2026-01-22T01:53:44.451Z",
+  "lastSync": "2026-01-22T01:58:05.876Z",
   "reservedFiles": {},
   "version": "0.42.4",
   "preferences": {
