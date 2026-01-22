@@ -7,78 +7,6 @@
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: index.css",
-      "files": [
-        "index.css"
-      ],
-      "timestamp": "2026-01-17T02:40:23.846Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: index.html",
-      "files": [
-        "index.html"
-      ],
-      "timestamp": "2026-01-17T02:40:25.159Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: postcss.config.js",
-      "files": [
-        "postcss.config.js"
-      ],
-      "timestamp": "2026-01-17T02:40:37.563Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SettingsPanel.tsx",
-      "files": [
-        "components/SettingsPanel.tsx"
-      ],
-      "timestamp": "2026-01-17T02:41:55.120Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: index.tsx",
-      "files": [
-        "index.tsx"
-      ],
-      "timestamp": "2026-01-17T02:43:53.942Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: package-lock.json",
-      "files": [
-        "package-lock.json"
-      ],
-      "timestamp": "2026-01-17T02:46:22.537Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: postcss.config.js",
-      "files": [
-        "postcss.config.js"
-      ],
-      "timestamp": "2026-01-17T02:46:33.677Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: postcss.config.js",
-      "files": [
-        "postcss.config.js"
-      ],
-      "timestamp": "2026-01-17T02:48:49.379Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
       "action": "File modified: components/MapView.tsx",
       "files": [
         "components/MapView.tsx"
@@ -451,6 +379,79 @@
         "App.tsx"
       ],
       "timestamp": "2026-01-22T00:51:48.403Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: vite.config.ts",
+      "files": [
+        "vite.config.ts"
+      ],
+      "timestamp": "2026-01-22T01:17:53.121Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "Files modified: scripts/agent_bridge.js, agent_bridge.js",
+      "files": [
+        "scripts/agent_bridge.js",
+        "agent_bridge.js"
+      ],
+      "timestamp": "2026-01-22T01:18:07.126Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-22T01:19:04.954Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-22T01:19:09.145Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapView.tsx",
+      "files": [
+        "components/MapView.tsx"
+      ],
+      "timestamp": "2026-01-22T01:19:45.681Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/MapLibre3DView.tsx",
+      "files": [
+        "components/MapLibre3DView.tsx"
+      ],
+      "timestamp": "2026-01-22T01:20:05.549Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-22T01:21:26.477Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-22T01:21:48.259Z"
     }
   ],
   "handoffs": [],
@@ -474,12 +475,18 @@
     "staged": [],
     "modified": [
       ".conduit/context.json",
-      "App.tsx"
+      ".gitignore",
+      "App.tsx",
+      "agent_bridge.cjs",
+      "agent_bridge.js",
+      "components/MapLibre3DView.tsx",
+      "components/MapView.tsx",
+      "vite.config.ts"
     ],
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-22T00:52:54.982Z",
+  "lastSync": "2026-01-22T01:22:13.497Z",
   "reservedFiles": {},
   "version": "0.42.4",
   "preferences": {

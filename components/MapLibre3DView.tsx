@@ -11,6 +11,7 @@ interface MapLibre3DViewProps {
     selectedMemberId?: string | null;
     center?: [number, number]; // [lng, lat]
     zoom?: number;
+    onZoomChange?: (zoom: number) => void; // Callback when zoom changes
     onUserInteraction?: () => void;
     onMapReady?: () => void;
     activeRoute?: any; // NavigationRoute | null
@@ -26,6 +27,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     selectedMemberId,
     center,
     zoom = 16,
+    onZoomChange,
     onUserInteraction,
     onMapReady,
     activeRoute,
@@ -142,6 +144,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         // Track user interaction
         map.current.on('dragstart', () => onUserInteraction?.());
         map.current.on('zoomstart', () => onUserInteraction?.());
+
+        // Report zoom changes for 2D/3D sync
+        map.current.on('zoomend', () => {
+            if (map.current && onZoomChange) {
+                onZoomChange(map.current.getZoom());
+            }
+        });
 
         // Add navigation controls
         map.current.addControl(new maplibregl.NavigationControl(), 'bottom-right');

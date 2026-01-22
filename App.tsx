@@ -227,6 +227,7 @@ const App: React.FC = () => {
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
   const [isReporting, setIsReporting] = useState(false);
   const [mapBounds, setMapBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
+  const [mapZoom, setMapZoom] = useState(14); // Synced zoom between 2D/3D modes
   const [userSettings, setUserSettings] = useState({
     theme: 'dark' as 'light' | 'dark' | 'auto',
     notifications: true,
@@ -256,6 +257,11 @@ const App: React.FC = () => {
   const handleSelectMember = useCallback((id: string) => {
     setSelectedMemberId(id);
     setMapCenter(undefined);
+  }, []);
+
+  // Zoom sync callback for 2D/3D mode switching
+  const handleZoomChange = useCallback((zoom: number) => {
+    setMapZoom(zoom);
   }, []);
 
   const handleMapInteraction = useCallback(() => {
@@ -978,6 +984,8 @@ const App: React.FC = () => {
                 mapSkin={userSettings.mapSkin}
                 selectedMemberId={selectedMemberId}
                 center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined} // MapLibre needs [lng, lat]
+                zoom={mapZoom}
+                onZoomChange={handleZoomChange}
                 onUserInteraction={handleMapInteraction}
                 onMapReady={() => setIsMapReady(true)}
                 activeRoute={activeRoute}
@@ -1002,6 +1010,8 @@ const App: React.FC = () => {
                 onUserInteraction={handleMapInteraction}
                 onMapReady={() => setIsMapReady(true)}
                 center={mapCenter} // MapView (Leaflet) needs [lat, lng]
+                zoom={mapZoom}
+                onZoomChange={handleZoomChange}
                 is3DMode={false}
               />
             )}

@@ -19,6 +19,8 @@ interface MapViewProps {
   onMapReady?: () => void;
   is3DMode?: boolean;
   center?: [number, number]; // [lat, lng] for Leaflet
+  zoom?: number; // Synced zoom level
+  onZoomChange?: (zoom: number) => void; // Callback when zoom changes
 }
 
 
@@ -339,7 +341,9 @@ const MapView: React.FC<MapViewProps> = ({
   onUserInteraction,
   onMapReady,
   is3DMode = false,
-  center
+  center,
+  zoom = 14, // Default zoom level
+  onZoomChange
 }) => {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -364,7 +368,7 @@ const MapView: React.FC<MapViewProps> = ({
 
     mapRef.current = L.map(mapContainerRef.current, {
       center: center || defaultCenter,
-      zoom: 12,
+      zoom: zoom, // Use synced zoom level
       zoomControl: false,
       attributionControl: false
     });
@@ -395,6 +399,13 @@ const MapView: React.FC<MapViewProps> = ({
     });
     mapRef.current.on('zoomstart', () => {
       onUserInteraction?.();
+    });
+
+    // Report zoom changes for 2D/3D sync
+    mapRef.current.on('zoomend', () => {
+      if (mapRef.current && onZoomChange) {
+        onZoomChange(mapRef.current.getZoom());
+      }
     });
 
     setTimeout(() => {
