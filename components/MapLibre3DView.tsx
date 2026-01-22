@@ -1,7 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { FamilyMember } from '../types';
+import { FamilyMember, Place, CircleTask } from '../types';
 import { MapSkinId, getMapSkin, applySkinOverrides } from '../services/mapSkinService';
 
 interface MapLibre3DViewProps {
@@ -11,13 +11,20 @@ interface MapLibre3DViewProps {
     selectedMemberId?: string | null;
     center?: [number, number]; // [lng, lat]
     zoom?: number;
-    onZoomChange?: (zoom: number) => void; // Callback when zoom changes
+    onZoomChange?: (zoom: number) => void;
     onUserInteraction?: () => void;
     onMapReady?: () => void;
     activeRoute?: any; // NavigationRoute | null
-    places?: any[]; // Place[]
+    places?: Place[];
     incidents?: any[]; // IncidentReport[]
-    privacyZones?: any[]; // PrivacyZone[]
+    privacyZones?: any[];
+    tasks?: CircleTask[];
+    // UNIFIED MAP: Props added for MapView parity
+    is3DMode?: boolean; // False = 2D flat view, True = 3D tilted view
+    isNavigating?: boolean;
+    onSelectMember?: (memberId: string) => void;
+    onSelectPlace?: (place: Place) => void;
+    onBoundsChange?: (bounds: { north: number; south: number; east: number; west: number }) => void;
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
@@ -33,7 +40,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     activeRoute,
     places = [],
     incidents = [],
-    privacyZones = []
+    privacyZones = [],
+    tasks = [],
+    // UNIFIED MAP: New props for MapView parity
+    is3DMode = true,
+    isNavigating = false,
+    onSelectMember,
+    onSelectPlace,
+    onBoundsChange
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
@@ -152,6 +166,19 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         });
 
+        // Report bounds changes for unified API (matching MapView)
+        map.current.on('moveend', () => {
+            if (map.current && onBoundsChange) {
+                const bounds = map.current.getBounds();
+                onBoundsChange({
+                    north: bounds.getNorth(),
+                    south: bounds.getSouth(),
+                    east: bounds.getEast(),
+                    west: bounds.getWest()
+                });
+            }
+        });
+
         // Add navigation controls
         map.current.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
@@ -167,6 +194,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             map.current.setStyle(styleUrl);
         }
     }, [styleUrl]);
+
+    // UNIFIED MAP: Toggle 2D/3D mode by adjusting pitch and bearing
+    useEffect(() => {
+        if (!map.current) return;
+
+        const targetPitch = is3DMode ? 60 : 0;
+        const targetBearing = is3DMode ? -17.6 : 0;
+
+        // Only animate if there's a significant change
+        if (Math.abs(map.current.getPitch() - targetPitch) > 1) {
+            map.current.easeTo({
+                pitch: targetPitch,
+                bearing: targetBearing,
+                duration: 800
+            });
+        }
+    }, [is3DMode]);
 
     // Update Route Line
     useEffect(() => {
@@ -239,6 +283,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 el.innerHTML = `<div style="font-size: 24px;">${place.icon}</div>`;
                 el.style.cursor = 'pointer';
 
+                // UNIFIED MAP: Add click handler for onSelectPlace callback
+                el.addEventListener('click', () => {
+                    onSelectPlace?.(place);
+                });
+
                 const marker = new maplibregl.Marker({ element: el })
                     .setLngLat([place.location.lng, place.location.lat])
                     .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<b>${place.name}</b>`))
@@ -255,7 +304,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 placesMarkersRef.current.delete(id);
             }
         });
-    }, [places]);
+    }, [places, onSelectPlace]);
 
     // Update Incident Markers
     useEffect(() => {

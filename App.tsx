@@ -4,7 +4,7 @@ import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, Inciden
 // Sidebar removed - replaced by BentoSidebar
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import MapView from './components/MapView';
+// UNIFIED MAP: MapView removed - now using MapLibre3DView for both 2D/3D modes
 import MapLibre3DView from './components/MapLibre3DView';
 import InsightsBar from './components/InsightsBar';
 import MemberDetailPanel from './components/MemberDetailPanel';
@@ -997,44 +997,28 @@ const App: React.FC = () => {
               transformOrigin: 'center center'
             }}
           >
-            {is3DMode ? (
-              <MapLibre3DView
-                members={members}
-                theme={theme}
-                mapSkin={userSettings.mapSkin}
-                selectedMemberId={selectedMemberId}
-                center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined} // MapLibre needs [lng, lat]
-                zoom={mapZoom}
-                onZoomChange={handleZoomChange}
-                onUserInteraction={handleMapInteraction}
-                onMapReady={() => setIsMapReady(true)}
-                activeRoute={activeRoute}
-                places={discoveredPlaces}
-                incidents={incidents}
-                privacyZones={privacyZones}
-              />
-            ) : (
-              <MapView
-                members={members}
-                places={discoveredPlaces}
-                tasks={[]}
-                incidents={incidents}
-                privacyZones={privacyZones}
-                selectedMemberId={selectedMemberId}
-                activeRoute={activeRoute}
-                isNavigating={isNavigating || isDriveMode}
-                theme={theme}
-                onSelectPlace={handleSelectPlace}
-                onSelectMember={handleSelectMember}
-                onBoundsChange={setMapBounds}
-                onUserInteraction={handleMapInteraction}
-                onMapReady={() => setIsMapReady(true)}
-                center={mapCenter} // MapView (Leaflet) needs [lat, lng]
-                zoom={mapZoom}
-                onZoomChange={handleZoomChange}
-                is3DMode={false}
-              />
-            )}
+            {/* UNIFIED MAP: Single MapLibre3DView handles both 2D and 3D modes */}
+            <MapLibre3DView
+              members={members}
+              theme={theme}
+              mapSkin={userSettings.mapSkin}
+              selectedMemberId={selectedMemberId}
+              center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined}
+              zoom={mapZoom}
+              onZoomChange={handleZoomChange}
+              onUserInteraction={handleMapInteraction}
+              onMapReady={() => setIsMapReady(true)}
+              activeRoute={activeRoute}
+              places={discoveredPlaces}
+              incidents={incidents}
+              privacyZones={privacyZones}
+              tasks={[]}
+              is3DMode={is3DMode}
+              isNavigating={isNavigating || isDriveMode}
+              onSelectPlace={handleSelectPlace}
+              onSelectMember={handleSelectMember}
+              onBoundsChange={setMapBounds}
+            />
           </div>
 
           {/* UI Overlays - z-10 and above to appear over the map */}
