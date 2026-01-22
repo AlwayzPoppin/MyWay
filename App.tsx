@@ -216,6 +216,9 @@ const App: React.FC = () => {
     isOffRoute: false,
     hasArrived: false
   });
+  // Ref pattern to avoid infinite loops: effect reads ref, only triggers on location/route changes
+  const navStateRef = useRef(navState);
+  useEffect(() => { navStateRef.current = navState; }, [navState]);
   const [isNavigating, setIsNavigating] = useState(false);
   const { activeAdvisory: coPilotAdvisory } = useCoPilot(user, isNavigating, members);
   const [meshNodes, setMeshNodes] = useState<MeshNode[]>([]);
@@ -638,15 +641,24 @@ const App: React.FC = () => {
   // NOTE: isMobile resize handling is now in UIContext
 
   // --- Navigation Engine Integration (Modular) ---
+  // FIX: Use navStateRef to avoid infinite loop - effect reads from ref, only triggers on location/route changes
   useEffect(() => {
-    if (isNavigating && activeRoute && userLocation) { // utilizing userLocation from hook
-      const newNavState = updateNavigationState(userLocation, activeRoute, navState);
+    if (isNavigating && activeRoute && userLocation) {
+      const currentNavState = navStateRef.current;
+      const newNavState = updateNavigationState(userLocation, activeRoute, currentNavState);
 
-      if (newNavState.currentStepIndex !== navState.currentStepIndex) {
+      // Only update if something actually changed
+      if (newNavState.currentStepIndex === currentNavState.currentStepIndex &&
+        newNavState.isOffRoute === currentNavState.isOffRoute &&
+        newNavState.hasArrived === currentNavState.hasArrived) {
+        return; // No change, skip update
+      }
+
+      if (newNavState.currentStepIndex !== currentNavState.currentStepIndex) {
         showNotification(`🔜 Next: ${activeRoute.steps[newNavState.currentStepIndex].instruction}`, 4000);
       }
 
-      if (newNavState.hasArrived && !navState.hasArrived) {
+      if (newNavState.hasArrived && !currentNavState.hasArrived) {
         showNotification(`🎯 You have arrived at your destination!`, 6000);
 
         // Phase 4: Award Safety Points
@@ -664,7 +676,6 @@ const App: React.FC = () => {
         }]);
 
         audioService.speak(`You have arrived. Safety score: ${safetyScore} percent. You earned ${earned} points.`);
-        updateNavigationState(userLocation, null, navState);
 
         // Reset navigation
         setTimeout(() => {
@@ -672,11 +683,11 @@ const App: React.FC = () => {
           setIsNavigating(false);
           setActiveRoute(null);
         }, 5000);
-      } else {
-        setNavState(newNavState);
       }
+
+      setNavState(newNavState);
     }
-  }, [userLocation, isNavigating, activeRoute, navState, safetyScore, showNotification]);
+  }, [userLocation, isNavigating, activeRoute, safetyScore, showNotification]); // Removed navState from deps
 
   // --- Geofence Logic (Modular) ---
   useEffect(() => {
