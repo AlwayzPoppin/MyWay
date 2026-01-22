@@ -3,6 +3,8 @@ import { functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 
 // Audit Fix: Use environment variable with fallback for external service flexibility
+// ⚠️ PRODUCTION WARNING: The default URL is a public demo server with strict usage limits.
+// For production, set VITE_OSRM_URL to a self-hosted OSRM instance or commercial API (Mapbox, Google Routes).
 const OSRM_BASE_URL = (import.meta as any).env?.VITE_OSRM_URL || 'https://routing.openstreetmap.de/routed-car/route/v1/driving';
 
 interface OSRMStep {

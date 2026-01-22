@@ -7,51 +7,6 @@
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: components/StorageManager.tsx",
-      "files": [
-        "components/StorageManager.tsx"
-      ],
-      "timestamp": "2026-01-17T02:36:56.713Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/SettingsPanel.tsx",
-      "files": [
-        "components/SettingsPanel.tsx"
-      ],
-      "timestamp": "2026-01-17T02:37:36.599Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: services/cryptoService.ts",
-      "files": [
-        "services/cryptoService.ts"
-      ],
-      "timestamp": "2026-01-17T02:38:20.053Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: components/InsightsBar.tsx",
-      "files": [
-        "components/InsightsBar.tsx"
-      ],
-      "timestamp": "2026-01-17T02:39:44.845Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: package-lock.json",
-      "files": [
-        "package-lock.json"
-      ],
-      "timestamp": "2026-01-17T02:40:07.222Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
       "action": "File modified: tailwind.config.js",
       "files": [
         "tailwind.config.js"
@@ -451,6 +406,51 @@
         "components/MapLibre3DView.tsx"
       ],
       "timestamp": "2026-01-21T16:37:26.507Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/geminiService.ts",
+      "files": [
+        "services/geminiService.ts"
+      ],
+      "timestamp": "2026-01-21T20:07:13.817Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/osrmService.ts",
+      "files": [
+        "services/osrmService.ts"
+      ],
+      "timestamp": "2026-01-21T20:07:32.847Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: types.ts",
+      "files": [
+        "types.ts"
+      ],
+      "timestamp": "2026-01-21T20:07:52.478Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: components/SearchBox.tsx",
+      "files": [
+        "components/SearchBox.tsx"
+      ],
+      "timestamp": "2026-01-21T20:37:27.549Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: App.tsx",
+      "files": [
+        "App.tsx"
+      ],
+      "timestamp": "2026-01-21T20:37:43.648Z"
     }
   ],
   "handoffs": [],
@@ -476,58 +476,15 @@
       ".conduit/context.json",
       ".gitignore",
       "App.tsx",
-      "README.md",
-      "android/app/capacitor.build.gradle",
-      "android/capacitor.settings.gradle",
-      "components/BentoSidebar.tsx",
-      "components/DriveModeHUD.tsx",
-      "components/InsightsBar.tsx",
-      "components/LoginScreen.tsx",
-      "components/MapLibre3DView.tsx",
-      "components/MapView.tsx",
-      "components/OfflineMapManager.tsx",
-      "components/OnboardingFlow.tsx",
-      "components/PremiumUpsellModal.tsx",
-      "components/QuickActions.tsx",
-      "components/SafetyAlerts.tsx",
       "components/SearchBox.tsx",
-      "components/SettingsPanel.tsx",
-      "components/Sidebar.tsx",
-      "components/StorageManager.tsx",
-      "functions/.env",
-      "functions/lib/index.js",
-      "functions/lib/index.js.map",
-      "functions/package-lock.json",
-      "functions/package.json",
-      "functions/src/index.ts",
-      "hooks/useLocationSync.ts",
-      "index.css",
-      "index.html",
-      "public/manifest.json",
-      "public/sw.js",
-      "services/authService.ts",
-      "services/cryptoService.ts",
-      "services/emailService.ts",
       "services/geminiService.ts",
-      "services/geolocationService.ts",
-      "services/navigationEngine.ts",
-      "services/offlineMapService.ts",
-      "services/placesService.ts",
-      "services/sponsoredPlacesService.ts",
-      "services/userPlacesService.ts",
-      "types.ts",
-      ".env",
-      "MYWAY-GPS.code-workspace",
-      "components/ErrorBoundary.tsx",
-      "components/PlaceDetailPanel.tsx",
-      "install_log.txt",
       "services/osrmService.ts",
-      "services/weatherService.ts"
+      "types.ts"
     ],
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-21T16:37:26.510Z",
+  "lastSync": "2026-01-21T20:38:44.263Z",
   "reservedFiles": {},
   "version": "0.42.4",
   "preferences": {

@@ -58,6 +58,7 @@ export interface FamilyMember {
   destination?: string;
   isGhostMode?: boolean;
   sosActive?: boolean;
+  locationStale?: boolean; // Audit Fix: Flag for E2EE key exchange pending (shows last known location)
   membershipTier: 'free' | 'gold' | 'platinum';
   wayType?: 'HisWay' | 'HerWay' | 'NoWay';
 }

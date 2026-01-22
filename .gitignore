@@ -24,7 +24,5 @@ dist-ssr
 *.sw?
 
 # Development & Agent Artifacts
-.conduit/
 agent_bridge.js
 test_*.js
-.agent/

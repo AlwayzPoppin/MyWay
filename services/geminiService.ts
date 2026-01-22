@@ -214,10 +214,21 @@ export const askOmni = async (query: string, members: FamilyMember[], history: a
   });
 };
 
-export const predictETA = async (member: FamilyMember, dest: string) => {
+export const predictETA = async (member: FamilyMember, dest: string, destLocation?: { lat: number, lng: number }) => {
+  // Audit Fix: Include coordinates to prevent AI hallucination on ETA
+  const memberCoords = `[${member.location.lat.toFixed(4)}, ${member.location.lng.toFixed(4)}]`;
+  const destCoords = destLocation ? `[${destLocation.lat.toFixed(4)}, ${destLocation.lng.toFixed(4)}]` : 'unknown';
+  const speed = member.speed ? `${Math.round(member.speed * 2.237)} mph` : 'stationary';
+
   return withRetry(async () => {
-    const data = await callGeminiProxy(`Predict ETA for ${member.name} to ${dest}.`);
-    return data.text || "";
+    const prompt = `Estimate driving ETA for ${member.name}:
+- Current location: ${memberCoords}
+- Current speed: ${speed}
+- Destination: ${dest} at ${destCoords}
+If destination coordinates are unknown, ask for clarification. Return only the estimated time (e.g., "15 minutes") or "Unable to estimate" if data is insufficient.`;
+
+    const data = await callGeminiProxy(prompt);
+    return data.text || "Unable to estimate";
   });
 };
 

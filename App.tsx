@@ -1125,6 +1125,7 @@ const App: React.FC = () => {
                 <div className={`absolute left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 ${isMobile ? 'bottom-20' : 'bottom-10'}`}>
                   <SearchBox
                     onSearch={handleDiscovery}
+                    onNavigate={handleStartNavigation}
                     onCategorySearch={handleQuickSearch}
                     onLocate={() => {
                       const targetId = user?.uid || 'demo-you';

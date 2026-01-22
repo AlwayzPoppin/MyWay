@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 
 interface SearchBoxProps {
   onSearch: (query: string) => void;
+  onNavigate?: (query: string) => void; // NEW: Direct navigation
   onLocate?: () => void;
   onQuickStop?: () => void;
   onTestDrive?: () => void;
@@ -10,7 +11,7 @@ interface SearchBoxProps {
   theme: 'light' | 'dark';
 }
 
-const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onLocate, onQuickStop, onTestDrive, onCategorySearch, theme }) => {
+const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onNavigate, onLocate, onQuickStop, onTestDrive, onCategorySearch, theme }) => {
   const [query, setQuery] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [showCategories, setShowCategories] = useState(false);
@@ -18,6 +19,12 @@ const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onLocate, onQuickStop, 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) onSearch(query);
+  };
+
+  const handleNavigate = () => {
+    if (query.trim() && onNavigate) {
+      onNavigate(query);
+    }
   };
 
   const categories: { label: string; icon: string; query: string; type: 'gas' | 'coffee' | 'food' | 'grocery'; gradient: string }[] = [
@@ -95,11 +102,27 @@ const SearchBox: React.FC<SearchBoxProps> = ({ onSearch, onLocate, onQuickStop, 
             <button
               type="submit"
               className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-600 text-white flex items-center justify-center shadow-lg hover:scale-105 transition-all"
+              title="Search"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </button>
+            {/* NEW: Direct Navigate Button */}
+            {onNavigate && (
+              <button
+                type="button"
+                onClick={handleNavigate}
+                disabled={!query.trim()}
+                className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg transition-all
+                  ${query.trim()
+                    ? 'bg-gradient-to-br from-emerald-400 to-green-600 text-white hover:scale-105'
+                    : 'bg-white/5 text-slate-500 cursor-not-allowed'}`}
+                title="Navigate to destination"
+              >
+                <span className="text-lg">🚀</span>
+              </button>
+            )}
           </div>
         </form>
       </div>
