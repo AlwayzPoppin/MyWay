@@ -111,7 +111,7 @@ class OfflineMapService {
         const currentSize = await this.getCacheSize();
         const estimated = this.estimateTileCount(bounds, zoomMin, zoomMax);
         // SYNC: This value MUST match MAX_TILES in public/sw.js (line ~78)
-        const MAX_TILES = 2000;
+        const MAX_TILES = 10000;
 
         if (currentSize + estimated > MAX_TILES) {
             console.warn(`[OfflineMapService] Download would exceed limit: ${currentSize + estimated} / ${MAX_TILES}`);

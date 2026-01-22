@@ -7,24 +7,6 @@
     {
       "type": "contribution",
       "agent": "antigravity",
-      "action": "File modified: components/MapView.tsx",
-      "files": [
-        "components/MapView.tsx"
-      ],
-      "timestamp": "2026-01-17T02:49:44.188Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
-      "action": "File modified: index.css",
-      "files": [
-        "index.css"
-      ],
-      "timestamp": "2026-01-17T02:50:27.203Z"
-    },
-    {
-      "type": "contribution",
-      "agent": "antigravity",
       "action": "Mapped development drive to Z: and sanitized project path to MYWAY-GPS.",
       "files": [],
       "timestamp": "2026-01-19T17:08:51.628Z"
@@ -452,6 +434,24 @@
         "App.tsx"
       ],
       "timestamp": "2026-01-22T01:21:48.259Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: public/sw.js",
+      "files": [
+        "public/sw.js"
+      ],
+      "timestamp": "2026-01-22T01:36:59.000Z"
+    },
+    {
+      "type": "contribution",
+      "agent": "antigravity",
+      "action": "File modified: services/offlineMapService.ts",
+      "files": [
+        "services/offlineMapService.ts"
+      ],
+      "timestamp": "2026-01-22T01:37:01.508Z"
     }
   ],
   "handoffs": [],
@@ -475,18 +475,13 @@
     "staged": [],
     "modified": [
       ".conduit/context.json",
-      ".gitignore",
-      "App.tsx",
-      "agent_bridge.cjs",
-      "agent_bridge.js",
-      "components/MapLibre3DView.tsx",
-      "components/MapView.tsx",
-      "vite.config.ts"
+      "public/sw.js",
+      "services/offlineMapService.ts"
     ],
     "untracked": [],
     "hasChanges": true
   },
-  "lastSync": "2026-01-22T01:22:13.497Z",
+  "lastSync": "2026-01-22T01:38:18.891Z",
   "reservedFiles": {},
   "version": "0.42.4",
   "preferences": {

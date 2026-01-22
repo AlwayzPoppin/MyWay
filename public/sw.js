@@ -75,7 +75,7 @@ self.addEventListener('message', (event) => {
 });
 
 // SYNC: This value MUST match MAX_TILES in services/offlineMapService.ts (line ~113)
-const MAX_TILES = 2000; // ~40-60MB depending on tile complexity
+const MAX_TILES = 10000; // ~200-250MB depending on tile complexity
 
 async function enforceLimits() {
     try {
