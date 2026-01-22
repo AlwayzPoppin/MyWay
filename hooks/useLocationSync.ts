@@ -80,18 +80,23 @@ export const useLocationSync = (
                 }
             });
 
-            // ACCURACY FILTER: Ignore poor quality signals to prevent "guessing"
-            // EXCEPT: If we haven't received ANY real signal yet, accept even a poor one (up to 2000m) to get a lock
+            // ACCURACY FILTER: Previously discarded poor signals entirely (>150m).
+            // AUDIT FIX: Now accept signals up to 500m - the accuracy circle visualizes uncertainty.
+            // Only discard truly unusable signals (>500m) to prevent wild jumps.
+            // EXCEPT: First signal can be up to 2000m to get initial lock.
             const isFirstSignal = !hasReceivedRealSignalRef.current;
+            const MAX_ACCURACY_M = 500; // Raised from 150m for urban canyon/indoor tolerance
 
-            if (location.signalQuality === 'poor' && (!isFirstSignal || location.accuracy > 2000)) {
-                console.log("📍 GPS Filter: Skipping poor accuracy signal (", location.accuracy, "m)");
+            if (location.accuracy > MAX_ACCURACY_M && (!isFirstSignal || location.accuracy > 2000)) {
+                console.log(`📍 GPS Filter: Skipping unusable signal (${location.accuracy}m > ${MAX_ACCURACY_M}m limit)`);
                 return;
             }
 
             if (isFirstSignal) {
                 console.log("📍 GPS Accepted: First real signal locked (", location.accuracy, "m)");
                 hasReceivedRealSignalRef.current = true;
+            } else if (location.signalQuality === 'poor') {
+                console.log(`📍 GPS Accepted: Poor signal (${location.accuracy}m) - accuracy circle will show uncertainty`);
             }
 
             // DISTANCE DEBOUNCE: Only sync to Firebase if moved > 2.5m or 30s passed

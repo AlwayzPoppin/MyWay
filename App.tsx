@@ -34,6 +34,7 @@ import {
   getFamilyInsights,
   searchPlacesOnMap,
   getSafetyAdvisory,
+  getRouteToDestination,
   SafetyAdvisory
 } from './services/geminiService';
 import { getRouteFromOSRM, geocodePlace } from './services/osrmService';
@@ -851,8 +852,27 @@ const App: React.FC = () => {
         return;
       }
 
-      // Use OSRM for deterministic routing (real roads from OpenStreetMap)
-      const route = await getRouteFromOSRM(members[0].location, dest, destLocation);
+      let route: NavigationRoute | null = null;
+
+      // AUDIT FIX: Try OSRM first, fallback to Gemini AI if it fails
+      try {
+        route = await getRouteFromOSRM(members[0].location, dest, destLocation);
+      } catch (osrmError) {
+        console.warn('⚠️ OSRM routing failed, falling back to Gemini:', osrmError);
+        showNotification('🔄 Primary routing failed, trying AI backup...', 3000);
+      }
+
+      // Fallback: Use Gemini AI routing if OSRM failed
+      if (!route || !route.steps || route.steps.length === 0) {
+        try {
+          route = await getRouteToDestination(members[0].location, dest, members);
+          if (route) {
+            console.log('✅ Fallback to Gemini AI routing succeeded');
+          }
+        } catch (geminiError) {
+          console.error('❌ Both OSRM and Gemini routing failed:', geminiError);
+        }
+      }
 
       if (!route || !route.steps) {
         showNotification("❌ Could not calculate route. Please try again.", 4000);
