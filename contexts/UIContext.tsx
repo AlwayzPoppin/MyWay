@@ -22,6 +22,8 @@ interface UIContextType {
     setDriveMode: (mode: boolean) => void;
     is3DMode: boolean;
     set3DMode: (mode: boolean) => void;
+    isLowDataMode: boolean;
+    setIsLowDataMode: (mode: boolean) => void;
     notification: string | null;
     showNotification: (msg: string | null, duration?: number) => void;
 }
@@ -46,6 +48,10 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [isOfflineMapsOpen, setOfflineMapsOpen] = useState(false);
     const [isDriveMode, setDriveMode] = useState(false);
     const [is3DMode, set3DMode] = useState(false);
+    const [isLowDataMode, setIsLowDataMode] = useState(() => {
+        // Auto-detect based on browser hint if available
+        return (navigator as any).connection?.saveData || false;
+    });
     const [notification, setNotification] = useState<string | null>(null);
 
     useEffect(() => {
@@ -83,6 +89,8 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setDriveMode,
         is3DMode,
         set3DMode,
+        isLowDataMode,
+        setIsLowDataMode,
         notification,
         showNotification
     };

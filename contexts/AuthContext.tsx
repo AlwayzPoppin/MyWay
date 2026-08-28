@@ -14,7 +14,8 @@ import {
     UserProfile,
     FamilyCircle,
     createFamilyCircle,
-    joinFamilyCircle
+    joinFamilyCircle,
+    subscribeToUserProfile
 } from '../services/authService';
 
 interface AuthContextType {
@@ -67,23 +68,45 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 });
         }
 
-        const unsubscribe = onAuthChange(async (firebaseUser) => {
+        let profileUnsubscribe: (() => void) | null = null;
+        
+        const unsubscribe = onAuthChange((firebaseUser) => {
             setUser(firebaseUser);
+            if (profileUnsubscribe) {
+                profileUnsubscribe();
+                profileUnsubscribe = null;
+            }
+            
             if (firebaseUser) {
-                try {
-                    const userProfile = await getUserProfile(firebaseUser.uid);
+                profileUnsubscribe = subscribeToUserProfile(firebaseUser.uid, (userProfile) => {
                     setProfile(userProfile);
-                } catch (err) {
-                    console.error('Profile load failed:', err);
-                }
+                });
             } else {
                 setProfile(null);
             }
             setLoading(false);
         });
-
-        return () => unsubscribe();
+ 
+        return () => {
+            unsubscribe();
+            if (profileUnsubscribe) profileUnsubscribe();
+        };
     }, []);
+ 
+    // Side Effect: Auto-join circle from pending invite
+    useEffect(() => {
+        if (!user || !profile) return;
+        
+        const pendingInvite = localStorage.getItem('myway_pending_invite');
+        if (pendingInvite && !profile.familyCircleId) {
+            console.log('Detected pending invite, auto-joining:', pendingInvite);
+            joinFamilyCircle(pendingInvite, user.uid)
+                .then(() => {
+                    localStorage.removeItem('myway_pending_invite');
+                })
+                .catch(err => console.error('Auto-join failed:', err));
+        }
+    }, [user?.uid, profile?.familyCircleId]);
 
     const handleSignInWithGoogle = async () => {
         try {

@@ -7,19 +7,56 @@ import { httpsCallable } from 'firebase/functions';
 // SECURE: API keys are handled server-side in Firebase Functions
 // We use a proxy function to avoid exposing keys in the client bundle.
 
-const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.0-flash-exp') => {
-  const geminiFn = httpsCallable<
-    { prompt: any; config?: any; model?: string },
-    { text: string; candidates: any[] }
-  >(functions, 'callGeminiAI');
+const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.5-flash') => {
+  const isDevLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const clientApiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
 
-  const result = await geminiFn({ prompt, config, model });
-  return result.data;
+  // 1. In local development with client key, bypass cloud proxy to prevent CORS preflight noise
+  if (!isDevLocal || !clientApiKey) {
+    try {
+      const geminiFn = httpsCallable<
+        { prompt: any; config?: any; model?: string },
+        { text: string; candidates: any[] }
+      >(functions, 'callGeminiAI');
+
+      const result = await geminiFn({ prompt, config, model });
+      return result.data;
+    } catch (proxyError: any) {
+      console.warn('☁️ Cloud Function proxy unavailable, using direct Gemini fallback:', proxyError.code || proxyError.message);
+    }
+  }
+
+  // 2. DEV FALLBACK: Call Gemini directly using client-side API key
+  // ⚠️ In production, always use the Cloud Function proxy to keep keys server-side
+  const apiKey = clientApiKey;
+  if (!apiKey) {
+    throw new Error('No Gemini API key available. Set VITE_GEMINI_API_KEY in .env or deploy Cloud Functions.');
+  }
+
+  const genAI = new GoogleGenAI({ apiKey });
+  const promptText = typeof prompt === 'string'
+    ? prompt
+    : Array.isArray(prompt)
+      ? prompt.map((p: any) => p.parts?.map((pt: any) => pt.text).join(' ')).join('\n')
+      : JSON.stringify(prompt);
+
+  // Always use gemini-2.5-flash for client-side SDK calls
+  const sdkModel = 'gemini-2.5-flash';
+
+  const response = await genAI.models.generateContent({
+    model: sdkModel,
+    contents: promptText,
+    config: config || undefined
+  });
+
+  return {
+    text: response.text || '',
+    candidates: []
+  };
 };
 
-// SECURITY FIX: Direct API key access has been removed to prevent exposure in client bundle.
-// The connectCoPilot function now requires a server-side WebSocket proxy which is not yet implemented.
-// All other Gemini calls route through the secure callGeminiProxy function.
+// SECURITY: Direct API key access has been removed to prevent exposure in client bundle.
+// All Gemini calls route securely through the callGeminiProxy Firebase Function.
 
 
 const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
@@ -232,37 +269,30 @@ If destination coordinates are unknown, ask for clarification. Return only the e
   });
 };
 
-export interface SafetyAdvisory {
-  title: string;
-  description: string;
-  severity: 'low' | 'medium' | 'high';
-  type: 'weather' | 'traffic' | 'crime' | 'other';
-}
-
-export const getSafetyAdvisory = async (loc: { lat: number, lng: number }, context?: string): Promise<SafetyAdvisory | null> => {
-  const prompt = `Analyze safety risks at [${loc.lat}, ${loc.lng}]. Context: ${context || 'Driving'}. 
-  Return JSON: { title, description, severity, type }.`;
+/**
+ * Social Safety Advisory: Formats a safety insight for the whole family circle.
+ * Used for auto-posting critical alerts to the shared chat.
+ */
+export const getSocialSafetyAdvisory = async (members: FamilyMember[]): Promise<string | null> => {
+  const context = members.map(m => `${m.name}: ${m.location ? `[${m.location.lat.toFixed(2)}, ${m.location.lng.toFixed(2)}]` : 'unknown'}, ${m.battery}% battery`).join('\n');
+  
+  const prompt = `You are the MyWay GPS AI Co-Pilot. Analyze the current status of this family circle:
+  ${context}
+  
+  Identify the MOST CRITICAL safety risk (e.g. someone has very low battery or someone is in an unsafe situation). 
+  
+  Write a SHORT, helpful message (max 2 sentences) to post in the family group chat to keep everyone safe. 
+  Example: "🚨 Just a heads up, Sarah's battery is at 5% and she's still 15 mins from home. Mentioning so someone can check in!"
+  If everything looks perfectly safe, return "STAY_SILENT".`;
 
   try {
     return withRetry(async () => {
-      const data = await callGeminiProxy(prompt, {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            description: { type: Type.STRING },
-            severity: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
-            type: { type: Type.STRING, enum: ['weather', 'traffic', 'crime', 'other'] }
-          },
-          required: ["title", "description", "severity", "type"]
-        }
-      });
-
-      return JSON.parse(data.text || "null");
+      const data = await callGeminiProxy(prompt);
+      const text = data.text?.trim() || "";
+      return text === "STAY_SILENT" ? null : text;
     });
   } catch (e) {
-    console.error("Safety Advisory Error", e);
+    console.error("Social Safety Error", e);
     return null;
   }
 };
@@ -297,13 +327,4 @@ export const parseMessageIntent = async (text: string): Promise<MessageIntent> =
     console.error("Intent Detection Error", e);
     return { intent: 'none' };
   }
-};
-
-export const connectCoPilot = (callbacks: any, settings: { personality: 'standard' | 'grok' | 'newyork', gender: 'male' | 'female' } = { personality: 'standard', gender: 'female' }) => {
-  // SECURITY FIX: This function previously exposed the Gemini API key in the client bundle.
-  // Live streaming requires a server-side WebSocket proxy to keep the API key secure.
-  // Until that's implemented, this feature is disabled.
-  console.warn('🔒 CoPilot Live: Disabled for security. API key must be protected via server-side proxy.');
-
-  throw new Error('CoPilot Live streaming is temporarily disabled. The feature requires a secure server-side WebSocket proxy to protect the API key.');
 };

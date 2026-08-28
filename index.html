@@ -5,7 +5,6 @@
   <meta charset="UTF-8">
   <meta name="viewport"
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="icon" type="image/png" href="/icon.png" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="apple-touch-icon" href="/logo.png" />
@@ -153,23 +152,6 @@
     .custom-marker:hover {
       transform: scale(1.1);
       z-index: 1000 !important;
-    }
-
-    /* Leaflet popup styling */
-    .leaflet-popup-content-wrapper {
-      background: rgba(15, 23, 42, 0.95);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 16px;
-      color: white;
-    }
-
-    .leaflet-popup-tip {
-      background: rgba(15, 23, 42, 0.95);
-    }
-
-    .leaflet-popup-close-button {
-      color: white !important;
     }
 
     /* Shimmer animation for search focus */
@@ -363,17 +345,23 @@
   <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
   <script>
+    // SECURE: Public Firebase config (non-secret) for Service Worker access
+    window.__FIREBASE_CONFIG__ = {
+      apiKey: "%VITE_FIREBASE_API_KEY%",
+      authDomain: "%VITE_FIREBASE_AUTH_DOMAIN%",
+      projectId: "%VITE_FIREBASE_PROJECT_ID%",
+      storageBucket: "%VITE_FIREBASE_STORAGE_BUCKET%",
+      messagingSenderId: "%VITE_FIREBASE_MESSAGING_SENDER_ID%",
+      appId: "%VITE_FIREBASE_APP_ID%"
+    };
+
     // Register Service Worker for offline support and PWA
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
+        // Register unified PWA & FCM SW
         navigator.serviceWorker.register('/sw.js')
           .then(reg => console.log('My Way: Service Worker registered', reg.scope))
-          .catch(err => {
-            console.warn('My Way: Service Worker registration failed', err);
-            if (window.location.protocol === 'https:' && window.location.hostname === 'localhost') {
-              console.info('💡 TIP: SSL errors on localhost are common. Try proceeding in "Insecure" mode or check your certificate.');
-            }
-          });
+          .catch(err => console.warn('My Way: SW registration failed', err));
       });
     }
   </script>

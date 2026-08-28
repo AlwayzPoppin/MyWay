@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor-community/background-geolocation": "^1.2.26",
     "@capacitor-community/bluetooth-le": "^7.3.0",
     "@capacitor-community/text-to-speech": "^6.1.0",
     "@capacitor/android": "^8.0.1",
@@ -21,7 +22,6 @@
     "@google/genai": "^1.35.0",
     "firebase": "^12.8.0",
     "maplibre-gl": "^5.16.0",
-    "osmbuildings": "^0.2.0-b",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },

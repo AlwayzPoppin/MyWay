@@ -12,9 +12,22 @@ import {
     updateProfile,
     ActionCodeSettings
 } from 'firebase/auth';
-import { ref, set, get, onValue, off, push } from 'firebase/database';
-import { auth, googleProvider, database } from './firebase';
+import { ref, set, get, onValue, off, push, update } from 'firebase/database';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { auth, googleProvider, database, storage } from './firebase';
 import { Geofence } from './geofenceService';
+import { bufferSosAlert, setupSosAutoFlush, BufferedSosAlert } from './offlineSosBuffer';
+import { bufferLocation, setupAutoFlush, BufferedLocation } from './offlineLocationBuffer';
+import {
+    loadKeyPairFromSecureStorage,
+    importKeyPairJWK,
+    generateFamilyKey,
+    setFamilyKey,
+    deriveSharedSecretKey,
+    importPublicKey,
+    wrapCircleKey
+} from './cryptoService';
+import { PrivacyMode } from '../types';
 
 // Types
 export interface UserProfile {
@@ -30,8 +43,6 @@ export interface UserProfile {
         theme: 'light' | 'dark' | 'auto';
         notifications: boolean;
         locationSharing: boolean;
-        aiPersonality: 'standard' | 'grok' | 'newyork';
-        aiGender: 'male' | 'female';
     };
     ecdhPublicKey?: string;
 }
@@ -133,9 +144,7 @@ export const createUserProfileIfNotExists = async (user: User): Promise<void> =>
             settings: {
                 theme: 'dark',
                 notifications: true,
-                locationSharing: true,
-                aiPersonality: 'standard',
-                aiGender: 'female'
+                locationSharing: true
             }
         };
         await set(userRef, profile);
@@ -162,13 +171,39 @@ export const getUserProfile = async (uid: string, retries = 2): Promise<UserProf
     }
     return null;
 };
-
+ 
+/**
+ * Real-time subscription to a user's profile.
+ */
+export const subscribeToUserProfile = (uid: string, callback: (profile: UserProfile | null) => void): (() => void) => {
+    const userRef = ref(database, `users/${uid}`);
+    onValue(userRef, (snapshot) => {
+        callback(snapshot.exists() ? snapshot.val() as UserProfile : null);
+    });
+    return () => off(userRef);
+};
+ 
 export const updateUserProfile = async (uid: string, updates: Partial<UserProfile>): Promise<void> => {
     const userRef = ref(database, `users/${uid}`);
     const snapshot = await get(userRef);
-    if (snapshot.exists()) {
-        await set(userRef, { ...snapshot.val(), ...updates, lastSeen: Date.now() });
-    }
+    const existing = snapshot.exists() ? snapshot.val() : {};
+    
+    await set(userRef, { 
+        uid,
+        createdAt: Date.now(), // Fallback for new record
+        ...existing, 
+        ...updates, 
+        lastSeen: Date.now() 
+    });
+};
+ 
+/**
+ * Upload a profile image to Firebase Storage and return the public URL.
+ */
+export const uploadProfileImage = async (uid: string, file: File): Promise<string> => {
+    const fileRef = storageRef(storage, `avatars/${uid}/${Date.now()}_${file.name}`);
+    const result = await uploadBytes(fileRef, file);
+    return await getDownloadURL(result.ref);
 };
 
 // Family Circle Functions
@@ -219,6 +254,140 @@ export const getFamilyCircle = async (circleId: string): Promise<FamilyCircle | 
     return snapshot.exists() ? snapshot.val() : null;
 };
 
+// --- CIRCLE MANAGEMENT (Audit 2: Leave/Remove/Transfer) ---
+
+/**
+ * Leave a family circle. If the user is the owner and there are other members,
+ * ownership transfers to the next member automatically.
+ */
+export const leaveCircle = async (circleId: string, userId: string): Promise<void> => {
+    const circle = await getFamilyCircle(circleId);
+    if (!circle) throw new Error('Circle not found');
+
+    const updatedMembers = circle.members.filter(m => m !== userId);
+
+    if (updatedMembers.length === 0) {
+        // Last member — delete the circle entirely
+        await set(ref(database, `circles/${circleId}`), null);
+        await set(ref(database, `locations/${circleId}/${userId}`), null);
+        await set(ref(database, `keys/${circleId}`), null);
+        await set(ref(database, `geofences/${circleId}`), null);
+    } else {
+        // Transfer ownership if leaving user is the owner
+        const newOwnerId = circle.ownerId === userId ? updatedMembers[0] : circle.ownerId;
+        await set(ref(database, `circles/${circleId}`), {
+            ...circle,
+            members: updatedMembers,
+            ownerId: newOwnerId,
+        });
+        // Clean up user's location data and key from this circle
+        await set(ref(database, `locations/${circleId}/${userId}`), null);
+        await set(ref(database, `keys/${circleId}/${userId}`), null);
+    }
+
+    // Clear the user's circle reference
+    await updateUserProfile(userId, { familyCircleId: null });
+};
+
+/**
+ * Remove a member from the circle (owner-only action).
+ * Implements E2EE Forward Secrecy: Deletes member data and regenerates/distributes
+ * a brand new AES-GCM 256-bit symmetric circle key to remaining members.
+ */
+export const removeMember = async (circleId: string, ownerId: string, targetUserId: string): Promise<void> => {
+    const circle = await getFamilyCircle(circleId);
+    if (!circle) throw new Error('Circle not found');
+    if (circle.ownerId !== ownerId) throw new Error('Only the circle owner can remove members');
+    if (targetUserId === ownerId) throw new Error('Owner cannot remove themselves — use leaveCircle instead');
+
+    const updatedMembers = circle.members.filter(m => m !== targetUserId);
+    await set(ref(database, `circles/${circleId}`), { ...circle, members: updatedMembers });
+
+    // Clean up removed member's data & revoke wrapped key access
+    await set(ref(database, `locations/${circleId}/${targetUserId}`), null);
+    await set(ref(database, `keys/${circleId}/${targetUserId}`), null);
+    await updateUserProfile(targetUserId, { familyCircleId: null });
+
+    // --- E2EE FORWARD SECRECY (KEY ROTATION) ---
+    try {
+        const savedKeys = await loadKeyPairFromSecureStorage(ownerId);
+        if (savedKeys) {
+            const ownerKeyPair = await importKeyPairJWK(savedKeys);
+            const newFamilyKey = await generateFamilyKey();
+            setFamilyKey(newFamilyKey);
+
+            // 1. Re-wrap and set for owner
+            const ownerSecret = await deriveSharedSecretKey(ownerKeyPair.privateKey, ownerKeyPair.publicKey);
+            const ownerWrapped = await wrapCircleKey(newFamilyKey, ownerSecret);
+            await deliverWrappedKey(circleId, ownerId, ownerWrapped);
+
+            // 2. Re-wrap and distribute to all remaining circle members
+            for (const remainingMemberId of updatedMembers) {
+                if (remainingMemberId === ownerId) continue;
+                const memberProfile = await getUserProfile(remainingMemberId);
+                if (memberProfile?.ecdhPublicKey) {
+                    const memberPubKey = await importPublicKey(memberProfile.ecdhPublicKey);
+                    const sharedSecret = await deriveSharedSecretKey(ownerKeyPair.privateKey, memberPubKey);
+                    const wrapped = await wrapCircleKey(newFamilyKey, sharedSecret);
+                    await deliverWrappedKey(circleId, remainingMemberId, wrapped);
+                    console.log(`🔐 Forward Secrecy: Rotated key delivered to ${memberProfile.displayName || remainingMemberId}`);
+                }
+            }
+            console.log(`🔐 Forward Secrecy: Successfully rotated circle key after member removal.`);
+        }
+    } catch (keyRotationError) {
+        console.warn('⚠️ Forward Secrecy key rotation encountered an error:', keyRotationError);
+    }
+};
+
+/**
+ * Transfer circle ownership to another member.
+ */
+export const transferOwnership = async (circleId: string, currentOwnerId: string, newOwnerId: string): Promise<void> => {
+    const circle = await getFamilyCircle(circleId);
+    if (!circle) throw new Error('Circle not found');
+    if (circle.ownerId !== currentOwnerId) throw new Error('Only the current owner can transfer ownership');
+    if (!circle.members.includes(newOwnerId)) throw new Error('New owner must be a circle member');
+
+    await set(ref(database, `circles/${circleId}`), { ...circle, ownerId: newOwnerId });
+};
+
+/**
+ * AUDIT FIX: Delete user account and all associated data.
+ * Required for Apple App Store and GDPR compliance.
+ */
+export const deleteAccount = async (userId: string, circleId?: string): Promise<void> => {
+    // 1. Leave circle (auto-transfers ownership or deletes empty circle)
+    if (circleId) {
+        try {
+            await leaveCircle(circleId, userId);
+        } catch {
+            // Circle may already be deleted — continue cleanup
+        }
+    }
+
+    // 2. Delete user data from Firebase RTDB
+    await set(ref(database, `users/${userId}`), null);
+    await set(ref(database, `keys/${userId}`), null);
+
+    // 3. Clear all local storage
+    const keysToRemove = Object.keys(localStorage).filter(k => k.startsWith('myway_'));
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+
+    // 4. Clear IndexedDB secure storage
+    try {
+        const dbReq = indexedDB.deleteDatabase('myway_secure_keys');
+        dbReq.onsuccess = () => console.log('🗑️ Secure key storage cleared');
+    } catch { /* best effort */ }
+
+    // 5. Delete Firebase Auth account
+    const { auth } = await import('./firebase');
+    if (auth.currentUser) {
+        await auth.currentUser.delete();
+        console.log('🗑️ Account deleted successfully');
+    }
+};
+
 // --- KEY DISTRIBUTION ENGINE ---
 
 export const getWrappedKeyForUser = (circleId: string, uid: string, callback: (wrappedKey: string) => void): (() => void) => {
@@ -234,7 +403,15 @@ export const deliverWrappedKey = async (circleId: string, targetUid: string, wra
 };
 
 
-// Real-time Location Functions
+// Real-time Location & Trip ETA Functions
+export interface MemberTrip {
+    destinationName: string;
+    totalTime: string;
+    totalDistance: string;
+    etaTimestamp?: number;
+    destinationCoords?: { lat: number; lng: number };
+}
+
 export interface MemberLocation {
     lat: number;
     lng: number;
@@ -247,6 +424,9 @@ export interface MemberLocation {
     encryptedData?: string;
     status?: string;
     sosActive?: boolean;
+    privacyMode?: PrivacyMode;
+    blurredRadiusMeters?: number;
+    currentTrip?: MemberTrip | null;
 }
 
 export const updateMemberLocation = async (
@@ -254,26 +434,175 @@ export const updateMemberLocation = async (
     userId: string,
     location: MemberLocation
 ): Promise<void> => {
-    await set(ref(database, `locations/${circleId}/${userId}`), location);
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        console.warn('📶 Offline: Queuing location update in IndexedDB buffer');
+        await bufferLocation({
+            userId,
+            circleId,
+            lat: location.lat,
+            lng: location.lng,
+            accuracy: location.accuracy || 10,
+            speed: location.speed ?? null,
+            heading: location.heading ?? null,
+            timestamp: location.timestamp || Date.now(),
+            battery: location.battery,
+            signalQuality: location.signalQuality,
+            status: location.status,
+            privacyMode: location.privacyMode,
+            encryptedData: location.encryptedData
+        });
+        return;
+    }
+
+    try {
+        await update(ref(database, `locations/${circleId}/${userId}`), location as Record<string, any>);
+    } catch (err) {
+        console.warn('❌ Failed to update location over network, queuing in IndexedDB:', err);
+        await bufferLocation({
+            userId,
+            circleId,
+            lat: location.lat,
+            lng: location.lng,
+            accuracy: location.accuracy || 10,
+            speed: location.speed ?? null,
+            heading: location.heading ?? null,
+            timestamp: location.timestamp || Date.now(),
+            battery: location.battery,
+            signalQuality: location.signalQuality,
+            status: location.status,
+            privacyMode: location.privacyMode,
+            encryptedData: location.encryptedData
+        });
+    }
 };
 
-export const triggerSOS = async (circleId: string, userId: string): Promise<void> => {
-    const locRef = ref(database, `locations/${circleId}/${userId}`);
-    const snapshot = await get(locRef);
-    if (snapshot.exists()) {
-        const currentLoc = snapshot.val();
-        await set(locRef, { ...currentLoc, sosActive: true, timestamp: Date.now() });
+export const updateMemberTrip = async (
+    circleId: string,
+    userId: string,
+    trip: MemberTrip | null
+): Promise<void> => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    try {
+        await set(ref(database, `locations/${circleId}/${userId}/currentTrip`), trip);
+    } catch (err) {
+        console.error('Failed to update member trip in Firebase:', err);
+    }
+};
+
+export const triggerSOS = async (
+    circleId: string,
+    userId: string,
+    location?: { lat: number; lng: number }
+): Promise<void> => {
+    if (!navigator.onLine) {
+        console.warn('📶 Offline: Queuing SOS alert in IndexedDB buffer');
+        await bufferSosAlert({ circleId, userId, action: 'trigger', location, timestamp: Date.now() });
+        return;
+    }
+
+    try {
+        const locRef = ref(database, `locations/${circleId}/${userId}`);
+        const snapshot = await get(locRef);
+        if (snapshot.exists()) {
+            const currentLoc = snapshot.val();
+            await set(locRef, { ...currentLoc, sosActive: true, timestamp: Date.now() });
+        } else if (location) {
+            await set(locRef, {
+                lat: location.lat,
+                lng: location.lng,
+                speed: 0,
+                heading: 0,
+                accuracy: 10,
+                battery: 100,
+                timestamp: Date.now(),
+                sosActive: true
+            });
+        }
+    } catch (err) {
+        console.error('❌ Failed to trigger SOS over network, queuing in IndexedDB:', err);
+        await bufferSosAlert({ circleId, userId, action: 'trigger', location, timestamp: Date.now() });
     }
 };
 
 export const clearSOS = async (circleId: string, userId: string): Promise<void> => {
-    const locRef = ref(database, `locations/${circleId}/${userId}`);
+    if (!navigator.onLine) {
+        console.warn('📶 Offline: Queuing SOS clear in IndexedDB buffer');
+        await bufferSosAlert({ circleId, userId, action: 'clear', timestamp: Date.now() });
+        return;
+    }
+
+    try {
+        const locRef = ref(database, `locations/${circleId}/${userId}`);
+        const snapshot = await get(locRef);
+        if (snapshot.exists()) {
+            const currentLoc = snapshot.val();
+            await set(locRef, { ...currentLoc, sosActive: false, timestamp: Date.now() });
+        }
+    } catch (err) {
+        console.error('❌ Failed to clear SOS over network, queuing in IndexedDB:', err);
+        await bufferSosAlert({ circleId, userId, action: 'clear', timestamp: Date.now() });
+    }
+};
+
+// Auto-flush queued offline SOS alerts when back online
+setupSosAutoFlush(async (alert: BufferedSosAlert) => {
+    const locRef = ref(database, `locations/${alert.circleId}/${alert.userId}`);
     const snapshot = await get(locRef);
     if (snapshot.exists()) {
         const currentLoc = snapshot.val();
-        await set(locRef, { ...currentLoc, sosActive: false, timestamp: Date.now() });
+        await set(locRef, {
+            ...currentLoc,
+            sosActive: alert.action === 'trigger',
+            timestamp: alert.timestamp
+        });
+    } else if (alert.location) {
+        await set(locRef, {
+            lat: alert.location.lat,
+            lng: alert.location.lng,
+            speed: 0,
+            heading: 0,
+            accuracy: 10,
+            battery: 100,
+            timestamp: alert.timestamp,
+            sosActive: alert.action === 'trigger'
+        });
+    }
+});
+
+/**
+ * Syncs a batch of buffered offline locations to Firebase Realtime Database
+ */
+export const syncBufferedLocations = async (locations: BufferedLocation[]): Promise<void> => {
+    for (const loc of locations) {
+        const circleId = loc.circleId;
+        if (!circleId || !loc.userId) continue;
+
+        const locRef = ref(database, `locations/${circleId}/${loc.userId}`);
+        const updatePayload: Record<string, any> = {
+            lat: loc.lat,
+            lng: loc.lng,
+            accuracy: loc.accuracy,
+            speed: loc.speed ?? 0,
+            heading: loc.heading ?? 0,
+            timestamp: loc.timestamp,
+            battery: loc.battery ?? 100,
+            signalQuality: loc.signalQuality ?? '4G',
+            status: loc.status || 'Online'
+        };
+
+        if (loc.encryptedData) {
+            updatePayload.encryptedData = loc.encryptedData;
+        }
+        if (loc.privacyMode) {
+            updatePayload.privacyMode = loc.privacyMode;
+        }
+
+        await update(locRef, updatePayload);
     }
 };
+
+// Auto-flush queued offline locations when back online
+setupAutoFlush(syncBufferedLocations);
 
 export const subscribeToFamilyLocations = (
     circleId: string,

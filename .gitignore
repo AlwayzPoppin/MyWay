@@ -28,3 +28,8 @@ scripts/
 agent_bridge.js
 agent_bridge.cjs
 test_*.js
+shape.txt
+android/app/build/
+android/build/
+.gradle/
+*.aab

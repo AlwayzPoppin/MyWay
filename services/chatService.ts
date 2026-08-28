@@ -11,20 +11,30 @@ import {
     Timestamp
 } from 'firebase/firestore';
 import { encryptMessage, decryptMessage } from './cryptoService';
+import {
+    bufferMessage,
+    getBufferedMessages,
+    setupMessageAutoFlush,
+    BufferedMessage
+} from './offlineMessageBuffer';
 
 export interface ChatMessage {
     id: string;
     senderId: string;
+    recipientId?: string; // Optional recipient for 1-on-1 direct messages; undefined/null for Circle group broadcast
     content: string;
-    type: 'text' | 'emoji' | 'location' | 'checkin';
+    type: 'text' | 'emoji' | 'location' | 'checkin' | 'geofence';
     timestamp: Date;
+    status?: 'sent' | 'queued' | 'syncing';
 }
 
 // Convert Firestore timestamp to JS Date
 const convertTimestamp = (timestamp: any): Date => {
     if (!timestamp) return new Date(); // Optimistic UI updates might have null timestamp initially
     if (timestamp instanceof Timestamp) return timestamp.toDate();
-    return new Date(timestamp.seconds * 1000);
+    if (typeof timestamp === 'number') return new Date(timestamp);
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    return new Date();
 };
 
 export const subscribeToMessages = (circleId: string, callback: (messages: ChatMessage[]) => void) => {
@@ -34,7 +44,7 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
     const q = query(
         messagesRef,
         orderBy('timestamp', 'desc'),
-        limit(50)
+        limit(100)
     );
 
     return onSnapshot(q, async (snapshot) => {
@@ -49,17 +59,19 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
                     if (decrypted) content = decrypted;
                 }
             } catch (e) {
-                // SECURITY FIX: Don't leak encrypted data or raw content on decryption failure
-                content = "[Encrypted Message]";
+                // UX FIX: Show friendly message instead of looking like an error
+                content = "🔒 Waiting for key exchange...";
                 console.warn("Decryption failed for message:", doc.id);
             }
 
             return {
                 id: doc.id,
                 senderId: data.senderId,
+                recipientId: data.recipientId || undefined,
                 content: content,
                 type: data.type || 'text',
-                timestamp: convertTimestamp(data.timestamp)
+                timestamp: convertTimestamp(data.timestamp),
+                status: 'sent' as const
             };
         });
 
@@ -71,8 +83,74 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
     });
 };
 
-export const sendMessage = async (circleId: string, senderId: string, content: string, type: ChatMessage['type'] = 'text') => {
+/**
+ * Sync a single offline buffered message to Firestore
+ */
+export const syncBufferedMessage = async (msg: BufferedMessage): Promise<void> => {
+    const messagesRef = collection(db, 'familyCircles', msg.circleId, 'messages');
+
+    let secureContent = msg.content;
+    try {
+        secureContent = await encryptMessage(msg.content);
+    } catch (e) {
+        console.error('Encryption failed during sync, sending plaintext:', e);
+    }
+
+    const payload: any = {
+        senderId: msg.senderId,
+        content: secureContent,
+        type: msg.type,
+        timestamp: Timestamp.fromMillis(msg.timestamp)
+    };
+    if (msg.recipientId) {
+        payload.recipientId = msg.recipientId;
+    }
+
+    await addDoc(messagesRef, payload);
+};
+
+// Initialize automatic background sync when network reconnects
+if (typeof window !== 'undefined') {
+    setupMessageAutoFlush(syncBufferedMessage);
+}
+
+/**
+ * Send message with automatic offline buffering fallback
+ */
+export const sendMessage = async (
+    circleId: string,
+    senderId: string,
+    content: string,
+    type: ChatMessage['type'] = 'text',
+    recipientId?: string
+): Promise<ChatMessage | void> => {
     if (!circleId || !senderId || !content.trim()) return;
+
+    // Instant offline bypass: Buffer directly if disconnected
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+        console.warn('📶 Offline: Buffering chat message to IndexedDB...');
+        const buffered = await bufferMessage({
+            clientMessageId: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+            circleId,
+            senderId,
+            recipientId,
+            content,
+            type,
+            timestamp: Date.now(),
+            status: 'queued'
+        });
+
+        return {
+            id: `buffered-${buffered.id || Date.now()}`,
+            senderId,
+            recipientId,
+            content,
+            type,
+            timestamp: new Date(buffered.timestamp),
+            status: 'queued'
+        };
+    }
 
     const messagesRef = collection(db, 'familyCircles', circleId, 'messages');
 
@@ -83,10 +161,39 @@ export const sendMessage = async (circleId: string, senderId: string, content: s
         console.error('Encryption failed, sending plaintext:', e);
     }
 
-    await addDoc(messagesRef, {
+    const payload: any = {
         senderId,
         content: secureContent,
         type,
         timestamp: serverTimestamp()
-    });
+    };
+    if (recipientId) {
+        payload.recipientId = recipientId;
+    }
+
+    try {
+        await addDoc(messagesRef, payload);
+    } catch (error) {
+        console.warn('📶 Firestore send failed (network dropped), buffering to IndexedDB...', error);
+        const buffered = await bufferMessage({
+            clientMessageId: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+            circleId,
+            senderId,
+            recipientId,
+            content,
+            type,
+            timestamp: Date.now(),
+            status: 'queued'
+        });
+
+        return {
+            id: `buffered-${buffered.id || Date.now()}`,
+            senderId,
+            recipientId,
+            content,
+            type,
+            timestamp: new Date(buffered.timestamp),
+            status: 'queued'
+        };
+    }
 };

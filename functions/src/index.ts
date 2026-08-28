@@ -36,7 +36,6 @@ export const callGeminiAI = functions.https.onCall(async (data, context) => {
         };
     } catch (error: any) {
         console.error('callGeminiAI runtime error:', error);
-        // Standardize error to ensure onCall handles the response/CORS correctly
         throw new functions.https.HttpsError('internal', error.message || 'AI service failed');
     }
 });
@@ -50,6 +49,7 @@ export const searchPlaces = functions.https.onCall(async (data, context) => {
     // }
 
     const { query, lat, lng, type } = data;
+    console.log(`🔌 [searchPlaces] Triggered with query="${query}", lat=${lat}, lng=${lng}, type=${type}`);
 
     // Input validation
     if (!query || typeof query !== 'string') {
@@ -64,9 +64,10 @@ export const searchPlaces = functions.https.onCall(async (data, context) => {
     const apiKey = process.env.GOOGLE_MAPS_API_KEY || functions.config().google?.maps_api_key;
 
     if (!apiKey) {
-        console.error('Google Maps API key not configured');
+        console.error('🔌 [searchPlaces] Google Maps API key not configured in process.env or functions.config()');
         throw new functions.https.HttpsError('internal', 'API configuration error.');
     }
+    console.log(`🔌 [searchPlaces] Using API Key: ${apiKey.substring(0, 8)}...`);
 
     try {
         // Build the Places API URL
@@ -74,13 +75,15 @@ export const searchPlaces = functions.https.onCall(async (data, context) => {
         const placeType = type || 'point_of_interest';
 
         const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radius}&keyword=${encodeURIComponent(query)}&type=${placeType}&key=${apiKey}`;
+        console.log(`🔌 [searchPlaces] Fetching from Google Maps Places API...`);
 
         const response = await fetch(url);
         const json = await response.json();
 
+        console.log(`🔌 [searchPlaces] Google Places response status: ${json.status}`);
         if (json.status !== 'OK' && json.status !== 'ZERO_RESULTS') {
-            console.error('Places API error:', json.status, json.error_message);
-            throw new functions.https.HttpsError('internal', 'Places search failed.');
+            console.error('🔌 [searchPlaces] Google Places API error:', json.status, json.error_message);
+            throw new functions.https.HttpsError('internal', `Places search failed: ${json.status} ${json.error_message || ''}`);
         }
 
         // Transform results to match client expectations
@@ -98,10 +101,11 @@ export const searchPlaces = functions.https.onCall(async (data, context) => {
             isOpen: place.opening_hours?.open_now
         }));
 
+        console.log(`🔌 [searchPlaces] Successfully returned ${places.length} places to client`);
         return { places };
     } catch (error: any) {
-        console.error('searchPlaces error:', error);
-        throw new functions.https.HttpsError('internal', 'Failed to search places.');
+        console.error('🔌 [searchPlaces] Runtime error:', error);
+        throw new functions.https.HttpsError('internal', error.message || 'Failed to search places.');
     }
 });
 
@@ -161,5 +165,97 @@ export const geocodeAddress = functions.https.onCall(async (data, context) => {
     } catch (error) {
         console.error('geocodeAddress error:', error);
         throw new functions.https.HttpsError('internal', 'Geocoding failed.');
+    }
+});
+
+// ==========================================
+// FCM Push Notification for Geofence Alerts
+// ==========================================
+/**
+ * Sends push notifications to family circle members when geofence events occur.
+ * Called from the client when a transition is detected.
+ */
+export const sendGeofenceAlert = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'User must be logged in.');
+    }
+
+    const { circleId, memberId, memberName, geofenceName, eventType, location } = data;
+
+    if (!circleId || !memberId || !geofenceName || !eventType) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing required fields.');
+    }
+
+    try {
+        // Get all circle members' FCM tokens
+        const circleRef = admin.database().ref(`circles/${circleId}/members`);
+        const snapshot = await circleRef.once('value');
+
+        if (!snapshot.exists()) {
+            return { sent: 0 };
+        }
+
+        const memberTokens: string[] = [];
+        const members = snapshot.val();
+
+        for (const uid of Object.keys(members)) {
+            if (uid === memberId) continue; // Don't notify the person who triggered
+
+            const tokenSnapshot = await admin.database().ref(`users/${uid}/fcmToken`).once('value');
+            const fcmToken = tokenSnapshot.val();
+            if (fcmToken) memberTokens.push(fcmToken);
+        }
+
+        if (memberTokens.length === 0) {
+            return { sent: 0 };
+        }
+
+        // Build notification
+        const isArrival = eventType === 'entered';
+        const title = isArrival
+            ? `📍 ${memberName} arrived at ${geofenceName}`
+            : `🚗 ${memberName} left ${geofenceName}`;
+        const body = isArrival
+            ? `${memberName} just arrived at ${geofenceName}.`
+            : `${memberName} just departed from ${geofenceName}.`;
+
+        const message: admin.messaging.MulticastMessage = {
+            tokens: memberTokens,
+            notification: { title, body },
+            data: {
+                type: isArrival ? 'geofence_enter' : 'geofence_exit',
+                memberId,
+                memberName,
+                circleId,
+                geofenceName,
+                lat: location?.lat?.toString() || '',
+                lng: location?.lng?.toString() || '',
+                timestamp: Date.now().toString()
+            },
+            android: {
+                priority: 'high',
+                notification: {
+                    channelId: 'geofence_alerts',
+                    icon: 'ic_stat_name',
+                    color: '#6366f1'
+                }
+            },
+            apns: {
+                payload: {
+                    aps: {
+                        sound: 'default',
+                        badge: 1
+                    }
+                }
+            }
+        };
+
+        const response = await admin.messaging().sendEachForMulticast(message);
+        console.log(`[FCM] Sent ${response.successCount}/${memberTokens.length} notifications for ${eventType} at ${geofenceName}`);
+
+        return { sent: response.successCount, failed: response.failureCount };
+    } catch (error: any) {
+        console.error('sendGeofenceAlert error:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to send notification.');
     }
 });

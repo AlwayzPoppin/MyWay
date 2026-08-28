@@ -53,7 +53,7 @@ const CoPilotOverlay: React.FC<CoPilotOverlayProps> = ({ isActive, isSpeaking, t
       </button>
 
       <div className="flex-1 min-w-0">
-        <p className="text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em] mb-1">Omni Co-Pilot Active</p>
+        <p className="text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em] mb-1">MyCo-Pilot Active</p>
         <p className="text-sm font-medium text-slate-200 truncate italic">
           {transcription || "Listening for 'Hey Omni'..."}
         </p>

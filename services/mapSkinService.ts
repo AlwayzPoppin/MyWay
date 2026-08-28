@@ -18,6 +18,54 @@ export interface MapSkin {
 
 // CartoCSS-based free styles + custom color overrides
 // For true custom skins, these would point to self-hosted style.json files
+ 
+export const SATELLITE_STYLE = {
+    version: 8,
+    sources: {
+        'satellite-tiles': {
+            type: 'raster',
+            tiles: [
+                'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+            ],
+            tileSize: 256,
+            attribution: '© Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EBP, and the GIS User Community'
+        }
+    },
+    layers: [
+        {
+            id: 'satellite',
+            type: 'raster',
+            source: 'satellite-tiles',
+            minzoom: 0,
+            maxzoom: 19
+        }
+    ]
+};
+ 
+export const TERRAIN_STYLE = {
+    version: 8,
+    sources: {
+        'terrain-tiles': {
+            type: 'raster',
+            tiles: [
+                'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+                'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
+                'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)'
+        }
+    },
+    layers: [
+        {
+            id: 'terrain',
+            type: 'raster',
+            source: 'terrain-tiles',
+            minzoom: 0,
+            maxzoom: 17
+        }
+    ]
+};
 export const MAP_SKINS: MapSkin[] = [
     {
         id: 'default',
@@ -98,20 +146,20 @@ export const applySkinOverrides = (
     const overrides: Record<MapSkinId, Record<string, any>> = {
         default: {},
         midnight: {
-            'building': { 'fill-extrusion-color': '#1a1a2e', 'fill-extrusion-opacity': 0.9 },
+            'building': { 'fill-extrusion-color': '#1a1a2e', 'fill-extrusion-opacity': 0.95 },
         },
         cyberpunk: {
             'building': { 'fill-extrusion-color': '#0f0f23', 'fill-extrusion-opacity': 0.95 },
             'water': { 'fill-color': '#0a192f' },
         },
         sunset: {
-            'building': { 'fill-extrusion-color': '#2d1b0e', 'fill-extrusion-opacity': 0.85 },
+            'building': { 'fill-extrusion-color': '#2d1b0e', 'fill-extrusion-opacity': 0.95 },
         },
         arctic: {
-            'building': { 'fill-extrusion-color': '#e0f2fe', 'fill-extrusion-opacity': 0.8 },
+            'building': { 'fill-extrusion-color': '#e0f2fe', 'fill-extrusion-opacity': 0.95 },
         },
         forest: {
-            'building': { 'fill-extrusion-color': '#1a2e1a', 'fill-extrusion-opacity': 0.85 },
+            'building': { 'fill-extrusion-color': '#1a2e1a', 'fill-extrusion-opacity': 0.95 },
         }
     };
 

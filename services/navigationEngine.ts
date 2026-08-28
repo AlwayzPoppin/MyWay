@@ -1,8 +1,17 @@
 import { Location, NavigationRoute } from '../types';
+import { getDistanceMeters, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
 
 // Constants
-// Audit Fix: Increased from 30m to 50m to account for real-world GPS drift (typically 10-50m)
-const STEP_COMPLETION_RADIUS_METERS = 50;
+// Audit Fix: Dynamic step completion radius scaled by speed
+// Walking (<5 mph): 20m — precise for pedestrians
+// City driving (5–45 mph): linearly scaled 20m–60m
+// Highway (>45 mph): 80m — accounts for high-speed GPS lag
+const getStepCompletionRadius = (speedMph: number = 0): number => {
+    if (speedMph <= 5) return 20;
+    if (speedMph >= 45) return 80;
+    // Linear interpolation: 20m at 5mph → 60m at 45mph
+    return 20 + ((speedMph - 5) / 40) * 40;
+};
 const OFF_ROUTE_THRESHOLD_METERS = 100;
 
 // Driving Behavior Thresholds
@@ -15,36 +24,8 @@ export interface NavigationState {
     distanceToNextStep: number; // in meters
     isOffRoute: boolean;
     hasArrived: boolean;
+    splitIndex?: number; // Pre-calculated route split index for completed vs remaining line rendering
 }
-
-// Haversine formula for distance
-const getDistanceMeters = (loc1: Location, loc2: Location): number => {
-    const R = 6371e3; // Earth radius in meters
-    const φ1 = loc1.lat * Math.PI / 180;
-    const φ2 = loc2.lat * Math.PI / 180;
-    const Δφ = (loc2.lat - loc1.lat) * Math.PI / 180;
-    const Δλ = (loc2.lng - loc1.lng) * Math.PI / 180;
-
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-        Math.cos(φ1) * Math.cos(φ2) *
-        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c;
-};
-
-// Helper to calculate bearing between two points
-const getBearing = (start: Location, end: Location): number => {
-    const startLat = start.lat * Math.PI / 180;
-    const startLng = start.lng * Math.PI / 180;
-    const endLat = end.lat * Math.PI / 180;
-    const endLng = end.lng * Math.PI / 180;
-
-    const y = Math.sin(endLng - startLng) * Math.cos(endLat);
-    const x = Math.cos(startLat) * Math.sin(endLat) -
-        Math.sin(startLat) * Math.cos(endLat) * Math.cos(endLng - startLng);
-    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-};
 
 // Helper to calculate distance from a point to a line segment
 const getDistanceToSegmentMeters = (p: Location, a: Location, b: Location): number => {
@@ -81,18 +62,89 @@ const getDistanceToSegmentMeters = (p: Location, a: Location, b: Location): numb
     return Math.abs(dxt);
 };
 
+/**
+ * Audit #5: Snap-to-Road — project raw GPS onto nearest route segment
+ * Returns the perpendicular distance to the nearest segment of the route polyline.
+ * 
+ * AUDIT FIX: Memoized by quantized coordinates (5 decimal places ≈ 1.1m precision)
+ * to prevent redundant Haversine calculations on every render cycle.
+ */
+const routeDistanceCache = new Map<string, number>();
+const ROUTE_CACHE_MAX = 50;
+
+const getDistanceToRouteMeters = (
+    currentLocation: Location,
+    route: { steps: { endLocation?: Location }[]; startLoc?: Location },
+    currentStepIndex: number = 0
+): number => {
+    // Quantize to ~1m precision for cache key + currentStepIndex
+    const key = `${currentLocation.lat.toFixed(5)},${currentLocation.lng.toFixed(5)}_${currentStepIndex}`;
+
+    if (routeDistanceCache.has(key)) {
+        return routeDistanceCache.get(key)!;
+    }
+
+    const waypoints: Location[] = [];
+    if (route.startLoc) waypoints.push(route.startLoc);
+
+    for (const step of route.steps) {
+        if (step.endLocation) waypoints.push(step.endLocation);
+    }
+
+    if (waypoints.length < 2) return Infinity;
+
+    // Restrict search window to adjacent segments around currentStepIndex
+    const startIdx = Math.max(0, currentStepIndex - 1);
+    const endIdx = Math.min(waypoints.length - 1, currentStepIndex + 3);
+
+    let minDistance = Infinity;
+    for (let i = startIdx; i < endIdx; i++) {
+        const dist = getDistanceToSegmentMeters(currentLocation, waypoints[i], waypoints[i + 1]);
+        if (dist < minDistance) minDistance = dist;
+    }
+
+    // LRU eviction
+    if (routeDistanceCache.size >= ROUTE_CACHE_MAX) {
+        const oldest = routeDistanceCache.keys().next().value;
+        if (oldest !== undefined) routeDistanceCache.delete(oldest);
+    }
+    routeDistanceCache.set(key, minDistance);
+
+    return minDistance;
+};
+
 export const updateNavigationState = (
     currentLocation: Location,
     route: NavigationRoute,
     currentState: NavigationState,
-    prevLocation?: Location // Optional for trajectory analysis
+    prevLocation?: Location, // Optional for trajectory analysis
+    speedMph: number = 0     // Current speed for dynamic step radius
 ): NavigationState => {
+    const completionRadius = getStepCompletionRadius(speedMph);
     const { steps, startLoc } = route;
     const { currentStepIndex } = currentState;
 
+    // Split logic: Find nearest polyline point (bounded window around currentStepIndex)
+    let splitIndex = currentState.splitIndex ?? 0;
+    if (route.routeGeometry && route.routeGeometry.length >= 2) {
+        let minDist = Infinity;
+        const startIdx = Math.max(0, currentStepIndex - 1);
+        const endIdx = Math.min(route.routeGeometry.length - 1, currentStepIndex + 3);
+        for (let i = startIdx; i < endIdx; i++) {
+            const a = { lat: route.routeGeometry[i][1], lng: route.routeGeometry[i][0] };
+            const b = { lat: route.routeGeometry[i + 1][1], lng: route.routeGeometry[i + 1][0] };
+            const p = getPointOnSegmentNearestTo(currentLocation, a, b);
+            const d = getDistanceMeters(currentLocation, p);
+            if (d < minDist) {
+                minDist = d;
+                splitIndex = i;
+            }
+        }
+    }
+
     // Safety check
     if (!steps || steps.length === 0 || currentStepIndex >= steps.length) {
-        return { ...currentState, hasArrived: true };
+        return { ...currentState, splitIndex, hasArrived: true };
     }
 
     const currentStep = steps[currentStepIndex];
@@ -103,12 +155,14 @@ export const updateNavigationState = (
     const segmentStart = prevStep.endLocation || startLoc || currentLocation;
     const segmentEnd = currentStep.endLocation || (currentStepIndex === steps.length - 1 ? route.destinationLoc : null);
 
-    if (!segmentStart || !segmentEnd) return currentState;
+    if (!segmentStart || !segmentEnd) return { ...currentState, splitIndex };
 
     const distToTarget = getDistanceMeters(currentLocation, segmentEnd);
-    const distToSegment = getDistanceToSegmentMeters(currentLocation, segmentStart, segmentEnd);
 
-    const isOffRoute = distToSegment > OFF_ROUTE_THRESHOLD_METERS;
+    // Audit #5: Snap-to-road — check against local route segments around current step
+    // Prevents false off-route alerts when GPS drifts near segment boundaries
+    const distToRoute = getDistanceToRouteMeters(currentLocation, route, currentStepIndex);
+    const isOffRoute = distToRoute > OFF_ROUTE_THRESHOLD_METERS;
 
     // GPS DRIFT FIX: Check if we're much closer to the NEXT step than current
     // This handles cases where GPS drift causes the user to miss the exact waypoint
@@ -119,19 +173,20 @@ export const updateNavigationState = (
             const distToNextStep = getDistanceMeters(currentLocation, nextStepEnd);
             // If we're significantly closer to the next waypoint (< 50% of current distance),
             // we've clearly passed the current one - advance the step
-            if (distToNextStep < distToTarget * 0.5 && distToTarget > STEP_COMPLETION_RADIUS_METERS) {
+            if (distToNextStep < distToTarget * 0.5 && distToTarget > completionRadius) {
                 return {
                     currentStepIndex: currentStepIndex + 1,
                     distanceToNextStep: distToNextStep,
                     isOffRoute: false,
-                    hasArrived: false
+                    hasArrived: false,
+                    splitIndex
                 };
             }
         }
     }
 
     // Check for step completion (standard radius check)
-    if (distToTarget < STEP_COMPLETION_RADIUS_METERS) {
+    if (distToTarget < completionRadius) {
         const nextIndex = currentStepIndex + 1;
         if (nextIndex >= steps.length) {
             // Arrived at destination
@@ -139,7 +194,8 @@ export const updateNavigationState = (
                 currentStepIndex: steps.length - 1,
                 distanceToNextStep: 0,
                 isOffRoute: false,
-                hasArrived: true
+                hasArrived: true,
+                splitIndex: route.routeGeometry ? route.routeGeometry.length - 1 : splitIndex
             };
         } else {
             // Advance to next step
@@ -147,7 +203,8 @@ export const updateNavigationState = (
                 currentStepIndex: nextIndex,
                 distanceToNextStep: getDistanceMeters(currentLocation, steps[nextIndex].endLocation || route.destinationLoc),
                 isOffRoute: false,
-                hasArrived: false
+                hasArrived: false,
+                splitIndex
             };
         }
     }
@@ -155,7 +212,8 @@ export const updateNavigationState = (
     return {
         ...currentState,
         distanceToNextStep: distToTarget,
-        isOffRoute
+        isOffRoute,
+        splitIndex
     };
 };
 

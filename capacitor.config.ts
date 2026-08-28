@@ -25,6 +25,15 @@ const config: CapacitorConfig = {
       iconColor: '#6366f1',
       sound: 'beep.wav'
     }
+  },
+  // AUDIT FIX: Deep Link URI scheme registration
+  android: {
+    allowMixedContent: true,
+    // Intent filters added via AndroidManifest.xml for myway:// scheme
+  },
+  ios: {
+    // URL scheme registered in Info.plist for myway://
+    scheme: 'myway'
   }
 };
 

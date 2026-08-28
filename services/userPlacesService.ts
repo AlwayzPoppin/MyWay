@@ -76,7 +76,8 @@ export const updateUserPlace = async (
     const snapshot = await get(placeRef);
 
     if (!snapshot.exists()) {
-        throw new Error('Place not found');
+        console.warn(`[UserPlaces] Place ${placeId} not found in circle ${circleId}, skipping remote DB update`);
+        return;
     }
 
     const existing = snapshot.val();

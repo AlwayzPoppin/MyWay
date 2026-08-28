@@ -1,6 +1,5 @@
-
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Reward } from './types';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Trip } from './types';
 // Sidebar removed - replaced by BentoSidebar
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -15,7 +14,7 @@ import DriveModeHUD from './components/DriveModeHUD';
 import IncidentReporter from './components/IncidentReporter';
 import PrivacyPanel from './components/PrivacyPanel';
 import PremiumUpsellModal from './components/PremiumUpsellModal';
-import RewardsPanel from './components/RewardsPanel';
+// Audit #3: RewardsPanel removed — sponsored rewards deferred for MVP
 import BottomSheet from './components/BottomSheet';
 import QuickStopGrid from './components/QuickStopGrid';
 import SafetyAlerts from './components/SafetyAlerts';
@@ -24,23 +23,25 @@ import MessagingPanel from './components/MessagingPanel';
 import SettingsPanel from './components/SettingsPanel';
 import OfflineMapManager from './components/OfflineMapManager';
 import BentoSidebar from './components/BentoSidebar';
+import HoldToActivate from './components/HoldToActivate';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
 import PlaceDetailPanel from './components/PlaceDetailPanel';
+import LoadingScreen from './components/LoadingScreen';
 import { useAuth } from './contexts/AuthContext';
 import { useUI } from './contexts/UIContext';
-import OverlayManager from './components/OverlayManager';
+import OverlayManager, { OverlayStackProvider } from './components/OverlayManager';
+import LegalConsentScreen, { hasLegalConsent } from './components/LegalConsentScreen';
 import {
   getFamilyInsights,
-  searchPlacesOnMap,
-  getSafetyAdvisory,
-  getRouteToDestination,
-  SafetyAdvisory
+  searchPlacesOnMap
 } from './services/geminiService';
 import { getRouteFromOSRM, geocodePlace } from './services/osrmService';
 import { geolocationService } from './services/geolocationService';
+import { setupAutoFlush as setupOfflineLocationAutoFlush } from './services/offlineLocationBuffer';
 import {
   updateMemberLocation,
+  syncBufferedLocations,
   subscribeToFamilyLocations,
   getCircleMembers,
   getFamilyCircle,
@@ -49,18 +50,20 @@ import {
   addGeofence,
   updateUserProfile,
   getUserProfile,
+  uploadProfileImage,
   deliverWrappedKey,
   getWrappedKeyForUser,
   triggerSOS,
-  clearSOS
+  clearSOS,
+  removeMember
 } from './services/authService';
 import { createCheckoutSession, goToBillingPortal } from './services/stripeService';
 import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceService';
-import { sendArrivalAlert, sendDepartureAlert } from './services/emailService';
-import { subscribeToRewards, seedRewards } from './services/rewardsService';
-import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores } from './services/placesService';
-import { subscribeToUserPlaces, UserPlace, addUserPlace, deleteUserPlace } from './services/userPlacesService';
-import { subscribeSponsoredPlaces, seedSponsoredPlaces, SponsoredPlace } from './services/sponsoredPlacesService';
+import { getSafeAvatarUrl, getDefaultAvatarDataUri } from './utils/avatar';
+// Audit #3: rewardsService removed
+import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText } from './services/placesService';
+import { subscribeToUserPlaces, UserPlace, addUserPlace, deleteUserPlace, updateUserPlace } from './services/userPlacesService';
+// Audit #3: sponsoredPlacesService removed
 import { updateNavigationState, NavigationState } from './services/navigationEngine';
 import {
   encryptLocation,
@@ -68,6 +71,7 @@ import {
   getFuzzyLocation,
   generateFamilyKey,
   setFamilyKey,
+  getFamilyKey,
   generateECDHKeyPair,
   exportPublicKey,
   importPublicKey,
@@ -79,21 +83,43 @@ import {
   saveKeyPairToSecureStorage,
   loadKeyPairFromSecureStorage
 } from './services/cryptoService';
-import { startMeshHeartbeat, subscribeToMesh, MeshNode } from './services/meshService';
+// Mesh P2P removed: Simulation provided no real offline value (Audit Sprint Mar 2026)
 import { audioService } from './services/audioService';
 import { SUBSCRIPTION_TIERS } from './config/subscriptions';
 import { useLocationSync } from './hooks/useLocationSync';
-import { useCoPilot } from './hooks/useCoPilot';
-import { getWeather, WeatherData } from './services/weatherService';
+import { useGeofences } from './hooks/useGeofences';
+import { useNavigation } from './hooks/useNavigation';
+import { useE2EE } from './hooks/useE2EE';
+import { startTrip, recordTripPoint, endTrip, getActiveTrip } from './services/tripHistoryService';
+import TripHistoryPanel from './components/TripHistoryPanel';
+import { startCrashMonitoring, stopCrashMonitoring, cancelCrashCountdown, updateCrashDetectionSpeed } from './services/crashDetectionService';
+import CrashCountdownOverlay from './components/CrashCountdownOverlay';
+import CircleAdminPanel from './components/CircleAdminPanel';
+import NotificationCenter, { addNotification, getUnreadCount, getNotifications, AppNotification } from './components/NotificationCenter';
+import InviteShareModal from './components/InviteShareModal';
+import WeeklySafetyReport from './components/WeeklySafetyReport';
+import BatteryOptimizationPrompt, { shouldShowBatteryPrompt } from './components/BatteryOptimizationPrompt';
+import KeyRecoveryPanel from './components/KeyRecoveryPanel';
+import ErrorBoundary from './components/ErrorBoundary';
+import PermissionGuard from './components/PermissionGuard';
+import { convoyService, ConvoyInvite } from './services/convoyService';
+import MaintenancePanel from './components/MaintenancePanel';
 
-// SPONSORED_PLACES now loaded from Firebase - see useEffect below
-
-// Demo data purged for real-world transition
-const DEMO_MEMBERS: FamilyMember[] = [];
-const DEMO_PLACES: Place[] = [];
-
-
-// Rewards are now loaded from Firebase - see useEffect below
+export type ActiveModal =
+  | 'settings'
+  | 'privacy'
+  | 'quickstop'
+  | 'upsell'
+  | 'messaging'
+  | 'offline_maps'
+  | 'trip_history'
+  | 'circle_admin'
+  | 'notifications'
+  | 'weekly_report'
+  | 'invite'
+  | 'key_recovery'
+  | 'battery_prompt'
+  | 'maintenance';
 
 const App: React.FC = () => {
   const {
@@ -115,120 +141,42 @@ const App: React.FC = () => {
   const {
     theme, setTheme,
     isMobile,
-    isUpsellOpen, setUpsellOpen,
-    isRewardsOpen, setRewardsOpen,
-    isPrivacyOpen, setPrivacyOpen,
-    isQuickStopOpen, setQuickStopOpen,
-    isMessagingOpen, setMessagingOpen,
-    isSettingsOpen, setSettingsOpen,
-    isOfflineMapsOpen, setOfflineMapsOpen,
     isDriveMode, setDriveMode,
     is3DMode, set3DMode,
     notification, showNotification
   } = useUI();
 
+  const [activeModal, setActiveModal] = useState<ActiveModal | null>(null);
+
   const [isSearching, startSearchTransition] = React.useTransition();
   const [showOnboarding, setShowOnboarding] = useState(() => {
     return !localStorage.getItem('myway_onboarding_complete');
   });
+
+  // --- CORE STATE ---
   const [isMapReady, setIsMapReady] = useState(false);
-
-  const [geofences, setGeofences] = useState<Geofence[]>([]);
-  const [memberStatuses, setMemberStatuses] = useState<Record<string, GeofenceStatus>>({});
-  const [weather, setWeather] = useState<WeatherData>({ temp: 72, condition: 'Sunny', icon: '☀️' });
-  const lastWeatherUpdateRef = useRef<{ lat: number; lng: number; time: number }>({ lat: 0, lng: 0, time: 0 });
-  const userLocationRef = useRef<{ lat: number; lng: number } | null>(null); // For stable weather polling
-
-  // --- HOOKS ---
-  const {
-    members: liveMembers,
-    setMembers, // Exposed for manual updates if needed (e.g. ghost mode toggles)
-    locationError,
-    userLocation
-  } = useLocationSync(
-    user,
-    profile,
-    profile?.familyCircleId,
-    geofences,
-    (t) => {
-      const message = t.to === 'INSIDE' ? `📍 Entered ${t.geofence.name}` : `🚶 Left ${t.geofence.name}`;
-      showNotification(message, 5000);
-    }
-  );
-
-  // Resolution logic: Prefer live data, fallback to empty (GPS will populate 'you' via hook)
-  const members = liveMembers;
-
-
-  // Auto-center effect (now derived from hook state)
-  const [hasInitiallyCentered, setHasInitiallyCentered] = useState(false);
-  const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
-  useEffect(() => {
-    if (userLocation && !hasInitiallyCentered) {
-      const targetId = user?.uid || 'demo-you';
-      setSelectedMemberId(targetId);
-      setHasInitiallyCentered(true);
-    }
-  }, [userLocation, hasInitiallyCentered, user]);
-
-  // Background Persistence & Lifecycle (Audit Recommendation)
-  useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
-
-    const setupBackgroundListeners = async () => {
-      // 1. App State Listener
-      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (!isActive) {
-          // When backgrounded, ensure location service continues in persistent mode
-          // Native BackgroundGeolocation plugin handles the heavy lifting
-          showNotification('MyWay: Running in background', 3000);
-        }
-      });
-
-      // 2. Handle background navigation resume if needed
-      // This is a placeholder for deep-link or notification-action resume
-    };
-
-    setupBackgroundListeners();
-
-    return () => {
-      CapacitorApp.removeAllListeners();
-    };
-  }, []);
-
-  const membersRef = useRef<FamilyMember[]>([]);
-  // Keep membersRef in sync for legacy references
-  useEffect(() => {
-    membersRef.current = members;
-  }, [members]);
-  const [rewards, setRewards] = useState<Reward[]>([]);
-  const [privacyZones] = useState<PrivacyZone[]>([]);
-  const [sponsoredPlaces, setSponsoredPlaces] = useState<SponsoredPlace[]>([]);
+  const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
   const [userPlaces, setUserPlaces] = useState<UserPlace[]>([]);
   const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>([]);
-  const [incidents, setIncidents] = useState<IncidentReport[]>([]);
-  const [insights, setInsights] = useState<DailyInsight[]>([]);
-  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
-  const [activeRoute, setActiveRoute] = useState<NavigationRoute | null>(null);
-  const [navState, setNavState] = useState<NavigationState>({
-    currentStepIndex: 0,
-    distanceToNextStep: 0,
-    isOffRoute: false,
-    hasArrived: false
-  });
-  // Ref pattern to avoid infinite loops: effect reads ref, only triggers on location/route changes
-  const navStateRef = useRef(navState);
-  useEffect(() => { navStateRef.current = navState; }, [navState]);
-  const [isNavigating, setIsNavigating] = useState(false);
-  const { activeAdvisory: coPilotAdvisory } = useCoPilot(user, isNavigating, members);
-  const [meshNodes, setMeshNodes] = useState<MeshNode[]>([]);
   const [safetyScore, setSafetyScore] = useState(100);
   const [sessionPoints, setSessionPoints] = useState(0);
-  const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
-  const [isReporting, setIsReporting] = useState(false);
+  const [crashCountdown, setCrashCountdown] = useState<number | null>(null);
+  const [etaSharing, setEtaSharing] = useState(false);
+  const [actionBarExpanded, setActionBarExpanded] = useState(false);
   const [mapBounds, setMapBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
-  const [mapZoom, setMapZoom] = useState(14); // Synced zoom between 2D/3D modes
+  const [mapZoom, setMapZoom] = useState(14);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [avgGasPrice, setAvgGasPrice] = useState('$3.45');
+  const [hasInitiallyCentered, setHasInitiallyCentered] = useState(false);
+  const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [messagingRecipientId, setMessagingRecipientId] = useState<string | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+  const [previewRoute, setPreviewRoute] = useState<NavigationRoute | null>(null);
+  const [incomingConvoyInvite, setIncomingConvoyInvite] = useState<ConvoyInvite | null>(null);
+  const [reviewedTrip, setReviewedTrip] = useState<Trip | null>(null);
+  const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(false);
   const [userSettings, setUserSettings] = useState({
     theme: 'dark' as 'light' | 'dark' | 'auto',
     notifications: true,
@@ -238,39 +186,277 @@ const App: React.FC = () => {
     speedAlerts: false,
     mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
     units: 'imperial' as 'imperial' | 'metric',
-    aiPersonality: 'standard' as 'standard' | 'grok' | 'newyork',
-    aiGender: 'female' as 'male' | 'female',
-    mapSkin: 'default' as 'default' | 'cyberpunk' | 'sunset' | 'midnight' | 'arctic' | 'forest'
+    mapSkin: ((localStorage.getItem('myway_map_skin') as any) || 'default') as 'default' | 'cyberpunk' | 'sunset' | 'midnight' | 'arctic' | 'forest',
+    buildingScale: ((localStorage.getItem('myway_building_scale') as any) || 'enhanced') as 'realistic' | 'enhanced' | 'monumental',
+    landmarkGlow: localStorage.getItem('myway_landmark_glow') !== 'false',
+    avoidTolls: localStorage.getItem('myway_avoid_tolls') === 'true',
+    avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
   });
 
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const [avgGasPrice, setAvgGasPrice] = useState('$3.45');
+  const [showStylePicker, setShowStylePicker] = useState(false);
+  const styleLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didStyleLongPressRef = useRef(false);
 
-  // PERFORMANCE: Memoized callbacks for map components to preserve React.memo optimization
-  // Without these, inline arrow functions create new references on every render,
-  // breaking memoization and causing expensive map redraws on each GPS update
-  const handleSelectPlace = useCallback((place: Place) => {
-    setSelectedMemberId(null);
-    setSelectedPlace(place);
-    setMapCenter([place.location.lat, place.location.lng]);
+  const [privacyZones] = useState<PrivacyZone[]>([]);
+  const [incidents, setIncidents] = useState<IncidentReport[]>([]);
+  const [insights, setInsights] = useState<DailyInsight[]>([]);
+  const [activities, setActivities] = useState<AppNotification[]>([]);
+  const logActivityRef = useRef<((type: AppNotification['type'], title: string, message: string, icon: string, memberId?: string) => void) | null>(null);
+  const prevMembersRef = useRef<Record<string, { sosActive: boolean; battery: number; status: string }>>({});
+
+  // Define logActivity helper
+  const logActivity = useCallback((
+    type: AppNotification['type'],
+    title: string,
+    message: string,
+    icon: string,
+    memberId?: string
+  ) => {
+    const notif = addNotification(type, title, message, icon, memberId);
+    setActivities(prev => [notif, ...prev.filter(a => a.id !== notif.id)]);
   }, []);
 
-  const handleSelectMember = useCallback((id: string) => {
-    setSelectedMemberId(id);
-    setMapCenter(undefined);
+  // Update logActivityRef so the geofence transition callback can safely access it
+  useEffect(() => {
+    logActivityRef.current = logActivity;
+  }, [logActivity]);
+
+  // --- REFS ---
+  const membersRef = useRef<FamilyMember[]>([]);
+  const profilesRef = useRef<Record<string, any>>({});
+
+  // --- DOMAIN HOOKS ---
+  // Map userPlaces to geofences
+  const mappedGeofences = useMemo<Geofence[]>(() => {
+    return userPlaces.map(p => ({
+      id: p.id,
+      name: p.name,
+      lat: p.location.lat,
+      lng: p.location.lng,
+      radius: (p.radius || 0.3) * 1000 // Convert km to meters
+    }));
+  }, [userPlaces]);
+
+  const {
+    members: liveMembers,
+    setMembers,
+    userLocation
+  } = useLocationSync(
+    user,
+    profile,
+    profile?.familyCircleId,
+    mappedGeofences,
+    (t) => {
+      const isInside = t.to === 'INSIDE';
+      const message = isInside ? `📍 Entered ${t.geofence.name}` : `🚶 Left ${t.geofence.name}`;
+      showNotification(message, 5000);
+      if (logActivityRef.current) {
+        logActivityRef.current(
+          isInside ? 'arrival' : 'departure',
+          isInside ? 'Geofence Entry' : 'Geofence Exit',
+          `${profile?.displayName || 'You'} ${isInside ? 'entered' : 'left'} ${t.geofence.name}`,
+          isInside ? '📍' : '🚶',
+          user?.uid
+        );
+      }
+    }
+  );
+
+  const members = liveMembers;
+
+  useGeofences(
+    members,
+    mappedGeofences,
+    showNotification,
+    user?.uid,
+    logActivity
+  );
+  const { ecdhKeyPair } = useE2EE(user, profile, currentCircle, isOwner);
+  const {
+    activeRoute,
+    isNavigating,
+    navState,
+    betterRouteSuggestion,
+    upcomingTollAlert,
+    handleSwitchRoute,
+    handleDismissReroute,
+    handleTakeTollFreeExit,
+    handleDismissTollAlert,
+    handleStartNavigation,
+    handleCancelNavigation,
+    handleDiscovery,
+    handleQuickSearch,
+    setIsNavigating,
+    setActiveRoute
+  } = useNavigation(
+    user,
+    profile,
+    members,
+    userLocation,
+    showNotification,
+    setDriveMode,
+    set3DMode,
+    setCrashCountdown,
+    setEtaSharing,
+    userPlaces,
+    setDiscoveredPlaces,
+    safetyScore,
+    startSearchTransition
+  );
+
+  // --- SIDE EFFECTS ---
+
+  // Initialize activities from localStorage
+  useEffect(() => {
+    setActivities(getNotifications());
   }, []);
 
-  // Zoom sync callback for 2D/3D mode switching
-  const handleZoomChange = useCallback((zoom: number) => {
-    setMapZoom(zoom);
-  }, []);
+  // Listen for real-time Convoy & Caravan invites
+  useEffect(() => {
+    const unsub = convoyService.onInvite(invite => {
+      if (!invite || !invite.session || !invite.session.isActive) {
+        setIncomingConvoyInvite(null);
+        return;
+      }
+      if (invite.session.leaderId === user?.uid) {
+        return;
+      }
+      if (invite.session.memberIds && invite.session.memberIds.length > 0) {
+        if (user?.uid && !invite.session.memberIds.includes(user.uid)) {
+          return;
+        }
+      }
+      setIncomingConvoyInvite(invite);
+    });
+    return unsub;
+  }, [user]);
 
-  const handleMapInteraction = useCallback(() => {
-    setSelectedMemberId(null);
-    setMapCenter(undefined);
-  }, []);
 
-  // Online/Offline listeners
+
+  // Handle emergency resolution
+  const handleResolveSOS = useCallback((id: string, memberId?: string) => {
+    setActivities(prev => {
+      const updated = prev.map(a => a.id === id ? { ...a, isResolved: true } : a);
+      localStorage.setItem('myway_notifications', JSON.stringify(updated));
+      return updated;
+    });
+
+    if (memberId) {
+      if (memberId === user?.uid || memberId === 'demo-you') {
+        if (profile?.familyCircleId) {
+          clearSOS(profile.familyCircleId, user.uid);
+        }
+        setMembers(prev => prev.map(m => m.id === memberId ? { ...m, sosActive: false } : m));
+        showNotification('Emergency SOS Resolved', 5000);
+      } else if (profile?.familyCircleId) {
+        clearSOS(profile.familyCircleId, memberId).then(() => {
+          showNotification('Emergency SOS Resolved for member', 5000);
+        }).catch(err => {
+          console.error("Failed to clear SOS for other member in DB:", err);
+        });
+      }
+    }
+  }, [user, profile, setMembers, showNotification]);
+
+  // Reactively watch members state for status/alert changes
+  useEffect(() => {
+    if (members.length === 0) return;
+
+    members.forEach(member => {
+      const prev = prevMembersRef.current[member.id];
+      const currentSos = !!member.sosActive;
+      const currentBattery = member.battery;
+      const currentStatus = member.status;
+      const isSelf = member.id === user?.uid || member.id === 'demo-you' || member.id === members[0]?.id;
+
+      if (prev) {
+        // 1. SOS Trigger
+        if (currentSos && !prev.sosActive && !isSelf) {
+          logActivity('sos', 'Emergency SOS', `${member.name} triggered an Emergency SOS!`, '🚨', member.id);
+        }
+        // 2. Low Battery Alert
+        if (currentBattery <= 20 && prev.battery > 20) {
+          logActivity('safety', 'Low Battery', `${member.name}'s battery is low (${currentBattery}%)`, '🪫', member.id);
+        }
+        // 3. Started Driving Trigger
+        if (currentStatus === 'Driving' && prev.status !== 'Driving') {
+          logActivity('departure', 'Started Driving', `${member.name} started driving`, '🏎️', member.id);
+
+          // Zero-Touch Trip Logging: Start background drive for self if not already in a trip
+          if (isSelf && !getActiveTrip()) {
+            startTrip(member.location, 'Drive');
+            showNotification('🏎️ Auto-logging drive in background', 3000);
+          }
+        }
+        // 4. Stopped Driving Trigger
+        if (currentStatus !== 'Driving' && prev.status === 'Driving') {
+          // End background trip if not in active turn-by-turn navigation
+          if (isSelf && getActiveTrip() && !isDriveMode) {
+            const completed = endTrip(member.location);
+            if (completed && completed.totalDistanceMiles > 0.05) {
+              showNotification(`🏁 Drive logged: ${completed.totalDistanceMiles} mi (Score: ${completed.safetyScore}%)`, 5000);
+            }
+          }
+        }
+      }
+
+      // Update tracking ref
+      prevMembersRef.current[member.id] = {
+        sosActive: currentSos,
+        battery: currentBattery,
+        status: currentStatus
+      };
+    });
+  }, [members, logActivity, user, isDriveMode, showNotification]);
+
+  // Update membersRef
+  useEffect(() => {
+    membersRef.current = members;
+  }, [members]);
+
+  // Battery Prompt
+  useEffect(() => {
+    if (!showOnboarding && shouldShowBatteryPrompt()) {
+      const timer = setTimeout(() => setActiveModal('battery_prompt'), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showOnboarding]);
+
+  // Initial Map Centering
+  useEffect(() => {
+    if (userLocation && !hasInitiallyCentered) {
+      const targetId = user?.uid || 'demo-you';
+      setSelectedMemberId(targetId);
+      setHasInitiallyCentered(true);
+    }
+  }, [userLocation, hasInitiallyCentered, user]);
+
+  // Lifecycle & Deep Links
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const setup = async () => {
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) showNotification('MyWay: Running in background', 3000);
+      });
+      CapacitorApp.addListener('appUrlOpen', ({ url }) => {
+        const parsed = new URL(url);
+        const match = parsed.pathname.match(/\/join\/([A-Za-z0-9]+)/);
+        if (match) {
+          const code = match[1];
+          if (user) {
+            joinCircle(code);
+            showNotification(`🔗 Joining circle: ${code}`, 3000);
+          } else {
+            localStorage.setItem('myway_pending_invite', code);
+          }
+        }
+      });
+    };
+    setup();
+    return () => { CapacitorApp.removeAllListeners(); };
+  }, [user, joinCircle, showNotification]);
+
+  // Offline Handling
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
@@ -282,50 +468,25 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Offline insight persistence
+  // Offline Location Buffer Auto-Flush Initialization
   useEffect(() => {
-    if (isOffline) {
-      setInsights(prev => {
-        if (prev.some(i => i.category === 'System')) return prev;
-        return [{
-          id: 'offline-status',
-          category: 'System',
-          title: 'System Offline',
-          description: 'Connectivity lost. Some features may be limited.',
-          priority: 'high',
-          type: 'alert'
-        }, ...prev];
-      });
-    } else {
-      setInsights(prev => prev.filter(i => i.id !== 'offline-status'));
-    }
+    const cleanup = setupOfflineLocationAutoFlush(async (locations) => {
+      await syncBufferedLocations(locations);
+      if (locations.length > 0) {
+        showNotification(`📦 Synced ${locations.length} offline location point${locations.length > 1 ? 's' : ''}`, 3000);
+      }
+    });
+    return () => cleanup();
+  }, [showNotification]);
 
-    // Forensic Fix: Force 2D mode when offline to prevent raster/vector incompatibility
+  useEffect(() => {
     if (isOffline && is3DMode) {
       set3DMode(false);
-      showNotification('Map switched to 2D for offline reliability', 3000);
+      showNotification('Switched to 2D for offline reliability', 3000);
     }
   }, [isOffline, is3DMode, set3DMode, showNotification]);
 
-  const geofenceStatesRef = useRef<Record<string, Record<string, GeofenceStatus>>>({}); // { memberId: { geofenceId: 'INSIDE' | 'OUTSIDE' } }
-  const profilesRef = useRef<Record<string, any>>({}); // Store profile info like email for fast lookup
-  // Keep membersRef in sync (Handled by hook now, but removing older dup definition)
-
-
-  const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
-  const [ecdhKeyPair, setEcdhKeyPair] = useState<CryptoKeyPair | null>(null);
-  const [isOwner, setIsOwner] = useState(false);
-
-  // Sync settings to Audio Service
-  useEffect(() => {
-    audioService.updateSettings({
-      personality: userSettings.aiPersonality,
-      gender: userSettings.aiGender
-    });
-  }, [userSettings.aiPersonality, userSettings.aiGender]);
-
-
-  // Fetch circle data if in one
+  // Circle Data Sync
   useEffect(() => {
     if (profile?.familyCircleId) {
       getFamilyCircle(profile.familyCircleId).then(circle => {
@@ -335,425 +496,194 @@ const App: React.FC = () => {
     }
   }, [profile?.familyCircleId, user?.uid]);
 
-
-  // Load rewards from Firebase
-  useEffect(() => {
-    const unsubscribe = subscribeToRewards((firebaseRewards) => {
-      if (firebaseRewards.length > 0) {
-        setRewards(firebaseRewards);
-      } else {
-        // Seed initial rewards if none exist
-        seedRewards();
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Load sponsored places from Firebase
-  useEffect(() => {
-    const unsubscribe = subscribeSponsoredPlaces((places) => {
-      if (places.length > 0) {
-        setSponsoredPlaces(places);
-      } else {
-        // Seed default sponsored places if none exist
-        seedSponsoredPlaces();
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Load user places from Firebase (or use demo places if not authenticated)
+  // Places Sync
   useEffect(() => {
     if (!user || !profile?.familyCircleId) {
-      // Demo mode: use hardcoded demo places
-      setUserPlaces(DEMO_PLACES.map(p => ({ ...p, createdAt: Date.now(), createdBy: 'demo' })));
+      setUserPlaces([]);
       return;
     }
-
     const unsubscribe = subscribeToUserPlaces(profile.familyCircleId, (places) => {
       setUserPlaces(places);
     });
     return () => unsubscribe();
-  }, [user?.uid, profile?.familyCircleId, userLocation]);
+  }, [user?.uid, profile?.familyCircleId]);
 
-  // Combine places for map display
+  // Synchronize userPlaces with discoveredPlaces without blowing away search results
   useEffect(() => {
-    setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces]);
-  }, [sponsoredPlaces, userPlaces]);
+    setDiscoveredPlaces(prev => {
+      // Keep any active search/discovered places that are not saved userPlaces
+      const searchResults = prev.filter(p => p.type === 'search_result' || p.id.startsWith('photon-') || p.id.startsWith('nominatim-') || p.id.startsWith('overpass-'));
+      // Combine updated userPlaces with existing search results
+      return [...userPlaces, ...searchResults];
+    });
+  }, [userPlaces]);
 
-  // Live Weather Updates
-  // Audit Fix: Keep ref in sync with userLocation to avoid effect re-running on every GPS update
+
+  // Insights Loop
   useEffect(() => {
-    userLocationRef.current = userLocation;
-  }, [userLocation]);
-
-  useEffect(() => {
-    // Initial check - only run if we've ever had a location
-    if (!userLocationRef.current) return;
-
-    const fetchWeather = async () => {
-      const loc = userLocationRef.current;
-      if (!loc) return;
-
-      const now = Date.now();
-      const moved = Math.sqrt(Math.pow(loc.lat - lastWeatherUpdateRef.current.lat, 2) + Math.pow(loc.lng - lastWeatherUpdateRef.current.lng, 2)) * 111.32;
-
-      const shouldFetch = lastWeatherUpdateRef.current.time === 0 || moved > 5 || (now - lastWeatherUpdateRef.current.time) > 1800000;
-
-      if (shouldFetch) {
-        console.log(`🌤️ Weather: Fetching for [${loc.lat}, ${loc.lng}] (Initial: ${lastWeatherUpdateRef.current.time === 0})`);
-        const data = await getWeather(loc.lat, loc.lng);
-        console.log(`🌤️ Weather Result: ${data.temp}°F ${data.condition}`);
-        setWeather(data);
-        lastWeatherUpdateRef.current = { lat: loc.lat, lng: loc.lng, time: now };
-      }
+    if (members.length === 0) return;
+    const fetch = async () => {
+      try {
+        const res = await getFamilyInsights(members);
+        setInsights(res || []);
+      } catch (err) { console.warn('AI Insights failed'); }
     };
-
-    fetchWeather();
-    const interval = setInterval(fetchWeather, 600000); // Check every 10 mins (stable, not reset by GPS updates)
+    fetch();
+    const interval = setInterval(fetch, 600000);
     return () => clearInterval(interval);
-  }, []); // Empty deps - interval is stable, uses ref for current location
+  }, [members.length]);
 
-
-  // --- ADVANCED E2EE ORCHESTRATION ---
+  // Push Token Sync & Foreground Alert Listener
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) return;
 
-    const initE2EE = async () => {
-      // 1. Try to load local ECDH KeyPair from persistent storage
-      let keys = ecdhKeyPair;
-
-      if (!keys) {
-        // Migration + Load from Secure Storage (IndexedDB)
-        const savedKeys = await loadKeyPairFromSecureStorage(user.uid);
-        if (savedKeys) {
-          try {
-            keys = await importKeyPairJWK(savedKeys);
-            console.log("🔐 Restored E2EE Keys from Secure Storage (IndexedDB)");
-          } catch (e) {
-            console.error("Failed to restore keys from IDB", e);
-          }
-        }
-
-        // Check legacy localStorage for migration
-        const legacyKeys = localStorage.getItem(`myway_ecdh_${user.uid}`);
-        if (!keys && legacyKeys) {
-          try {
-            const jwk = JSON.parse(legacyKeys);
-            keys = await importKeyPairJWK(jwk);
-            await saveKeyPairToSecureStorage(user.uid, jwk);
-            localStorage.removeItem(`myway_ecdh_${user.uid}`);
-            console.log("🔐 Migrated E2EE Keys from LocalStorage to Secure Storage");
-          } catch (e) {
-            console.error("Migration failed", e);
-          }
-        }
-      }
-
-      // 2. Generate new keys if none found or restored
-      if (!keys) {
-        keys = await generateECDHKeyPair();
-        const jwk = await exportKeyPairJWK(keys);
-        await saveKeyPairToSecureStorage(user.uid, jwk);
-        console.log("🔐 Generated and persisted new E2EE Keys in Secure Storage");
-      }
-
-      setEcdhKeyPair(keys);
-
-      // 3. Sync Public Key to Profile
-      const pubKeyBase64 = await exportPublicKey(keys.publicKey);
-      if (profile && profile.ecdhPublicKey !== pubKeyBase64) {
-        updateUserProfile(user.uid, { ecdhPublicKey: pubKeyBase64 });
-      }
-
-      // 4. OWNER LOGIC: Retrieve existing key or generate new one
-      if (isOwner && currentCircle) {
-        const circleMembers = await getCircleMembers(currentCircle.id);
-
-        // CRITICAL FIX: First check if owner already has a wrapped key (persisted from previous session)
-        // This prevents generating a new key on every app load which would make old data undecryptable
-        getWrappedKeyForUser(currentCircle.id, user.uid, async (existingWrapped) => {
-          let circleKey: CryptoKey;
-
-          if (existingWrapped) {
-            // Retrieve existing key - derive shared secret with ourselves (owner-to-owner)
-            const sharedSecret = await deriveSharedSecretKey(keys.privateKey, keys.publicKey);
-            circleKey = await unwrapCircleKey(existingWrapped, sharedSecret);
-            console.log('🔐 E2EE: Retrieved existing circle key');
-          } else {
-            // No existing key - generate new one and wrap for ourselves
-            circleKey = await generateFamilyKey();
-            const selfSharedSecret = await deriveSharedSecretKey(keys.privateKey, keys.publicKey);
-            const selfWrapped = await wrapCircleKey(circleKey, selfSharedSecret);
-            await deliverWrappedKey(currentCircle.id, user.uid, selfWrapped);
-            console.log('🔐 E2EE: Generated and stored new circle key');
-          }
-
-          setFamilyKey(circleKey);
-
-          // Distribute to other members
-          for (const member of circleMembers) {
-            if (member.uid !== user.uid && member.ecdhPublicKey) {
-              const memberPubKey = await importPublicKey(member.ecdhPublicKey);
-              const sharedSecret = await deriveSharedSecretKey(keys.privateKey, memberPubKey);
-              const wrapped = await wrapCircleKey(circleKey, sharedSecret);
-              await deliverWrappedKey(currentCircle.id, member.uid, wrapped);
-            }
-          }
-        });
-      }
-
-      // 5. MEMBER LOGIC: Wait for key delivery from owner
-      if (!isOwner && currentCircle) {
-        getWrappedKeyForUser(currentCircle.id, user.uid, async (wrapped) => {
-          const ownerProfile = await getUserProfile(currentCircle.ownerId);
-          if (ownerProfile?.ecdhPublicKey && keys) {
-            const ownerPubKey = await importPublicKey(ownerProfile.ecdhPublicKey);
-            const sharedSecret = await deriveSharedSecretKey(keys.privateKey, ownerPubKey);
-            const unwrapped = await unwrapCircleKey(wrapped, sharedSecret);
-            setFamilyKey(unwrapped);
-          }
-        });
-      }
-    };
-
-    initE2EE();
-  }, [user?.uid, profile?.familyCircleId, isOwner, !!currentCircle, profile, currentCircle]);
-
-
-  // Sync Audio Service state
-  useEffect(() => {
-    audioService.setEnabled(isVoiceEnabled);
-  }, [isVoiceEnabled]);
-
-  // Initialize members from auth profile
-  useEffect(() => {
-    if (user && profile) {
-      const savedLKL = localStorage.getItem('myway_last_known_location');
-      let initialLoc = { lat: 0, lng: 0 }; // Clean start
-
-      if (savedLKL) {
-        try {
-          initialLoc = JSON.parse(savedLKL);
-          console.log("📍 LKL: Restored last known location on startup");
-        } catch (e) {
-          console.warn("Failed to parse LKL", e);
-        }
-      }
-
-      setMembers([
-        {
-          id: user.uid,
-          name: profile.displayName || 'You',
-          role: 'Primary',
-          avatar: profile.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}&backgroundColor=b6e3f4`,
-          location: initialLoc,
-          battery: 100,
-          speed: 0,
-          lastUpdated: savedLKL ? 'Recently' : 'Searching for GPS...',
-          status: 'Offline',
-          safetyScore: 98,
-          pathHistory: [],
-          driveEvents: [],
-          membershipTier: (profile as any).membershipTier || 'free',
-          wayType: 'NoWay'
-        }
-      ]);
-
-      // If user is in a circle, fetch other members
-      if (profile.familyCircleId) {
-        getCircleMembers(profile.familyCircleId).then(profiles => {
-          const otherMembers: FamilyMember[] = profiles
-            .filter(p => p.uid !== user.uid)
-            .map(p => ({
-              id: p.uid,
-              name: p.displayName || 'Family Member',
-              role: 'Member',
-              avatar: p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.uid}&backgroundColor=c0aede`,
-              location: { lat: 0, lng: 0 },
-              battery: 0,
-              speed: 0,
-              lastUpdated: 'Never',
-              status: 'Offline',
-              safetyScore: 100,
-              pathHistory: [],
-              driveEvents: [],
-              membershipTier: 'free',
-              wayType: 'HisWay'
-            }));
-
-          setMembers(prev => [...prev.filter(m => m.id === user.uid), ...otherMembers]);
-
-          // Populate profilesRef with member emails
-          profiles.forEach(p => {
-            profilesRef.current[p.uid] = p;
-          });
-        });
-
-        // Logic moved to useLocationSync hook
-
-      }
-
-      // Also store current user profile in ref
-      profilesRef.current[user.uid] = profile;
-
-      // Sync theme from profile
-      if (profile.settings?.theme && profile.settings.theme !== 'auto') {
-        setTheme(profile.settings.theme as 'light' | 'dark');
-        setUserSettings(prev => ({ ...prev, theme: profile.settings.theme }));
-      }
-    }
-  }, [user, profile, setMembers, setTheme]);
-
-  // Subscribe to Geofences
-  useEffect(() => {
-    if (profile?.familyCircleId) {
-      const unsubscribe = subscribeToGeofences(profile.familyCircleId, (circlesGeofences) => {
-        setGeofences(circlesGeofences);
-      });
-      return () => unsubscribe();
-    }
-  }, [profile?.familyCircleId, user?.uid]);
-
-
-  // Proactive AI Co-Pilot loop (Hook)
-  const { activeAdvisory } = useCoPilot(user, isNavigating, members);
-
-  // Mesh P2P Continuity Loop (Upgraded to Firebase-backed Relays)
-  useEffect(() => {
-    if (!user || !profile?.familyCircleId) return;
-
-    // Use current location from profile or fallback to center
-    const currentLoc = profile.location || { lat: 37.7749, lng: -122.4194 };
-
-    // Start our own heartbeat
-    const stopHeartbeat = startMeshHeartbeat(profile.familyCircleId, user.uid, currentLoc);
-
-    // Subscribe to others
-    const unsubscribe = subscribeToMesh(profile.familyCircleId, user.uid, currentLoc, (node) => {
-      setMeshNodes(prev => {
-        const filtered = prev.filter(n => n.id !== node.id);
-        return [...filtered, node];
+    let cleanup: (() => void) | undefined;
+    import('./services/pushNotificationService').then(async ({ persistTokenToProfile, onForegroundMessage }) => {
+      persistTokenToProfile(user.uid);
+      cleanup = await onForegroundMessage((payload) => {
+        const body = payload.notification?.body || 'New alert received';
+        showNotification(body, 4000);
       });
     });
 
     return () => {
-      stopHeartbeat();
-      unsubscribe();
+      if (cleanup) cleanup();
     };
-  }, [user?.uid, profile?.familyCircleId, profile?.location?.lat]);
+  }, [user?.uid, showNotification]);
 
+  // --- HANDLERS ---
+  const handleSelectPlace = useCallback((place: Place) => {
+    setSelectedMemberId(null);
+    setSelectedPlace(place);
+    setMapCenter([place.location.lat, place.location.lng]);
+  }, []);
 
-
-  // NOTE: isMobile resize handling is now in UIContext
-
-  // --- Navigation Engine Integration (Modular) ---
-  // FIX: Use navStateRef to avoid infinite loop - effect reads from ref, only triggers on location/route changes
-  useEffect(() => {
-    if (isNavigating && activeRoute && userLocation) {
-      const currentNavState = navStateRef.current;
-      const newNavState = updateNavigationState(userLocation, activeRoute, currentNavState);
-
-      // Only update if something actually changed
-      if (newNavState.currentStepIndex === currentNavState.currentStepIndex &&
-        newNavState.isOffRoute === currentNavState.isOffRoute &&
-        newNavState.hasArrived === currentNavState.hasArrived) {
-        return; // No change, skip update
-      }
-
-      if (newNavState.currentStepIndex !== currentNavState.currentStepIndex) {
-        showNotification(`🔜 Next: ${activeRoute.steps[newNavState.currentStepIndex].instruction}`, 4000);
-      }
-
-      if (newNavState.hasArrived && !currentNavState.hasArrived) {
-        showNotification(`🎯 You have arrived at your destination!`, 6000);
-
-        // Phase 4: Award Safety Points
-        const earned = Math.floor(safetyScore / 5);
-        setSessionPoints(earned);
-        setRewards(prev => [...prev, {
-          id: `safety_${Date.now()}`,
-          title: 'Safe Drive Completion',
-          description: `Earned for maintaining a ${safetyScore}% safety score.`,
-          points: earned,
-          category: 'Transportation',
-          expiryDate: 'Never',
-          status: 'AVAILABLE',
-          partner: 'MyWay Safety'
-        }]);
-
-        audioService.speak(`You have arrived. Safety score: ${safetyScore} percent. You earned ${earned} points.`);
-
-        // Reset navigation
-        setTimeout(() => {
-          setDriveMode(false);
-          setIsNavigating(false);
-          setActiveRoute(null);
-        }, 5000);
-      }
-
-      setNavState(newNavState);
+  const handleAddPlace = useCallback((place: Omit<Place, 'id'>) => {
+    if (user && profile?.familyCircleId) {
+      addUserPlace(profile.familyCircleId, { ...place, createdBy: user.uid }, user.uid);
+      showNotification(`⭐ Saved "${place.name}" to Circle Geofences!`, 3000);
+    } else {
+      const newPlaceWithId: UserPlace = {
+        ...place,
+        id: `demo-place-${Date.now()}`,
+        createdAt: Date.now(),
+        createdBy: 'demo'
+      };
+      setUserPlaces(prev => [...prev, newPlaceWithId]);
+      showNotification(`⭐ Saved "${place.name}" to Circle Geofences!`, 3000);
     }
-  }, [userLocation, isNavigating, activeRoute, safetyScore, showNotification]); // Removed navState from deps
+  }, [user, profile, showNotification]);
 
-  // --- Geofence Logic (Modular) ---
-  useEffect(() => {
-    if (members.length > 0 && geofences.length > 0) {
-      members.forEach(member => {
-        // IGNORE: Members waiting for their first real signal (prevents alerting on demo coords)
-        if (member.lastUpdated === 'Waiting for signal...') return;
+  const handleDeletePlace = useCallback((placeId: string) => {
+    if (profile?.familyCircleId) {
+      deleteUserPlace(profile.familyCircleId, placeId);
+      showNotification(`Removed place from circle`, 2500);
+    } else {
+      setUserPlaces(prev => prev.filter(p => p.id !== placeId));
+      showNotification(`Removed place from circle`, 2500);
+    }
+  }, [profile, showNotification]);
 
-        const memberGeofenceStates = geofenceStatesRef.current[member.id] || {};
-        geofences.forEach(geofence => {
-          const isKnown = !!memberGeofenceStates[geofence.id];
-          const previousStatus = memberGeofenceStates[geofence.id] || 'OUTSIDE';
-          const transition = detectTransition(member.location, geofence, previousStatus);
+  const handleSelectMember = useCallback((id: string) => {
+    setSelectedMemberId(id);
+    setMapCenter(undefined);
+  }, []);
 
-          if (transition) {
-            if (!geofenceStatesRef.current[member.id]) {
-              geofenceStatesRef.current[member.id] = {};
-            }
-            geofenceStatesRef.current[member.id][geofence.id] = transition.to;
+  const handleZoomChange = useCallback((zoom: number) => {
+    setMapZoom(zoom);
+  }, []);
 
-            // PRIME: If this is the first time we've seen this member/geofence combo, 
-            // DON'T alert. Just record the state. This fixes "Cold Start" noise.
-            if (!isKnown) {
-              console.log(`📍 Geofence Primary: Initialized ${member.name} as ${transition.to} for ${geofence.name}`);
-              return;
-            }
+  const handleMapInteraction = useCallback(() => {
+    setSelectedMemberId(null);
+    setMapCenter(undefined);
+  }, []);
 
-            // Trigger alerts
-            const recipients = members.map(m => m.id === member.id ? '' : (profilesRef.current[m.id]?.email || '')).filter(e => e !== '');
+  const handleManualSOS = useCallback(() => {
+    const memberName = profile?.displayName || user?.displayName || 'You';
+    const memberId = user?.uid || 'demo-you';
+    if (user && profile?.familyCircleId) {
+      if (window.confirm("🚨 Trigger EMERGENCY SOS? This alerts your circle immediately.")) {
+        triggerSOS(profile.familyCircleId, user.uid);
+        showNotification('🚨 SOS SENT!', 10000);
+        logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId);
+        setMembers(prev => prev.map(m => m.id === user.uid ? { ...m, sosActive: true } : m));
+      }
+    } else {
+      if (window.confirm("🚨 Trigger EMERGENCY SOS? (Demo Mode)")) {
+        showNotification('🚨 SOS SENT! (Demo Mode)', 10000);
+        logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId);
+        setMembers(prev => prev.map(m => m.id === memberId ? { ...m, sosActive: true } : m));
+      }
+    }
+  }, [user, profile, showNotification, logActivity, setMembers]);
 
-            if (transition.to === 'INSIDE') {
-              showNotification(`🏠 ${member.name} reached ${geofence.name}!`, 5000);
-              if (recipients.length > 0) {
-                sendArrivalAlert(recipients, member.name, geofence.name).catch(console.error);
-              }
-            } else {
-              showNotification(`🚗 ${member.name} left ${geofence.name}.`, 5000);
-              if (recipients.length > 0) {
-                sendDepartureAlert(recipients, member.name, geofence.name).catch(console.error);
-              }
-            }
-          }
+  const handleUpdatePlaceRadius = useCallback((placeId: string, radius: number) => {
+    // 1. Update selected place state
+    setSelectedPlace(prev => prev && prev.id === placeId ? { ...prev, radius } : prev);
+    
+    // 2. Update discovered places state so the geofence circle on the 3D Map updates live
+    setDiscoveredPlaces(prev => prev.map(p => p.id === placeId ? { ...p, radius } : p));
+    
+    // 3. If place is a saved circle place, update local userPlaces and sync to Firebase
+    const isSavedPlace = userPlaces.some(p => p.id === placeId);
+    if (isSavedPlace) {
+      setUserPlaces(prev => prev.map(p => p.id === placeId ? { ...p, radius } : p));
+      if (user && profile?.familyCircleId) {
+        updateUserPlace(profile.familyCircleId, placeId, { radius }).catch(err => {
+          console.warn('Could not update saved place radius in DB:', err);
         });
-      });
+      }
     }
-  }, [members, geofences, showNotification]);
+  }, [user, profile, userPlaces]);
+
+  const handleTriggerSOS = useCallback(() => {
+    const memberName = profile?.displayName || user?.displayName || 'You';
+    const memberId = user?.uid || 'demo-you';
+    if (user && profile?.familyCircleId) {
+      triggerSOS(profile.familyCircleId, user.uid);
+      showNotification('🚨 SOS SENT!', 10000);
+      logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId);
+      setMembers(prev => prev.map(m => m.id === user.uid ? { ...m, sosActive: true } : m));
+    } else {
+      showNotification('🚨 SOS SENT! (Demo Mode)', 10000);
+      logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId);
+      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, sosActive: true } : m));
+    }
+  }, [user, profile, showNotification, logActivity, setMembers]);
+
+  const handleStylePointerDown = useCallback(() => {
+    didStyleLongPressRef.current = false;
+    if (styleLongPressTimerRef.current) clearTimeout(styleLongPressTimerRef.current);
+    styleLongPressTimerRef.current = setTimeout(() => {
+      didStyleLongPressRef.current = true;
+      setShowStylePicker(prev => !prev);
+    }, 500);
+  }, []);
+
+  const handleStylePointerUp = useCallback(() => {
+    if (styleLongPressTimerRef.current) {
+      clearTimeout(styleLongPressTimerRef.current);
+      styleLongPressTimerRef.current = null;
+    }
+    if (!didStyleLongPressRef.current) {
+      set3DMode(prev => !prev);
+    }
+  }, []);
+
+  const handleStylePointerLeave = useCallback(() => {
+    if (styleLongPressTimerRef.current) {
+      clearTimeout(styleLongPressTimerRef.current);
+      styleLongPressTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
-    if (members.length === 0) return;
-
-    const fetchInsights = async () => {
-      const results = await getFamilyInsights(members);
-      setInsights(results || []);
+    return () => {
+      if (styleLongPressTimerRef.current) {
+        clearTimeout(styleLongPressTimerRef.current);
+      }
     };
-
-    fetchInsights();
-    const interval = setInterval(fetchInsights, 600000); // 10 minutes
-    return () => clearInterval(interval);
-  }, [members.length]);
+  }, []);
 
   const handleToggleGhost = useCallback((memberId: string) => {
     setMembers(prev => prev.map(m => m.id === memberId ? { ...m, isGhostMode: !m.isGhostMode } : m));
@@ -763,162 +693,24 @@ const App: React.FC = () => {
     try {
       const tier = SUBSCRIPTION_TIERS[tierId];
       if (!tier) return;
-
-      showNotification(`🚀 Preparing your ${tier.name}...`, 5000);
-      const checkoutUrl = await createCheckoutSession(tier.priceId);
-      window.location.href = checkoutUrl;
-    } catch (err: any) {
-      showNotification(`❌ Error: ${err.message}`, 5000);
-    }
+      showNotification(`🚀 Preparing ${tier.name}...`, 5000);
+      const url = await createCheckoutSession(tier.priceId);
+      window.location.href = url;
+    } catch (err) { showNotification(`❌ Error upgrading`, 5000); }
   }, [showNotification]);
 
-  const handleDiscovery = useCallback((query: string) => {
-    if (members.length === 0) return;
-    startSearchTransition(async () => {
-      const results = await searchPlacesOnMap(query, members[0].location);
-      setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces, ...results]);
-
-      if (results.length > 0) {
-        // Find best match - if we searched for an address, it's usually the first result
-        const topResult = results[0];
-
-        // Smarter heuristic: If the query is long or has numbers, it's likely an address search
-        // In that case, we should fly the map to the result
-        const isLikelySpecific = query.length > 8 || /\d/.test(query);
-
-        if (isLikelySpecific) {
-          showNotification(`📍 Found ${topResult.name}`, 3000);
-          // Set center (Standardize to [lng, lat] internally for App state if possible, or convert per map)
-          // Let's use [lat, lng] for internal App state as it's more common in GPS logic
-          setMapCenter([topResult.location.lat, topResult.location.lng]);
-          setSelectedMemberId(null); // Clear selected member to allow centering on the search
-        }
-      }
-    });
-  }, [members, sponsoredPlaces, userPlaces, showNotification]);
-
-  // Quick search handlers for category buttons (GAS, COFFEE, FOOD, GROCERY)
-  const handleQuickSearch = useCallback((type: 'gas' | 'coffee' | 'food' | 'grocery') => {
-    if (members.length === 0) return;
-    const location = members[0].location;
-
-    startSearchTransition(async () => {
-      let results: Place[] = [];
-      try {
-        switch (type) {
-          case 'gas':
-            results = await searchGasStations(location);
-            break;
-          case 'coffee':
-            results = await searchCoffeeShops(location);
-            break;
-          case 'food':
-            results = await searchRestaurants(location);
-            break;
-          case 'grocery':
-            results = await searchGroceryStores(location);
-            break;
-        }
-      } catch (error) {
-        console.warn('Places API error, falling back to Gemini:', error);
-      }
-
-      // If no results from Places API, fallback to Gemini search
-      if (results.length === 0) {
-        const query = type === 'gas' ? 'gas station' : type === 'coffee' ? 'coffee shop' : type === 'food' ? 'restaurant' : 'grocery store';
-        results = await searchPlacesOnMap(query, location);
-      }
-
-      setDiscoveredPlaces([...sponsoredPlaces, ...userPlaces, ...results]);
-    });
-  }, [members, sponsoredPlaces, userPlaces]);
-
-  const handleStartNavigation = useCallback(async (dest: string) => {
-    if (members.length === 0) return;
-
-    try {
-      showNotification(`🧭 Preparing navigation...`, 5000);
-
-      // Guard: Prevent navigation starting from Africa (0,0)
-      if (members[0].location.lat === 0 && members[0].location.lng === 0) {
-        showNotification("⚠️ Still waiting for high-precision GPS lock. Please wait a moment...", 4000);
-        return;
-      }
-
-      // First, geocode the destination to get coordinates
-      const destLocation = await geocodePlace(dest);
-      if (!destLocation) {
-        showNotification("❌ Could not find destination. Please try a different address.", 4000);
-        return;
-      }
-
-      let route: NavigationRoute | null = null;
-
-      // AUDIT FIX: Try OSRM first, fallback to Gemini AI if it fails
-      try {
-        route = await getRouteFromOSRM(members[0].location, dest, destLocation);
-      } catch (osrmError) {
-        console.warn('⚠️ OSRM routing failed, falling back to Gemini:', osrmError);
-        showNotification('🔄 Primary routing failed, trying AI backup...', 3000);
-      }
-
-      // Fallback: Use Gemini AI routing if OSRM failed
-      if (!route || !route.steps || route.steps.length === 0) {
-        try {
-          route = await getRouteToDestination(members[0].location, dest, members);
-          if (route) {
-            console.log('✅ Fallback to Gemini AI routing succeeded');
-          }
-        } catch (geminiError) {
-          console.error('❌ Both OSRM and Gemini routing failed:', geminiError);
-        }
-      }
-
-      if (!route || !route.steps) {
-        showNotification("❌ Could not calculate route. Please try again.", 4000);
-        return;
-      }
-
-      setActiveRoute(route);
-      setNavState({
-        currentStepIndex: 0,
-        distanceToNextStep: 0,
-        isOffRoute: false,
-        hasArrived: false
-      });
-      setDriveMode(true);
-      setIsNavigating(true);
-      set3DMode(true); // VisionQA: Trigger 3D Fly-to on Navigation Start
-    } catch (error) {
-      console.error("Navigation startup error:", error);
-      showNotification("❌ Failed to start navigation.", 3000);
-    }
-  }, [members, showNotification]);
-
-  // NEW: Automatic Rerouting Detection (Audit Round 5)
-  useEffect(() => {
-    if (isNavigating && navState.isOffRoute && activeRoute) {
-      console.warn("Off route detected! Triggering automatic rerouting...");
-      showNotification("🔄 Off route! Recalculating...", 4000);
-      handleStartNavigation(activeRoute.destinationName);
-    }
-  }, [isNavigating, navState.isOffRoute, activeRoute, handleStartNavigation, showNotification]);
-
+  // --- RENDER GATES ---
+  const [legalConsented, setLegalConsented] = useState(() => hasLegalConsent());
+ 
+  // --- AUTH GATES ---
   if (authLoading) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#050914] text-white">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
-          <p className="font-bold tracking-widest animate-pulse">LOADING MY WAY...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen theme={theme as 'light' | 'dark'} />;
   }
-
+ 
   if (!user) {
     return (
       <LoginScreen
-        theme={theme}
+        theme={theme as 'light' | 'dark'}
         onSignInWithGoogle={signInWithGoogle}
         onSignInWithEmail={signInWithEmail}
         onSignUpWithEmail={signUpWithEmail}
@@ -930,21 +722,7 @@ const App: React.FC = () => {
       />
     );
   }
-
-  // Show onboarding for first-time users
-  if (showOnboarding) {
-    return (
-      <OnboardingFlow
-        theme={theme}
-        onComplete={() => setShowOnboarding(false)}
-      />
-    );
-  }
-
-
-
-
-
+ 
   return (
     <div className={`flex flex-col h-full w-full overflow-hidden transition-all duration-700 ${theme === 'dark' ? 'bg-black' : 'bg-[#f1f5f9]'}`}>
       {!isDriveMode && null}
@@ -963,28 +741,61 @@ const App: React.FC = () => {
             onJoinCircle={joinCircle}
             avgGasPrice={avgGasPrice}
             showNotification={showNotification}
-            onOpenSettings={() => setSettingsOpen(true)}
-            weather={weather}
+            onOpenSettings={() => setActiveModal('settings')}
+            onOpenTripHistory={() => setActiveModal('trip_history')}
+            onOpenNotifications={() => setActiveModal('notifications')}
+            onOpenWeeklyReport={() => setActiveModal('weekly_report')}
+            onOpenInviteShare={() => setActiveModal('invite')}
+            onSOS={handleManualSOS}
+            activities={activities}
+            onResolveSOS={handleResolveSOS}
+            userPlaces={userPlaces}
+            selectedPlaceId={selectedPlace?.id}
+            onSelectPlace={handleSelectPlace}
+            onAddPlace={handleAddPlace}
+            onDeletePlace={handleDeletePlace}
+            onNavigatePlace={(place: Place) => handleStartNavigation(place.name, place.location)}
+            userLocation={userLocation}
+            onOpenMaintenance={() => setActiveModal('maintenance')}
           />
         )}
 
         {/* Mobile-only Profile/Settings FAB - Desktop has this in sidebar */}
-        {!isDriveMode && isMobile && (
+        {!isDriveMode && isMobile && !activeModal && !isBottomSheetExpanded && (
           <button
-            onClick={() => setSettingsOpen(true)}
-            className="absolute top-4 left-4 z-[90] group flex items-center gap-3 transition-all duration-300"
+            onClick={() => setActiveModal('settings')}
+            className="absolute top-6 left-6 z-[90] group flex items-center gap-3 transition-all duration-300"
           >
             <div className={`relative w-11 h-11 rounded-full border-2 overflow-hidden shadow-2xl transition-all duration-300
               ${theme === 'dark' ? 'bg-slate-800 border-white/20' : 'bg-white border-slate-200'}
               ${members[0]?.membershipTier === 'gold' ? 'border-amber-500' : ''}`}
             >
               <img
-                src={members[0]?.avatar || user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid}`}
+                src={getSafeAvatarUrl(members[0]?.avatar || user?.photoURL, profile?.displayName || user?.displayName || user?.uid || 'guest')}
                 alt="Profile"
                 className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(profile?.displayName || user?.displayName || user?.uid || 'guest');
+                }}
               />
             </div>
           </button>
+        )}
+
+        {/* Ghost Mode Active Banner - Audit UX Fix: prevents users from forgetting they're invisible */}
+        {!isDriveMode && !activeModal && !isBottomSheetExpanded && members.find(m => m.id === user?.uid)?.isGhostMode && (
+          <div
+            className="absolute top-4 left-1/2 -translate-x-1/2 z-[95] px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer shadow-lg backdrop-blur-md transition-all duration-300 animate-pulse"
+            style={{
+              background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.85), rgba(79, 70, 229, 0.85))',
+              border: '1px solid rgba(255,255,255,0.2)'
+            }}
+            onClick={() => setActiveModal('privacy')}
+          >
+            <span className="text-lg">👻</span>
+            <span className="text-white text-sm font-semibold tracking-wide">Ghost Mode Active</span>
+            <span className="text-white/60 text-xs">• Tap to manage</span>
+          </div>
         )}
 
         {/* Map and overlay container */}
@@ -1002,22 +813,29 @@ const App: React.FC = () => {
               members={members}
               theme={theme}
               mapSkin={userSettings.mapSkin}
+              buildingScale={userSettings.buildingScale}
+              landmarkGlow={userSettings.landmarkGlow}
               selectedMemberId={selectedMemberId}
               center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined}
               zoom={mapZoom}
               onZoomChange={handleZoomChange}
               onUserInteraction={handleMapInteraction}
               onMapReady={() => setIsMapReady(true)}
-              activeRoute={activeRoute}
+              activeRoute={activeRoute || previewRoute}
               places={discoveredPlaces}
               incidents={incidents}
               privacyZones={privacyZones}
               tasks={[]}
+              tripSafetyEvents={reviewedTrip?.driveEvents || []}
               is3DMode={is3DMode}
               isNavigating={isNavigating || isDriveMode}
+              currentStepIndex={navState.currentStepIndex}
+              splitIndex={navState.splitIndex}
               onSelectPlace={handleSelectPlace}
               onSelectMember={handleSelectMember}
               onBoundsChange={setMapBounds}
+              mapStyle={userSettings.mapStyle}
+              isMobile={isMobile}
             />
           </div>
 
@@ -1026,6 +844,58 @@ const App: React.FC = () => {
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[110] animate-in slide-in-from-top">
               <div className="bg-amber-500 text-black px-6 py-3 rounded-full shadow-2xl font-black text-xs border-2 border-white/20">
                 {notification}
+              </div>
+            </div>
+          )}
+
+          {/* Real-time Caravan / Convoy Invite Banner */}
+          {incomingConvoyInvite && (
+            <div className="fixed top-4 inset-x-4 max-w-md mx-auto z-[250] bg-slate-900/98 border-2 border-purple-500 rounded-3xl p-4 shadow-[0_20px_50px_rgba(168,85,247,0.4)] backdrop-blur-2xl animate-in slide-in-from-top duration-300 text-white pointer-events-auto">
+              <div className="flex items-start gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-purple-600/30 border border-purple-400/50 flex items-center justify-center text-2xl shrink-0 animate-bounce">
+                  🚗🚗
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-500/30 text-purple-300 border border-purple-500/40">
+                      Caravan Invite
+                    </span>
+                    <span className="text-[10px] text-slate-400">Multi-Vehicle Trip</span>
+                  </div>
+                  <h4 className="text-sm font-black mt-1 text-white truncate">
+                    {incomingConvoyInvite.senderName} started a Convoy
+                  </h4>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Destination: <span className="font-bold text-purple-200">{incomingConvoyInvite.session.destinationName}</span>
+                  </p>
+
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const acceptedSession = convoyService.acceptInvite(incomingConvoyInvite, user?.uid || 'self');
+                        setIncomingConvoyInvite(null);
+                        handleStartNavigation(
+                          acceptedSession.destinationName,
+                          acceptedSession.destinationLocation
+                        );
+                      }}
+                      className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-black text-xs shadow-lg shadow-purple-600/30 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                    >
+                      <span>🚀</span> Join & Follow Route
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        convoyService.declineInvite();
+                        setIncomingConvoyInvite(null);
+                      }}
+                      className="px-3 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-xs text-slate-400 hover:text-white transition-all"
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1050,50 +920,55 @@ const App: React.FC = () => {
             <OverlayManager>
               <DriveModeHUD
                 route={activeRoute}
-                onCancel={() => {
-                  setDriveMode(false);
-                  setIsNavigating(false);
-                  setActiveRoute(null);
-                }}
+                onCancel={handleCancelNavigation}
                 speed={members.find(m => m.id === user?.uid)?.speed || 0}
                 theme={theme}
                 stepIndex={navState.currentStepIndex}
-                advisory={activeAdvisory}
                 safetyScore={safetyScore}
                 sessionPoints={sessionPoints}
+                isMobile={isMobile}
+                betterRouteSuggestion={betterRouteSuggestion}
+                onSwitchRoute={handleSwitchRoute}
+                onDismissReroute={handleDismissReroute}
+                upcomingTollAlert={upcomingTollAlert}
+                onTakeTollFreeExit={handleTakeTollFreeExit}
+                onDismissTollAlert={handleDismissTollAlert}
+                members={members}
+                userLocation={userLocation}
+                currentUserId={user?.uid || ''}
               />
             </OverlayManager>
           ) : (
             <>
 
 
-              {/* QuickStopGrid modal */}
-              {isQuickStopOpen && (
+              {/* QuickStopGrid / Saved Places modal */}
+              {activeModal === 'quickstop' && (
                 <QuickStopGrid
                   onSearch={handleDiscovery}
-                  onClose={() => setQuickStopOpen(false)}
+                  onClose={() => setActiveModal(null)}
                   theme={theme}
+                  userPlaces={userPlaces}
+                  onSelectPlace={handleSelectPlace}
+                  onNavigatePlace={(place: Place) => handleStartNavigation(place.name, place.location)}
+                  onAddPlace={handleAddPlace}
+                  userLocation={userLocation}
+                  members={members}
                 />
               )}
 
-              {isUpsellOpen && <PremiumUpsellModal onClose={() => setUpsellOpen(false)} onUpgrade={handleUpgrade} theme={theme} />}
+              {activeModal === 'upsell' && <PremiumUpsellModal onClose={() => setActiveModal(null)} onUpgrade={handleUpgrade} theme={theme} />}
 
-              {isRewardsOpen && (
-                <OverlayManager>
-                  <div className={`absolute z-[90] transition-all duration-500 ${isMobile ? 'inset-x-0 bottom-28 p-4' : 'left-8 top-32 w-80'}`}>
-                    <RewardsPanel rewards={rewards} onClose={() => setRewardsOpen(false)} theme={theme} />
-                  </div>
-                </OverlayManager>
-              )}
+              {/* Audit #3: RewardsPanel removed */}
 
-              {isPrivacyOpen && (
+              {activeModal === 'privacy' && (
                 <OverlayManager>
                   <div className={`absolute z-[90] transition-all duration-500 ${isMobile ? 'inset-x-0 bottom-28 p-4' : 'left-8 top-32 w-80'}`}>
                     <PrivacyPanel
                       zones={[]}
                       isGhostMode={members.find(m => m.id === user?.uid)?.isGhostMode || false}
                       onToggleGhost={() => handleToggleGhost(user?.uid || '')}
-                      onClose={() => setPrivacyOpen(false)}
+                      onClose={() => setActiveModal(null)}
                       theme={theme}
                     />
                   </div>
@@ -1101,12 +976,11 @@ const App: React.FC = () => {
               )}
 
               {/* Member detail panel - desktop only, mobile uses BottomSheet */}
-              {/* Member detail panel - desktop only, mobile uses BottomSheet */}
-              {selectedMemberId && !isPrivacyOpen && !isRewardsOpen && !isMobile && (() => {
+              {selectedMemberId && activeModal !== 'privacy' && !isMobile && (() => {
                 const selectedMember = members.find(m => m.id === selectedMemberId);
                 return selectedMember ? (
                   <OverlayManager>
-                    <div className="absolute z-[80] left-8 top-32 w-80 flex flex-col gap-4">
+                    <div className="absolute z-[80] right-6 top-6 w-84 max-w-[360px] flex flex-col gap-4 pointer-events-auto animate-in slide-in-from-right-4 duration-300">
                       <MemberDetailPanel
                         member={selectedMember}
                         onClose={() => setSelectedMemberId(null)}
@@ -1117,10 +991,25 @@ const App: React.FC = () => {
                       <QuickActions
                         member={selectedMember}
                         isCurrentUser={selectedMemberId === user?.uid}
-                        onCheckIn={() => showNotification(`✅ Check-in request sent to ${selectedMember.name}`, 3000)}
+                        onMessage={() => {
+                          setMessagingRecipientId(selectedMember.id);
+                          setActiveModal('messaging');
+                          setSelectedMemberId(null);
+                        }}
+                        onCheckIn={selectedMemberId === user?.uid
+                          ? () => {
+                              logActivity('arrival', 'Check-In', `${selectedMember.name} checked in: I'm Safe`, '✨', selectedMember.id);
+                              showNotification(`✅ Checked in: I'm Safe`, 3000);
+                            }
+                          : () => {
+                              logActivity('safety', 'Check-In Request', `Sent check-in request to ${selectedMember.name}`, '📱', user?.uid);
+                              showNotification(`✅ Check-in request sent to ${selectedMember.name}`, 3000);
+                            }
+                        }
                         onSendEmoji={(emoji) => showNotification(`✨ Sent ${emoji} to ${selectedMember.name}`, 2000)}
                         onCall={() => showNotification(`📞 Calling ${selectedMember.name}...`, 3000)}
-                        onNavigateTo={() => handleStartNavigation(selectedMember.name)}
+                        onNavigateTo={() => handleStartNavigation(selectedMember.name, selectedMember.location)}
+                        onSOS={handleManualSOS}
                         theme={theme}
                       />
                     </div>
@@ -1128,134 +1017,295 @@ const App: React.FC = () => {
                 ) : null;
               })()}
 
+              {/* Mobile Member Detail — compact floating card when marker tapped */}
+              {selectedMemberId && !activeModal && !isBottomSheetExpanded && isMobile && (() => {
+                const selectedMember = members.find(m => m.id === selectedMemberId);
+                if (!selectedMember) return null;
+                const isSelf = selectedMember.id === user?.uid || selectedMember.id === 'demo-you';
+
+                return (
+                  <OverlayManager>
+                    <div className="absolute z-[120] inset-x-0 bottom-40 px-3">
+                      <div className={`rounded-2xl shadow-2xl border backdrop-blur-xl p-3.5 ${
+                        theme === 'dark' ? 'bg-slate-900/98 border-white/10' : 'bg-white/98 border-slate-200'
+                      }`}>
+                        {/* Row 1: Avatar + Info + Close */}
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="relative">
+                            <img
+                              src={getSafeAvatarUrl(selectedMember.avatar, selectedMember.name || selectedMember.id)}
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(selectedMember.name || selectedMember.id);
+                              }}
+                              alt={selectedMember.name}
+                              className="w-11 h-11 rounded-full object-cover border-2 border-indigo-500 shadow-md bg-slate-800"
+                            />
+                            {isSelf && (
+                              <span className="absolute -bottom-1 -right-1 text-[8px] font-black px-1 rounded-full bg-indigo-600 text-white border border-slate-900">
+                                YOU
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <div className={`font-bold text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                {selectedMember.name}
+                              </div>
+                              {selectedMember.privacyMode === 'blurred' && (
+                                <span className="text-[8px] font-black px-1 rounded bg-purple-500/20 text-purple-300">
+                                  👻 Blur
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-500 flex items-center gap-2">
+                              <span>{selectedMember.status}</span>
+                              <span>•</span>
+                              <span>🔋 {selectedMember.battery}%</span>
+                              {selectedMember.speed > 0 && <><span>•</span><span>{Math.round(selectedMember.speed)} mph</span></>}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setSelectedMemberId(null)}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                              theme === 'dark' ? 'bg-white/10 text-slate-400' : 'bg-slate-100 text-slate-500'
+                            }`}
+                          >✕</button>
+                        </div>
+
+                        {/* Row 2: Action buttons */}
+                        {!isSelf ? (
+                          <div className="grid grid-cols-4 gap-2">
+                            <button
+                              onClick={() => {
+                                setMessagingRecipientId(selectedMember.id);
+                                setActiveModal('messaging');
+                                setSelectedMemberId(null);
+                              }}
+                              className="py-2.5 rounded-xl bg-purple-500/20 text-purple-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                            >
+                              <span>💬</span> Message
+                            </button>
+                            <button
+                              onClick={() => showNotification(`📞 Calling ${selectedMember.name}...`, 3000)}
+                              className="py-2.5 rounded-xl bg-blue-500/20 text-blue-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                            >
+                              <span>📞</span> Call
+                            </button>
+                            <button
+                              onClick={() => { handleStartNavigation(selectedMember.name, selectedMember.location); setSelectedMemberId(null); }}
+                              className="py-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                            >
+                              <span>🧭</span> Nav
+                            </button>
+                            <button
+                              onClick={() => showNotification(`✨ Sent 👋 to ${selectedMember.name}`, 2000)}
+                              className="py-2.5 rounded-xl bg-amber-500/20 text-amber-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                            >
+                              <span>👋</span> Wave
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-2">
+                            <button
+                              onClick={() => {
+                                logActivity('arrival', 'Check-In', `${selectedMember.name} checked in: I'm Safe`, '✨', selectedMember.id);
+                                showNotification(`✅ Checked in: I'm Safe`, 3000);
+                              }}
+                              className="py-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1 shadow-sm"
+                            >
+                              <span>✨</span> Check In
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleToggleGhost(user?.uid || '');
+                              }}
+                              className="py-2.5 rounded-xl bg-purple-500/20 text-purple-300 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                            >
+                              <span>👻</span> Privacy
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveModal('settings');
+                                setSelectedMemberId(null);
+                              }}
+                              className="py-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                            >
+                              <span>🚗</span> Garage
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </OverlayManager>
+                );
+              })()}
+
               {/* Place detail panel */}
-              {selectedPlace && !isMobile && (
+              {selectedPlace && !isMobile && !activeModal && (
                 <OverlayManager>
-                  <div className="absolute z-[80] left-8 top-32 w-80">
+                  <div className="absolute z-[80] right-6 top-6 w-84 max-w-[360px] pointer-events-auto animate-in slide-in-from-right-4 duration-300">
                     <PlaceDetailPanel
-                      place={selectedPlace}
-                      onClose={() => setSelectedPlace(null)}
-                      onNavigate={() => {
-                        handleStartNavigation(selectedPlace.name);
+                      place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
+                      candidatePlaces={discoveredPlaces.filter(p => p.type === 'search_result')}
+                      onSelectCandidate={handleSelectPlace}
+                      onClose={() => {
                         setSelectedPlace(null);
+                        setPreviewRoute(null);
                       }}
+                      onNavigate={(selectedRoute) => {
+                        handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
+                        setSelectedPlace(null);
+                        setPreviewRoute(null);
+                      }}
+                      onSelectRoutePreview={(route) => setPreviewRoute(route)}
                       theme={theme}
+                      userLocation={userLocation}
+                      onUpdateRadius={handleUpdatePlaceRadius}
+                      isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
+                      onAddPlace={handleAddPlace}
+                      onDeletePlace={handleDeletePlace}
+                      members={liveMembers}
+                      currentUserId={user?.uid}
                     />
                   </div>
                 </OverlayManager>
               )}
 
               {/* Unified Command Center - Bottom Center Single Bar */}
-              <OverlayManager>
-                <div className={`absolute left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 ${isMobile ? 'bottom-20' : 'bottom-10'}`}>
-                  <SearchBox
-                    onSearch={handleDiscovery}
-                    onNavigate={handleStartNavigation}
-                    onCategorySearch={handleQuickSearch}
-                    onLocate={() => {
-                      const targetId = user?.uid || 'demo-you';
-                      setSelectedMemberId(targetId);
-                      setMapCenter(undefined); // Reset specific search center to follow user
-                      showNotification("📍 Centered on your location", 2000);
-                    }}
-                    onQuickStop={() => setQuickStopOpen(true)}
-                    theme={theme}
-                  />
-                </div>
-              </OverlayManager>
+              {!activeModal && !selectedPlace && !isBottomSheetExpanded && (
+                <OverlayManager>
+                  <div className={`absolute left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 pointer-events-auto ${isMobile ? 'bottom-24' : 'bottom-12'}`}>
+                    <SearchBox
+                      onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
+                      onNavigate={handleStartNavigation}
+                      onCategorySearch={handleQuickSearch}
+                      onLocate={() => {
+                        const targetId = user?.uid || 'demo-you';
+                        setSelectedMemberId(targetId);
+                        setMapCenter(undefined); // Reset specific search center to follow user
+                        showNotification("📍 Centered on your location", 2000);
+                      }}
+                      onQuickStop={() => setActiveModal('quickstop')}
+                      theme={theme}
+                      userPlaces={userPlaces}
+                      onSelectSavedPlace={handleSelectPlace}
+                      onSelectPlace={handleSelectPlace}
+                      userLocation={userLocation}
+                    />
+                  </div>
+                </OverlayManager>
+              )}
 
               {/* Safety Insights - Repositioned to Top Center Drawer as per Audit */}
-              <OverlayManager>
-                <div className={`absolute left-1/2 -translate-x-1/2 z-50 ${isMobile ? 'top-4 w-auto max-w-[90%]' : 'top-6 w-auto'}`}>
-                  <InsightsBar
-                    insights={insights}
-                    theme={theme}
-                    onReconnect={() => {
-                      showNotification("🔄 Attempting to reconnect...", 3000);
-                      setTimeout(() => setIsOffline(false), 1500);
-                    }}
-                  />
-                </div>
-              </OverlayManager>
+              {!activeModal && !isBottomSheetExpanded && (
+                <OverlayManager>
+                  <div className={`absolute left-1/2 -translate-x-1/2 z-50 ${isMobile ? 'top-4 w-auto max-w-[90%]' : 'top-6 w-auto'}`}>
+                    <InsightsBar
+                      insights={insights}
+                      theme={theme}
+                      onReconnect={() => {
+                        showNotification("🔄 Attempting to reconnect...", 3000);
+                        setTimeout(() => setIsOffline(false), 1500);
+                      }}
+                    />
+                  </div>
+                </OverlayManager>
+              )}
             </>
           )}
 
-          {/* Action Hub - Grouped Clusters shifted higher to avoid taskbar */}
-          <OverlayManager>
-            <div className={`absolute flex flex-col items-end gap-6 z-[60] ${isMobile ? 'top-4 right-4' : 'bottom-40 right-6'}`}>
+          {/* Action Hub — Unified vertical pill */}
+          {!activeModal && !isBottomSheetExpanded && (
+            <OverlayManager>
+              <div className={`absolute flex flex-col items-end z-[60] pointer-events-auto ${isMobile ? 'top-4 right-4' : 'bottom-40 right-6'}`}>
 
-              {/* Mesh Status (If active) */}
-              {meshNodes.length > 0 && (
-                <div className="bg-indigo-500/90 backdrop-blur-md text-white border border-white/20 p-2 rounded-2xl shadow-2xl animate-pulse flex flex-col items-center mb-2">
-                  <span className="text-[10px] font-black uppercase tracking-tighter">MESH SIMULATED</span>
-                  <div className="flex gap-2 items-baseline">
-                    <span className="text-xl font-black">{meshNodes.length}</span>
-                    <span className="text-[9px] font-bold opacity-70">NODES</span>
+                {/* Unified Action Cluster */}
+                <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl relative">
+
+                  {/* 3D Mode / Map Style — tap toggles 3D, long-press opens style picker */}
+                  <div className="relative">
+                    <button
+                      onPointerDown={handleStylePointerDown}
+                      onPointerUp={handleStylePointerUp}
+                      onPointerLeave={handleStylePointerLeave}
+                      className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all select-none
+                        ${is3DMode ? 'bg-amber-500 text-white shadow-lg' : 'bg-white/5 text-slate-500'}`}
+                      title="Tap: 3D Mode • Hold: Map Style"
+                    >
+                      <span className="text-xl">🗺️</span>
+                    </button>
+
+                    {/* Map Style Radial Picker — slides out to the left */}
+                    {showStylePicker && (
+                      <div className="absolute right-14 top-1/2 -translate-y-1/2 flex items-center gap-1.5 bg-black/70 backdrop-blur-xl rounded-full p-1.5 border border-white/10 shadow-2xl animate-in slide-in-from-right duration-200">
+                        {[
+                          { id: 'standard' as const, label: '🗺️', name: 'Standard' },
+                          { id: 'satellite' as const, label: '🛰️', name: 'Satellite' },
+                          { id: 'terrain' as const, label: '⛰️', name: 'Terrain' },
+                        ].map(opt => (
+                          <button
+                            key={opt.id}
+                            onClick={() => {
+                              setUserSettings(prev => ({ ...prev, mapStyle: opt.id }));
+                              setShowStylePicker(false);
+                            }}
+                            className={`w-10 h-10 rounded-full flex flex-col items-center justify-center transition-all
+                              ${userSettings.mapStyle === opt.id
+                                ? 'bg-indigo-500 text-white ring-2 ring-indigo-400/50 scale-110'
+                                : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'}`}
+                            title={opt.name}
+                          >
+                            <span className="text-base leading-none">{opt.label}</span>
+                            <span className="text-[7px] font-black tracking-tight leading-none mt-0.5 opacity-80">{opt.name.slice(0, 3).toUpperCase()}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
+
+                  <button
+                    onClick={() => {
+                      setMessagingRecipientId(null);
+                      setActiveModal('messaging');
+                    }}
+                    className="w-11 h-11 rounded-2xl bg-white/5 text-slate-300 flex items-center justify-center hover:bg-white/10 transition-all"
+                    title="Family Chat & DMs"
+                  >
+                    <span className="text-xl">💬</span>
+                  </button>
+                  <HoldToActivate
+                    onActivate={handleTriggerSOS}
+                    duration={2000}
+                    className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all shadow-lg ring-2 relative select-none overflow-hidden ${
+                      members.find(m => m.id === user?.uid)?.sosActive
+                        ? 'bg-red-700 animate-bounce ring-red-400'
+                        : 'bg-red-600/80 hover:bg-red-700 active:scale-95 ring-red-500/50'
+                    }`}
+                  >
+                    <span className="text-xl relative z-10" title="Hold for SOS">🛡️</span>
+                  </HoldToActivate>
                 </div>
-              )}
-
-              {/* Cluster 1: Intelligence & Navigation */}
-              <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl">
-                <button
-                  onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
-                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all
-                    ${isVoiceEnabled ? 'bg-indigo-500 text-white shadow-lg' : 'bg-white/5 text-slate-500'}`}
-                  title="Voice Co-Pilot"
-                >
-                  <span className="text-xl">🎙️</span>
-                </button>
-                <button
-                  onClick={() => set3DMode(!is3DMode)}
-                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all
-                    ${is3DMode ? 'bg-amber-500 text-white shadow-lg' : 'bg-white/5 text-slate-500'}`}
-                  title="3D Mode"
-                >
-                  <span className="text-xl">🗺️</span>
-                </button>
               </div>
-
-              {/* Cluster 2: Communication & Safety */}
-              <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl">
-                <button
-                  onClick={() => setMessagingOpen(true)}
-                  className="w-11 h-11 rounded-2xl bg-white/5 text-slate-300 flex items-center justify-center hover:bg-white/10 transition-all"
-                  title="Family Chat"
-                >
-                  <span className="text-xl">💬</span>
-                </button>
-                <button
-                  onClick={() => {
-                    const confirmed = confirm('🚨 EMERGENCY SOS\n\nAlert circle members?');
-                    if (confirmed && user && profile?.familyCircleId) {
-                      triggerSOS(profile.familyCircleId, user.uid);
-                      showNotification('🆘 SOS Alert sent!', 5000);
-                    }
-                  }}
-                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all shadow-lg ring-2
-                    ${members.find(m => m.id === user?.uid)?.sosActive
-                      ? 'bg-red-700 animate-bounce ring-red-400'
-                      : 'bg-red-600/80 hover:bg-red-700 animate-pulse hover:animate-none ring-red-500/50'}`}
-                  title="Emergency SOS"
-                >
-                  <span className="text-xl">🛡️</span>
-                </button>
-              </div>
-
-              {/* Cluster 3: System & Profile - REMOVED per VisionQA 3.0 Audit (Redundant) */}
-              {/* Settings now exclusively accessed via Sidebar */}
-            </div>
-          </OverlayManager>
+            </OverlayManager>
+          )}
 
           {/* Messaging Panel */}
-          {isMessagingOpen && (
+          {activeModal === 'messaging' && (
             <OverlayManager>
-              <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96 h-[500px]'}`}>
+              {/* Audit #4: On mobile during navigation, show chat in bottom half so HUD stays visible */}
+              <div className={`absolute z-[150] pointer-events-auto ${isMobile 
+                ? (isNavigating ? 'inset-x-4 bottom-4 top-[50%]' : 'inset-4')
+                : 'right-6 bottom-6 w-96 h-[500px]'
+              }`}>
                 <MessagingPanel
                   members={members}
                   currentUserId={user?.uid || ''}
                   circleId={profile?.familyCircleId}
-                  onClose={() => setMessagingOpen(false)}
+                  initialRecipientId={messagingRecipientId}
+                  onClose={() => {
+                    setActiveModal(null);
+                    setMessagingRecipientId(null);
+                  }}
                   theme={theme}
                 />
               </div>
@@ -1263,9 +1313,9 @@ const App: React.FC = () => {
           )}
 
           {/* Settings Panel */}
-          {isSettingsOpen && (
+          {activeModal === 'settings' && (
             <OverlayManager>
-              <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 max-h-[calc(100vh-120px)]'}`}>
+              <div className={`absolute z-[150] flex flex-col pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 h-[calc(100vh-120px)]'}`}>
                 <SettingsPanel
                   settings={userSettings}
                   onUpdateSettings={(newSettings) => {
@@ -1273,27 +1323,47 @@ const App: React.FC = () => {
                     if (newSettings.theme !== 'auto') {
                       setTheme(newSettings.theme);
                     }
+                    if (newSettings.mapSkin) {
+                      localStorage.setItem('myway_map_skin', newSettings.mapSkin);
+                    }
+                    if (newSettings.buildingScale) {
+                      localStorage.setItem('myway_building_scale', newSettings.buildingScale);
+                    }
+                    if (typeof newSettings.landmarkGlow === 'boolean') {
+                      localStorage.setItem('myway_landmark_glow', String(newSettings.landmarkGlow));
+                    }
                   }}
-                  onClose={() => setSettingsOpen(false)}
-                  onOpenOfflineMaps={() => setOfflineMapsOpen(true)}
+                  onClose={() => setActiveModal(null)}
+                  onOpenOfflineMaps={() => setActiveModal('offline_maps')}
                   theme={theme}
-                  userName={members[0]?.name || 'User'}
-                  userAvatar={members[0]?.avatar || ''}
-                  onUpgrade={() => setUpsellOpen(true)}
-                  isPremium={members[0]?.membershipTier === 'gold' || members[0]?.membershipTier === 'platinum'}
-                  userPlaces={userPlaces}
-                  onAddPlace={(place) => {
-                    if (user && profile?.familyCircleId) {
-                      addUserPlace(profile.familyCircleId, place, user.uid);
+                  userName={profile?.displayName || user?.displayName || 'User'}
+                  userAvatar={profile?.photoURL || user?.photoURL || ''}
+                  onUpgrade={() => setActiveModal('upsell')}
+                  isPremium={profile?.membershipTier === 'gold' || profile?.membershipTier === 'platinum'}
+                  onUpdateProfile={async (name, file) => {
+                    if (!user) return;
+                    try {
+                      let photoURL = profile?.photoURL || '';
+                      if (file) {
+                        const { uploadProfileImage } = await import('./services/authService');
+                        photoURL = await uploadProfileImage(user.uid, file);
+                      }
+                      
+                      const { updateUserProfile } = await import('./services/authService');
+                      await updateUserProfile(user.uid, { 
+                        displayName: name, 
+                        photoURL: photoURL 
+                      });
+                      
+                      showNotification('👤 Profile updated successfully!', 3000);
+                    } catch (err: any) {
+                      showNotification(`❌ Update failed: ${err.message}`, 5000);
+                      throw err;
                     }
                   }}
-                  onDeletePlace={(placeId) => {
-                    if (profile?.familyCircleId) {
-                      deleteUserPlace(profile.familyCircleId, placeId);
-                    }
+                  onSignOut={() => {
+                    logout();
                   }}
-                  onSignOut={logout}
-                  currentLocation={userLocation || undefined}
                   onManageSubscription={async () => {
                     try {
                       await goToBillingPortal();
@@ -1302,55 +1372,277 @@ const App: React.FC = () => {
                     }
                   }}
                   onShowPrivacy={() => window.open('https://myway-gps.com/privacy', '_blank')}
-                  onManageCircle={() => showNotification('🔄 Family Circle management is moving to its own dashboard soon!', 5000)}
+                  onManageCircle={async () => {
+                    try {
+                      if (user?.uid && currentCircle?.id) {
+                        const { leaveCircle } = await import('./services/authService');
+                        if (window.confirm('Are you sure you want to leave this circle?')) {
+                          await leaveCircle(currentCircle.id, user.uid);
+                          setCurrentCircle(null);
+                          showNotification('👋 Left circle', 3000);
+                        }
+                      }
+                    } catch (err: any) {
+                      showNotification(`❌ ${err.message}`, 5000);
+                    }
+                  }}
+                  onOpenKeyRecovery={() => setActiveModal('key_recovery')}
                 />
               </div>
             </OverlayManager>
           )}
 
           {/* Offline Maps Panel */}
-          {isOfflineMapsOpen && (
+          {activeModal === 'offline_maps' && (
             <OverlayManager>
-              <div className={`absolute z-[150] ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
                 <OfflineMapManager
                   currentBounds={mapBounds}
+                  userLocation={userLocation}
                   theme={theme}
-                  onClose={() => setOfflineMapsOpen(false)}
+                  onClose={() => setActiveModal(null)}
                 />
               </div>
             </OverlayManager>
+          )}
+
+          {/* Trip History Panel */}
+          {activeModal === 'trip_history' && (
+            <OverlayManager>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
+                <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
+                  <TripHistoryPanel
+                    onClose={() => {
+                      setActiveModal(null);
+                      setReviewedTrip(null);
+                    }}
+                    onBack={() => {
+                      setActiveModal('settings');
+                      setReviewedTrip(null);
+                    }}
+                    onReplayTrip={(trip) => {
+                      setReviewedTrip(trip);
+                      // Show trip path on map
+                      if (trip.path.length > 0) {
+                        const mid = trip.path[Math.floor(trip.path.length / 2)];
+                        setMapCenter([mid.lng, mid.lat]);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            </OverlayManager>
+          )}
+
+          {/* Circle Admin Panel */}
+          {activeModal === 'circle_admin' && (
+            <OverlayManager>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
+                <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
+                  <CircleAdminPanel
+                    members={members}
+                    circleOwnerId={currentCircle?.ownerId}
+                    currentUserId={user?.uid}
+                    onClose={() => setActiveModal(null)}
+                    onRemoveMember={(memberId) => {
+                      if (currentCircle?.id && user?.uid) {
+                        removeMember(currentCircle.id, user.uid, memberId).catch(err => {
+                          console.error('Failed to remove member and rotate key:', err);
+                        });
+                      }
+                      setMembers(prev => prev.filter(m => m.id !== memberId));
+                      showNotification('Member removed & security keys rotated', 3000);
+                    }}
+                    onUpdateRole={(memberId, role) => {
+                      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
+                    }}
+                    showNotification={showNotification}
+                    theme={theme}
+                  />
+                </div>
+              </div>
+            </OverlayManager>
+          )}
+
+          {/* Notification Center */}
+          {activeModal === 'notifications' && (
+            <OverlayManager>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[400px] max-h-[calc(100vh-120px)]'}`}>
+                <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
+                  <NotificationCenter
+                    onClose={() => setActiveModal(null)}
+                    onBack={() => setActiveModal('settings')}
+                    theme={theme}
+                  />
+                </div>
+              </div>
+            </OverlayManager>
+          )}
+
+          {/* Weekly Safety Report */}
+          {activeModal === 'weekly_report' && (
+            <OverlayManager>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
+                <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
+                  <WeeklySafetyReport
+                    onClose={() => setActiveModal(null)}
+                    onBack={() => setActiveModal('settings')}
+                    memberName={profile?.name || members[0]?.name}
+                    theme={theme}
+                  />
+                </div>
+              </div>
+            </OverlayManager>
+          )}
+
+          {/* Invite Share Modal */}
+          {activeModal === 'invite' && currentCircle?.inviteCode && (
+            <InviteShareModal
+              inviteCode={currentCircle.inviteCode}
+              circleName={currentCircle.name}
+              onClose={() => setActiveModal(null)}
+              onBack={() => setActiveModal('settings')}
+              showNotification={showNotification}
+              theme={theme}
+            />
+          )}
+
+          {/* Key Recovery Panel */}
+          {activeModal === 'key_recovery' && (
+            <OverlayManager>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
+                <div className={`rounded-3xl overflow-hidden shadow-2xl border ${
+                  theme === 'dark' ? 'bg-slate-900/95 border-white/10' : 'bg-white/95 border-slate-200'
+                }`}>
+                  <KeyRecoveryPanel
+                    uid={user?.uid || ''}
+                    onClose={() => setActiveModal(null)}
+                    onBack={() => setActiveModal('settings')}
+                    showNotification={showNotification}
+                    theme={theme}
+                  />
+                </div>
+              </div>
+            </OverlayManager>
+          )}
+
+          {/* My Maintenance Panel — Vehicle expenses, mileage, gig driver tracking */}
+          {activeModal === 'maintenance' && (
+            <MaintenancePanel
+              theme={theme}
+              onClose={() => setActiveModal(null)}
+            />
+          )}
+
+          {/* Battery Optimization Prompt (Android only, after onboarding) */}
+          {activeModal === 'battery_prompt' && (
+            <BatteryOptimizationPrompt
+              onDismiss={() => setActiveModal(null)}
+              theme={theme}
+            />
           )}
         </div>
       </div>
 
       {/* Mobile Bottom Sheet - replaces sidebar on mobile */}
       {
-        isMobile && !isDriveMode && (
+        isMobile && !isDriveMode && !activeModal && (
           <BottomSheet
+            isExpanded={isBottomSheetExpanded}
+            onExpandedChange={setIsBottomSheetExpanded}
             members={members}
             selectedId={selectedMemberId}
             onSelect={setSelectedMemberId}
             theme={theme}
+            hasCircle={!!profile?.familyCircleId}
+            inviteCode={currentCircle?.inviteCode}
+            onCreateCircle={createCircle}
+            onJoinCircle={joinCircle}
+            avgGasPrice={avgGasPrice}
+            showNotification={showNotification}
+            onOpenSettings={() => {
+              setIsBottomSheetExpanded(false);
+              setActiveModal('settings');
+            }}
+            onOpenTripHistory={() => {
+              setIsBottomSheetExpanded(false);
+              setActiveModal('trip_history');
+            }}
+            onOpenNotifications={() => {
+              setIsBottomSheetExpanded(false);
+              setActiveModal('notifications');
+            }}
+            onOpenWeeklyReport={() => {
+              setIsBottomSheetExpanded(false);
+              setActiveModal('weekly_report');
+            }}
+            onOpenInviteShare={() => {
+              setIsBottomSheetExpanded(false);
+              setActiveModal('invite');
+            }}
+            onOpenMaintenance={() => {
+              setIsBottomSheetExpanded(false);
+              setActiveModal('maintenance');
+            }}
+            onSOS={handleManualSOS}
+            activities={activities}
+            onResolveSOS={handleResolveSOS}
+            userPlaces={userPlaces}
+            selectedPlaceId={selectedPlace?.id}
+            onSelectPlace={(place) => {
+              setIsBottomSheetExpanded(false);
+              handleSelectPlace(place);
+            }}
+            onAddPlace={handleAddPlace}
+            onDeletePlace={handleDeletePlace}
+            onNavigatePlace={(place: Place) => handleStartNavigation(place.name, place.location)}
+            userLocation={userLocation}
           />
         )
       }
 
       {/* Mobile Place Detail Bottom Sheet */}
-      {isMobile && selectedPlace && !isDriveMode && (
+      {isMobile && selectedPlace && !isDriveMode && !activeModal && !isBottomSheetExpanded && (
         <OverlayManager>
-          <div className="absolute z-[150] inset-x-0 bottom-0 p-4">
+          <div className="absolute z-[150] inset-x-0 bottom-0 pointer-events-auto">
             <PlaceDetailPanel
-              place={selectedPlace}
-              onClose={() => setSelectedPlace(null)}
-              onNavigate={() => {
-                handleStartNavigation(selectedPlace.name);
+              place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
+              candidatePlaces={discoveredPlaces.filter(p => p.type === 'search_result')}
+              onSelectCandidate={handleSelectPlace}
+              onClose={() => {
                 setSelectedPlace(null);
+                setPreviewRoute(null);
               }}
+              onNavigate={(selectedRoute) => {
+                handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
+                setSelectedPlace(null);
+                setPreviewRoute(null);
+              }}
+              onSelectRoutePreview={(route) => setPreviewRoute(route)}
               theme={theme}
+              userLocation={userLocation}
+              isMobile={true}
+              onUpdateRadius={handleUpdatePlaceRadius}
+              isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
+              onAddPlace={handleAddPlace}
+              onDeletePlace={handleDeletePlace}
+              members={liveMembers}
+              currentUserId={user?.uid}
             />
           </div>
         </OverlayManager>
       )}
+
+      {/* Crash Detection Countdown Overlay */}
+      {crashCountdown !== null && (
+        <OverlayManager priority={10}>
+          <CrashCountdownOverlay
+            remainingSeconds={crashCountdown}
+            onDismiss={() => cancelCrashCountdown()}
+          />
+        </OverlayManager>
+      )}
+
       {!isMapReady && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#0f172a] text-white">
           <div className="flex flex-col items-center gap-4">
@@ -1359,16 +1651,25 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-    </div >
+    </div>
   );
 };
 
-import ErrorBoundary from './components/ErrorBoundary';
+const AppWrapper: React.FC = () => {
+    // Audit #5: Persistent theme state logic to pass to PermissionGuard
+    // during cold-start boot when profile might not be ready yet.
+    const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+        const saved = localStorage.getItem('myway_theme');
+        return (saved as 'light' | 'dark') || 'dark';
+    });
 
-const AppWrapper: React.FC = () => (
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>
-);
+    return (
+        <ErrorBoundary>
+            <PermissionGuard theme={theme}>
+                <App />
+            </PermissionGuard>
+        </ErrorBoundary>
+    );
+};
 
 export default AppWrapper;

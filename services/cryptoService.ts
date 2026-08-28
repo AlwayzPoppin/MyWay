@@ -11,6 +11,8 @@ export const setFamilyKey = (key: CryptoKey) => {
     familyKey = key;
 };
 
+export const getFamilyKey = (): CryptoKey | null => familyKey;
+
 // --- SECURE STORAGE (IndexedDB) ---
 const DB_NAME = 'MyWaySecurity';
 const STORE_NAME = 'E2EEKeys';
@@ -237,7 +239,34 @@ export const decryptMessage = async (text: string): Promise<string> => {
 };
 
 export const getFuzzyLocation = (lat: number, lng: number): { lat: number, lng: number } => {
-    // Audit Fix: 0.01 was ~1km which felt like "guessing". 
-    // 0.002 is ~200m, keeping privacy while feeling more steady.
+    // 0.002 is ~200m
     return { lat: lat + (Math.random() - 0.5) * 0.002, lng: lng + (Math.random() - 0.5) * 0.002 };
 };
+
+/**
+ * Generates a stable, deterministic neighborhood centroid (~1.5-2.4km offset)
+ * Uses spatial grid discretization so the center remains steady while inside the same neighborhood.
+ */
+export const getNeighborhoodCentroid = (lat: number, lng: number, seed?: string): { lat: number, lng: number } => {
+    // 0.02 degrees is approx ~2.2 km
+    const GRID_SIZE = 0.02;
+    const gridLat = Math.floor(lat / GRID_SIZE) * GRID_SIZE + (GRID_SIZE / 2);
+    const gridLng = Math.floor(lng / GRID_SIZE) * GRID_SIZE + (GRID_SIZE / 2);
+
+    // Deterministic pseudo-random offset based on grid cell and seed
+    let hash = 0;
+    const str = `${gridLat.toFixed(3)}_${gridLng.toFixed(3)}_${seed || 'myway'}`;
+    for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+    }
+
+    const pseudoRandom1 = ((Math.abs(hash) % 1000) / 1000) - 0.5;
+    const pseudoRandom2 = ((Math.abs(hash >> 3) % 1000) / 1000) - 0.5;
+
+    return {
+        lat: gridLat + pseudoRandom1 * (GRID_SIZE * 0.4),
+        lng: gridLng + pseudoRandom2 * (GRID_SIZE * 0.4)
+    };
+};
+

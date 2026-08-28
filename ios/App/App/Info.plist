@@ -47,5 +47,16 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>MyWay requires location access to display your position and share real-time updates with your circle.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>MyWay requires background location access to provide continuous safety tracking, geofence alerts, and emergency SOS even when the app is in the background.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>MyWay requires background location access to keep your circle protected with real-time updates and geofence alerts.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>

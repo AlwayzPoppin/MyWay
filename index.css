@@ -1,15 +1,31 @@
 @import "tailwindcss";
 
 /* Map Attribution Polish */
+/* Map Attribution Polish & Positioning */
 .maplibregl-ctrl-bottom-right {
     bottom: 100px !important;
     right: 12px !important;
-    background: rgba(15, 23, 42, 0.6);
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    padding: 2px 8px;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 0 !important;
     transition: all 0.3s ease;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-end !important;
+    gap: 8px !important;
+    pointer-events: none;
+}
+
+@media (max-width: 768px) {
+    .maplibregl-ctrl-bottom-right {
+        bottom: 144px !important; /* bottom-36 (36 * 4px = 144px) */
+        right: 16px !important; /* right-4 (4 * 4px = 16px) */
+        left: auto !important;
+        width: auto !important;
+    }
 }
 
 .maplibregl-ctrl-attrib a {
@@ -22,20 +38,65 @@
     color: #fbbf24 !important;
 }
 
-/* Leaflet Attribution Polish */
-.leaflet-control-attribution {
-    background: rgba(15, 23, 42, 0.6) !important;
-    backdrop-filter: blur(8px);
-    margin-bottom: 100px !important;
-    margin-right: 12px !important;
-    border-radius: 8px;
-    padding: 2px 8px !important;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.7) !important;
+/* Fix white box on dark theme — style the attribution toggle button */
+.maplibregl-ctrl-attrib-button {
+    background-color: rgba(15, 23, 42, 0.6) !important;
+    filter: invert(1);
 }
 
-.leaflet-control-attribution a {
-    color: #fbbf24 !important;
+/* Glassmorphic Vertical Zoom/Compass Pill */
+.maplibregl-ctrl-group {
+    background: rgba(15, 23, 42, 0.8) !important; /* bg-slate-900/80 */
+    backdrop-filter: blur(12px) !important; /* backdrop-blur-md */
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 20px !important; /* rounded-2xl */
+    padding: 6px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important; /* gap-2 */
+    width: 44px !important; /* w-11 equivalent tightly wrapping buttons */
+    max-width: 44px !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37) !important;
+    pointer-events: auto;
+}
+
+.maplibregl-ctrl-group button {
+    background: transparent !important;
+    border: none !important;
+    width: 32px !important;
+    height: 32px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 50% !important;
+    transition: all 0.2s ease !important;
+}
+
+.maplibregl-ctrl-group button:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+    filter: invert(1) !important; /* Make sure icons are white/visible */
+}
+
+/* Attribution styling with own background to prevent stretching */
+.maplibregl-ctrl-attrib {
+    background: rgba(15, 23, 42, 0.6) !important;
+    backdrop-filter: blur(8px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 8px !important;
+    padding: 2px 8px !important;
+    pointer-events: auto;
+}
+
+/* Attribution compact text */
+.maplibregl-ctrl-attrib.maplibregl-compact {
+    background: rgba(15, 23, 42, 0.6) !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Premium Vibe Utilities */
@@ -84,4 +145,20 @@
 
 .animate-pulse-subtle {
     animation: pulse-subtle 3s infinite ease-in-out;
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.3);
+    border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.5);
 }

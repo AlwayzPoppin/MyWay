@@ -7,6 +7,7 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 import { getFirestore } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
     apiKey: (import.meta as any).env.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
@@ -33,6 +34,8 @@ export const db = getFirestore(app);
 
 // Cloud Functions
 export const functions = getFunctions(app);
+// Storage
+export const storage = getStorage(app);
 
 // Connect to emulator in development
 if ((import.meta as any).env.DEV && (import.meta as any).env.VITE_USE_FUNCTIONS_EMULATOR === 'true') {

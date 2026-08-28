@@ -87,7 +87,7 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
                             ← Back
                         </button>
                         <h3 className={`text-lg font-black tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Create Family</h3>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">What should we call your circle?</p>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Name your MyFamily circle</p>
                     </div>
 
                     <input

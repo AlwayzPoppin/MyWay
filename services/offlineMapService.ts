@@ -17,6 +17,18 @@ interface DownloadArea {
     downloadedAt: Date;
 }
 
+// Calculate 80km radius bounding box around coordinates
+export function computeRadiusBounds(center: { lat: number; lng: number }, radiusKm: number = 80): { north: number; south: number; east: number; west: number } {
+    const latOffset = radiusKm / 111;
+    const lngOffset = radiusKm / (111 * Math.cos(center.lat * Math.PI / 180));
+    return {
+        north: Math.min(85, center.lat + latOffset),
+        south: Math.max(-85, center.lat - latOffset),
+        east: Math.min(180, center.lng + lngOffset),
+        west: Math.max(-180, center.lng - lngOffset)
+    };
+}
+
 class OfflineMapService {
     private swRegistration: ServiceWorkerRegistration | null = null;
     private downloadedAreas: DownloadArea[] = [];
@@ -60,7 +72,11 @@ class OfflineMapService {
         zoomMax: number,
         style: 'light_all' | 'dark_all' = 'light_all'
     ): string[] {
-        const urls: string[] = [];
+        const urls: string[] = [
+            'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+            'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json'
+        ];
         const subdomains = ['a', 'b', 'c', 'd'];
 
         for (let z = zoomMin; z <= zoomMax; z++) {
@@ -70,8 +86,11 @@ class OfflineMapService {
             for (let x = topLeft.x; x <= bottomRight.x; x++) {
                 for (let y = topLeft.y; y <= bottomRight.y; y++) {
                     const subdomain = subdomains[(x + y) % subdomains.length];
-                    const url = `https://${subdomain}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}@2x.png`;
-                    urls.push(url);
+                    urls.push(`https://${subdomain}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}@2x.png`);
+                    // Also cache dark tiles if downloading light
+                    if (style === 'light_all') {
+                        urls.push(`https://${subdomain}.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}@2x.png`);
+                    }
                 }
             }
         }
@@ -105,13 +124,24 @@ class OfflineMapService {
         onProgress?: (cached: number, total: number) => void
     ): Promise<DownloadArea> {
         if (!this.swRegistration?.active) {
+            await this.init();
+            if (!this.swRegistration?.active && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+                try {
+                    this.swRegistration = await navigator.serviceWorker.ready;
+                } catch (e) {
+                    console.warn('[OfflineMapService] Service worker ready check failed:', e);
+                }
+            }
+        }
+        if (!this.swRegistration?.active) {
             throw new Error('Service Worker not ready');
         }
 
         const currentSize = await this.getCacheSize();
         const estimated = this.estimateTileCount(bounds, zoomMin, zoomMax);
-        // SYNC: This value MUST match MAX_TILES in public/sw.js (line ~78)
-        const MAX_TILES = 10000;
+        // SYNC: This value MUST match MAX_TILES in public/sw.js (line ~133)
+        // Refinement: Capped to 15K (~350-450MB) to respect iOS Safari & mobile browser cache limits
+        const MAX_TILES = 15000;
 
         if (currentSize + estimated > MAX_TILES) {
             console.warn(`[OfflineMapService] Download would exceed limit: ${currentSize + estimated} / ${MAX_TILES}`);
