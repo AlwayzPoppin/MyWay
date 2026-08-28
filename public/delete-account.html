@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delete Account & Data - MyWay GPS</title>
+    <style>
+        :root {
+            --primary: #ef4444;
+            --primary-dark: #dc2626;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            padding: 48px;
+            border-radius: 24px;
+            border: 1px solid var(--border);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+        .header {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 24px;
+            margin-bottom: 32px;
+        }
+        .logo-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--primary);
+            padding: 6px 16px;
+            border-radius: 9999px;
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        h1 {
+            font-size: 30px;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 8px;
+        }
+        p {
+            color: var(--text-muted);
+            font-size: 15px;
+            margin-bottom: 16px;
+        }
+        h2 {
+            font-size: 20px;
+            color: #ffffff;
+            margin-top: 32px;
+            margin-bottom: 12px;
+        }
+        .step-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .step-title {
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        ul {
+            padding-left: 24px;
+            color: var(--text-muted);
+            font-size: 15px;
+            margin-bottom: 16px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        strong {
+            color: #ffffff;
+        }
+        .btn-email {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #6366f1;
+            color: #ffffff;
+            padding: 12px 24px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            margin-top: 8px;
+            transition: opacity 0.2s;
+        }
+        .btn-email:hover {
+            opacity: 0.9;
+        }
+        .footer {
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo-badge">🗑️ MyWay GPS</div>
+            <h1>Account & Data Deletion</h1>
+            <p>We respect your privacy and provide simple, transparent methods to permanently delete your MyWay account and all associated personal data.</p>
+        </div>
+
+        <h2>How to Delete Your Account and Data</h2>
+
+        <div class="step-card">
+            <div class="step-title">📱 Method 1: Instant In-App Deletion (Recommended)</div>
+            <p>You can delete your account immediately from inside the MyWay application:</p>
+            <ul>
+                <li>Open the <strong>MyWay app</strong>.</li>
+                <li>Tap the <strong>⚙️ Settings</strong> icon in the top header.</li>
+                <li>Scroll down to the <strong>Privacy & Security</strong> section.</li>
+                <li>Tap <strong>Delete Account & Data</strong> and confirm.</li>
+            </ul>
+            <p>Your account credentials, circle memberships, and location traces are immediately deleted from active servers.</p>
+        </div>
+
+        <div class="step-card">
+            <div class="step-title">✉️ Method 2: Web & Email Deletion Request</div>
+            <p>If you no longer have access to the app, you can submit a deletion request via email:</p>
+            <p>Send an email from your registered MyWay account email address to <strong>support@mywaygps.com</strong> with the subject line <code>Delete My Account</code>.</p>
+            <a href="mailto:support@mywaygps.com?subject=Delete%20My%20Account%20Request" class="btn-email">
+                📧 Submit Deletion Request via Email
+            </a>
+            <p style="margin-top: 14px; font-size: 13px;">Our privacy team will process your request and permanently wipe your account and all associated records within 30 days.</p>
+        </div>
+
+        <h2>What Data Is Deleted?</h2>
+        <p>When an account deletion is executed, the following data categories are permanently purged:</p>
+        <ul>
+            <li><strong>Account Profile:</strong> Email address, display name, profile photo, and Firebase User ID (UID).</li>
+            <li><strong>Location Data:</strong> All real-time and historical GPS location logs, route records, and speed data.</li>
+            <li><strong>Circle Data:</strong> Private family circle memberships, circle admin roles, and custom geofence zones.</li>
+            <li><strong>Messages & Alerts:</strong> In-app circle chat history, check-in pings, and emergency SOS event records.</li>
+            <li><strong>Device Tokens:</strong> Push notification tokens (FCM) and device analytics.</li>
+        </ul>
+
+        <h2>Data Retention Policy</h2>
+        <p>No personal or location information is retained following account deletion. Any aggregated analytics that cannot be linked back to an individual user are dissociated and anonymized.</p>
+
+        <div class="footer">
+            &copy; 2026 MyWay GPS • <a href="privacy.html" style="color: #6366f1; text-decoration: none;">Privacy Policy</a> • Support: <a href="mailto:support@mywaygps.com" style="color: #6366f1; text-decoration: none;">support@mywaygps.com</a>
+        </div>
+    </div>
+</body>
+</html>
