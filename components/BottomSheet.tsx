@@ -275,6 +275,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                     {/* Header Bar */}
                     <div className="flex items-center justify-between pb-3 pt-1 border-b border-white/5 shrink-0">
                         <div className="flex items-center gap-2">
+                            <img
+                                src="/logo.png"
+                                alt="My Way Logo"
+                                className="w-6 h-6 rounded-lg object-contain shadow-sm"
+                            />
                             <h2 className={`text-base font-black tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
                                 My Way
                             </h2>

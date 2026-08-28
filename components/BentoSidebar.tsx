@@ -127,9 +127,16 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                 {!isCollapsed && (
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between px-2 animate-in fade-in slide-in-from-left-2">
-                            <h2 className={`text-lg font-black tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                My Way
-                            </h2>
+                            <div className="flex items-center gap-2.5">
+                                <img
+                                    src="/logo.png"
+                                    alt="My Way Logo"
+                                    className="w-8 h-8 rounded-xl object-contain shadow-md drop-shadow transition-transform hover:scale-105"
+                                />
+                                <h2 className={`text-lg font-black tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                    My Way
+                                </h2>
+                            </div>
                             {hasCircle && (
                                 <button
                                     onClick={() => {
