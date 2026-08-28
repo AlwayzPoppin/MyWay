@@ -32,7 +32,7 @@ const BatteryOptimizationPrompt: React.FC<BatteryOptimizationPromptProps> = ({ o
         try {
             // This intent opens the battery optimization exclusion screen
             // On native, this would use the App plugin to launch the intent
-            window.open('intent:#Intent;action=android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS;data=package:com.myway.app;end', '_system');
+            window.open('intent:#Intent;action=android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS;data=package:com.mywaygps.app;end', '_system');
         } catch {
             // Fallback: open general battery settings
             window.open('intent:#Intent;action=android.settings.BATTERY_SAVER_SETTINGS;end', '_system');

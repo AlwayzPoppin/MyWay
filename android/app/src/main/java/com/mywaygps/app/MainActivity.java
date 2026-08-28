@@ -1,4 +1,4 @@
-package com.myway.app;
+package com.mywaygps.app;
 
 import com.getcapacitor.BridgeActivity;
 

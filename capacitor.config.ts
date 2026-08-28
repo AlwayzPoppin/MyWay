@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.myway.app',
+  appId: 'com.mywaygps.app',
   appName: 'MyWay',
   webDir: 'dist',
   server: {
