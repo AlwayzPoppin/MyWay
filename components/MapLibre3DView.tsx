@@ -400,6 +400,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                                 0
                             ],
                             'fill-extrusion-opacity': opacityExpr
+                        }
                     }, labelLayerId);
                 }
             }
