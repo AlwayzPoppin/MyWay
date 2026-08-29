@@ -258,16 +258,28 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             };
         });
 
-        // User interaction tracking (Drag, Touch, Wheel) to enable free-look mode during navigation
-        const handleUserPan = () => {
+        // User interaction tracking (Drag, Touch, Wheel, Move, Zoom, Pitch, Rotate) to enable free-look mode during navigation
+        const handleUserPan = (e?: any) => {
             onUserInteraction?.();
             if (isNavigating) {
                 onCameraFreeChange?.(true);
             }
         };
+        mapInstance.on('movestart', (e: any) => {
+            if (e.originalEvent) handleUserPan(e);
+        });
         mapInstance.on('dragstart', handleUserPan);
         mapInstance.on('touchstart', handleUserPan);
         mapInstance.on('wheel', handleUserPan);
+        mapInstance.on('zoomstart', (e: any) => {
+            if (e.originalEvent) handleUserPan(e);
+        });
+        mapInstance.on('rotatestart', (e: any) => {
+            if (e.originalEvent) handleUserPan(e);
+        });
+        mapInstance.on('pitchstart', (e: any) => {
+            if (e.originalEvent) handleUserPan(e);
+        });
 
         // --- WebGL Context Loss Handlers ---
         const canvas = mapInstance.getCanvas();
