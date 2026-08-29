@@ -91,17 +91,46 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Live autocomplete suggestions query (250ms debounce)
+  // Live autocomplete suggestions query (250ms debounce) + Instant Saved Places Search
   useEffect(() => {
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
 
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
+    const trimmed = query.trim().toLowerCase();
+    if (trimmed.length < 1) {
       setSuggestions([]);
       setIsLoadingSuggestions(false);
       if (activeTab === 'suggestions') setActiveTab('recent');
+      return;
+    }
+
+    // Instant matching against user saved places (0ms latency)
+    const isHomeQuery = trimmed === 'home' || trimmed === 'homes' || trimmed === 'house' || trimmed === 'my home';
+    const isWorkQuery = trimmed === 'work' || trimmed === 'office' || trimmed === 'job' || trimmed === 'my work';
+    const isSchoolQuery = trimmed === 'school' || trimmed === 'schools' || trimmed === 'class' || trimmed === 'college' || trimmed === 'campus';
+    const isGymQuery = trimmed === 'gym' || trimmed === 'fitness' || trimmed === 'workout';
+
+    const matchingSaved = userPlaces.filter(p => {
+      const nameLower = (p.name || '').toLowerCase();
+      const descLower = (p.description || '').toLowerCase();
+      const typeLower = (p.type || '').toLowerCase();
+
+      if (nameLower.includes(trimmed) || descLower.includes(trimmed)) return true;
+      if (isHomeQuery && (typeLower === 'home' || nameLower.includes('home'))) return true;
+      if (isWorkQuery && (typeLower === 'work' || nameLower.includes('work') || nameLower.includes('office'))) return true;
+      if (isSchoolQuery && (typeLower === 'school' || nameLower.includes('school'))) return true;
+      if (isGymQuery && (typeLower === 'gym' || nameLower.includes('gym'))) return true;
+      return false;
+    });
+
+    if (matchingSaved.length > 0) {
+      setSuggestions(matchingSaved);
+      setActiveTab('suggestions');
+    }
+
+    if (trimmed.length < 2) {
+      setIsLoadingSuggestions(false);
       return;
     }
 
@@ -110,8 +139,18 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       try {
         const loc = userLocation || { lat: 35.0921, lng: -78.9823 };
         const results = await searchPlacesText(trimmed, loc);
-        setSuggestions(results);
-        if (results.length > 0) {
+        
+        // Merge matching saved places at the top of results
+        const combined = [
+          ...matchingSaved,
+          ...results.filter(r => !matchingSaved.some(s => 
+            s.name.toLowerCase() === r.name.toLowerCase() ||
+            (s.location && r.location && Math.abs(s.location.lat - r.location.lat) < 0.0005 && Math.abs(s.location.lng - r.location.lng) < 0.0005)
+          ))
+        ];
+
+        setSuggestions(combined);
+        if (combined.length > 0) {
           setActiveTab('suggestions');
         }
       } catch (err) {
@@ -124,7 +163,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
-  }, [query, userLocation]);
+  }, [query, userLocation, userPlaces]);
 
   const filteredHistory = useMemo(() => {
     if (!query.trim()) return history.slice(0, 8);
@@ -500,6 +539,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                 ) : suggestions.length > 0 ? (
                   suggestions.map((place) => {
                     const distMiles = getDistanceMiles(userLocation, place.location);
+                    const isSavedPlace = userPlaces.some(sp => sp.id === place.id || sp.name.toLowerCase() === place.name.toLowerCase());
                     
                     // Extract branch/street differentiator (e.g. "5009 Santa Fe Drive") from description
                     let streetBadge = '';
@@ -515,18 +555,27 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                         key={place.id}
                         onClick={() => handleSelectSuggestion(place)}
                         className={`group flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl cursor-pointer transition-all hover:scale-[1.01] active:scale-98 border
-                          ${theme === 'dark'
-                            ? 'bg-white/5 hover:bg-indigo-600/15 border-white/5 hover:border-indigo-500/30'
-                            : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200'}`}
+                          ${isSavedPlace
+                            ? (theme === 'dark' ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 hover:border-amber-500/50 shadow-md shadow-amber-500/5' : 'bg-amber-50 hover:bg-amber-100/70 border-amber-300 hover:border-amber-400')
+                            : (theme === 'dark' ? 'bg-white/5 hover:bg-indigo-600/15 border-white/5 hover:border-indigo-500/30' : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200')}`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <BrandIcon placeName={place.name} defaultIcon={place.icon || '📍'} size="md" />
+                          <BrandIcon placeName={place.name} defaultIcon={place.icon || (isSavedPlace ? '⭐' : '📍')} size="md" />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                              <h4 className={`text-xs sm:text-sm font-black truncate ${isSavedPlace ? (theme === 'dark' ? 'text-amber-200' : 'text-amber-950') : (theme === 'dark' ? 'text-white' : 'text-slate-900')}`}>
                                 {place.name}
                               </h4>
-                              {streetBadge && (
+                              {isSavedPlace && (
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1 ${
+                                  theme === 'dark'
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                                }`}>
+                                  ⭐ Saved {place.type === 'home' ? 'Home' : place.type === 'work' ? 'Work' : place.type === 'school' ? 'School' : place.type === 'gym' ? 'Gym' : 'Place'}
+                                </span>
+                              )}
+                              {streetBadge && !isSavedPlace && (
                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
                                   theme === 'dark'
                                     ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
@@ -555,7 +604,11 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                         <button
                           type="button"
                           onClick={(e) => handleQuickNavigateSuggestion(e, place)}
-                          className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] sm:text-xs font-black flex items-center gap-1 shadow-md transition-all active:scale-95 shrink-0"
+                          className={`px-2.5 py-1.5 rounded-xl text-white text-[10px] sm:text-xs font-black flex items-center gap-1 shadow-md transition-all active:scale-95 shrink-0 ${
+                            isSavedPlace
+                              ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-500/20'
+                              : 'bg-indigo-600 hover:bg-indigo-500'
+                          }`}
                           title="Navigate to this address"
                         >
                           <span>🚀</span>
