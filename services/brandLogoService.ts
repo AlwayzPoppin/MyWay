@@ -365,12 +365,19 @@ export const BRAND_REGISTRY: Record<string, BrandMeta> = {
  */
 export function getBrandMeta(placeNameOrQuery?: string): BrandMeta | null {
     if (!placeNameOrQuery) return null;
-    const clean = placeNameOrQuery.toLowerCase().replace(/['s]/g, '').trim();
+    const clean = placeNameOrQuery.toLowerCase().replace(/['’s]/g, '').trim();
+
+    // Do not brand-match personal/custom places like "Home", "Work", "School", "Gym"
+    const genericSavedNames = ['home', 'my home', 'house', 'my house', 'work', 'office', 'my work', 'school', 'gym', 'church'];
+    if (genericSavedNames.includes(clean)) {
+        return null;
+    }
 
     for (const brand of Object.values(BRAND_REGISTRY)) {
         for (const kw of brand.keywords) {
-            const cleanKw = kw.toLowerCase().replace(/['s]/g, '').trim();
-            if (clean.includes(cleanKw) || cleanKw.includes(clean)) {
+            const cleanKw = kw.toLowerCase().replace(/['’s]/g, '').trim();
+            // The place name must actually contain the specific brand keyword phrase
+            if (clean.includes(cleanKw)) {
                 return brand;
             }
         }

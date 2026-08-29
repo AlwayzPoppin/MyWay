@@ -493,37 +493,19 @@ export async function fetchRouteOptions(
 
     const parsedRoutes: NavigationRoute[] = [];
 
-    // 1. Try Valhalla with anti-alley and front customer driveway costing
-    try {
-        const valhallaRoute = await fetchRouteFromValhalla(start, endName, endLocation);
-        if (valhallaRoute && valhallaRoute.steps && valhallaRoute.steps.length > 0) {
-            valhallaRoute.routeType = 'fastest';
-            valhallaRoute.routeLabel = 'Fastest Route ⚡';
-            valhallaRoute.savingsLabel = 'Front Entrance Direct';
-            parsedRoutes.push(valhallaRoute);
-        }
-    } catch (vErr) {
-        console.warn('[Routing] Valhalla initial check notice:', vErr);
-    }
-
     for (let i = 0; i < ROUTING_PROVIDERS.length; i++) {
         if (isOffline()) break;
         const provider = ROUTING_PROVIDERS[i];
         try {
-            // 2. Direct standard OSRM request for alternative paths
+            // 1. Direct standard OSRM request
             const data = await fetchRouteFromProvider(provider, start, endLocation, true);
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 data.routes.forEach((r, idx) => {
-                    const parsed = parseOSRMRoute(r, endName, endLocation, start, idx);
-                    // Avoid adding duplicate of Valhalla primary route
-                    const isDup = parsedRoutes.some(p => Math.abs((p.distanceMeters || 0) - (parsed.distanceMeters || 0)) < 200 && Math.abs((p.durationMinutes || 0) - (parsed.durationMinutes || 0)) < 2);
-                    if (!isDup) {
-                        parsedRoutes.push(parsed);
-                    }
+                    parsedRoutes.push(parseOSRMRoute(r, endName, endLocation, start, idx));
                 });
             }
 
-            // 3. Multi-corridor discovery if < 2 routes returned or user wants to avoid tolls
+            // 2. Multi-corridor discovery if < 2 routes returned or user wants to avoid tolls
             if (parsedRoutes.length < 3 && straightLineDist > 25000) {
                 const corridors = generateAlternativeCorridors(start, endLocation);
                 for (const corridor of corridors) {
@@ -689,21 +671,21 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
 
         const jsonPayload = JSON.stringify({
             locations: [
-                { lat: start.lat, lon: start.lng, radius: 75, type: 'break', search_cutoff: 150 },
-                { lat: endLocation.lat, lon: endLocation.lng, radius: 100, type: 'break', search_cutoff: 150 }
+                { lat: start.lat, lon: start.lng, radius: 100, type: 'break', search_cutoff: 250 },
+                { lat: endLocation.lat, lon: endLocation.lng, radius: 150, type: 'break', search_cutoff: 350 }
             ],
             costing: 'auto',
             costing_options: {
                 auto: {
                     use_highways: 1.0,
                     use_tolls: 1.0,
-                    service_factor: 2.5, // Strongly prioritize main avenues and front streets
-                    service_penalty: 45, // Heavily penalize cutting through rear service corridors and loading docks
-                    alley_penalty: 50, // Heavily penalize back alleys
-                    driveway_penalty: 5, // Allow natural customer front driveways
-                    parking_aisle_penalty: 10, // Allow parking entrance at destination
-                    destination_only_penalty: 0,
-                    shortest: false // Fastest front road route
+                    service_factor: 1.6, // Prioritize main avenues (Yadkin Rd, Santa Fe Dr) during cruising
+                    service_penalty: 15, // Deter cutting through intermediate parking lots & alleys
+                    parking_aisle_penalty: 20, // Only enter parking aisle at destination, not as a shortcut
+                    driveway_penalty: 10,
+                    destination_only_penalty: 0, // Allow entering target business customer parking/drive-in
+                    alley_penalty: 15,
+                    shortest: false // Standard fastest road route
                 }
             },
             directions_options: { units: 'miles' }
