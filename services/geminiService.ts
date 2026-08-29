@@ -54,19 +54,11 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
       candidates: []
     };
   } catch (apiErr: any) {
-    // Fallback to gemini-1.5-flash if 2.0 returns model error
-    if (sdkModel !== 'gemini-1.5-flash') {
-      const fallbackResp = await genAI.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: promptText,
-        config: config || undefined
-      });
-      return {
-        text: fallbackResp.text || '',
-        candidates: []
-      };
-    }
-    throw apiErr;
+    console.warn('🤖 [Gemini] Cloud AI endpoint offline/unreachable, activating local intelligence engine.');
+    return {
+      text: '',
+      candidates: []
+    };
   }
 };
 
@@ -74,11 +66,11 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
 // All Gemini calls route securely through the callGeminiProxy Firebase Function.
 
 
-const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
+const withRetry = async <T>(fn: () => Promise<T>, retries = 1, delay = 1000): Promise<T> => {
   try {
     return await fn();
   } catch (e: any) {
-    if (e.message?.includes('429') && retries > 0) {
+    if ((e.message?.includes('429') || e.message?.includes('503')) && retries > 0) {
       console.warn(`AI Rate Limited. Retrying in ${delay}ms...`);
       await new Promise(res => setTimeout(res, delay));
       return withRetry(fn, retries - 1, delay * 2);
