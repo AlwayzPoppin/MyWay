@@ -763,30 +763,30 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         {/* Map Skin Selector */}
                         <div>
                             <h4 className={`text-xs font-black mb-2 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Map Skin</h4>
-                            <div className="grid grid-cols-3 gap-2">
-                                {[
-                                    { id: 'default', label: 'Default', icon: '🗺️' },
-                                    { id: 'midnight', label: 'Midnight', icon: '🌌' },
-                                    { id: 'cyberpunk', label: 'Cyberpunk', icon: '🌆' },
-                                    { id: 'sunset', label: 'Sunset', icon: '🌇' },
-                                    { id: 'arctic', label: 'Arctic', icon: '❄️' },
-                                    { id: 'forest', label: 'Forest', icon: '🌲' }
-                                ].map(skin => (
-                                    <button
-                                        key={skin.id}
-                                        onClick={() => updateSetting('mapSkin', skin.id as MapSkinId)}
-                                        className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                                            localSettings.mapSkin === skin.id
-                                                ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
-                                                : theme === 'dark'
-                                                    ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
-                                        }`}
-                                    >
-                                        <span>{skin.icon}</span>
-                                        <span>{skin.label}</span>
-                                    </button>
-                                ))}
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    onClick={() => updateSetting('mapSkin', 'default')}
+                                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                                        localSettings.mapSkin === 'default'
+                                            ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
+                                            : theme === 'dark'
+                                                ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    <span>🗺️</span>
+                                    <span>Default</span>
+                                </button>
+                                <div
+                                    className={`py-2.5 px-3 rounded-xl border border-dashed text-xs font-bold flex items-center justify-center gap-1.5 select-none ${
+                                        theme === 'dark'
+                                            ? 'bg-white/5 border-white/20 text-slate-400'
+                                            : 'bg-slate-50 border-slate-300 text-slate-500'
+                                    }`}
+                                >
+                                    <span className="text-amber-400">✨</span>
+                                    <span>More coming soon</span>
+                                </div>
                             </div>
                         </div>
                     </div>
