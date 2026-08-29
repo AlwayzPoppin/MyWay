@@ -333,26 +333,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const baseHeight = Math.round(14 * heightMultiplier);
                 const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
 
-                // 3D Architectural Lighting & Ambient Landmark Glow
+                // 3D Architectural Lighting & Ambient Landmark Glow (Muted Modern Aesthetic)
                 try {
                     map.current.setLight({
                         anchor: 'viewport',
-                        color: landmarkGlow
-                            ? (theme === 'dark' ? '#93c5fd' : '#ffffff')
-                            : (theme === 'dark' ? '#64748b' : '#f1f5f9'),
-                        intensity: landmarkGlow
-                            ? (theme === 'dark' ? 0.55 : 0.7)
-                            : (theme === 'dark' ? 0.35 : 0.5),
-                        position: [1.5, 90, 55]
+                        color: theme === 'dark' ? '#f1f5f9' : '#ffffff',
+                        intensity: theme === 'dark' ? 0.28 : 0.45,
+                        position: [1.15, 75, 45]
                     });
                 } catch (e) {
                     console.warn('[MapLibre] setLight:', e);
                 }
 
+                // Sophisticated muted graphite palette for 3D buildings
                 const extrusionColor = [
                     'interpolate', ['linear'], ['zoom'],
-                    14, theme === 'dark' ? (landmarkGlow ? '#202e48' : '#1e293b') : '#e2e8f0',
-                    16, theme === 'dark' ? (landmarkGlow ? '#2b3f66' : '#27354f') : '#cbd5e1'
+                    14, theme === 'dark' ? '#1c2128' : '#e2e8f0',
+                    16, theme === 'dark' ? '#242b35' : '#cbd5e1'
                 ];
 
                 const opacityExpr: any = [
@@ -810,8 +807,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     'type': 'fill',
                     'source': sourceId,
                     'paint': {
-                        'fill-color': '#4f46e5',
-                        'fill-opacity': 0.12
+                        'fill-color': theme === 'dark' ? '#64748b' : '#4f46e5',
+                        'fill-opacity': theme === 'dark' ? 0.05 : 0.10
                     }
                 });
 
@@ -820,10 +817,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     'type': 'line',
                     'source': sourceId,
                     'paint': {
-                        'line-color': '#6366f1',
-                        'line-width': 1.5,
-                        'line-opacity': 0.4,
-                        'line-dasharray': [3, 2]
+                        'line-color': theme === 'dark' ? '#94a3b8' : '#6366f1',
+                        'line-width': 1.2,
+                        'line-opacity': theme === 'dark' ? 0.22 : 0.35,
+                        'line-dasharray': [3, 3]
                     }
                 });
             }

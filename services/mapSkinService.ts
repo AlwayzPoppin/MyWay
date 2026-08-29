@@ -69,16 +69,16 @@ export const TERRAIN_STYLE = {
 export const MAP_SKINS: MapSkin[] = [
     {
         id: 'default',
-        name: 'Standard',
-        description: 'Clean, modern map style',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-        preview: '🗺️',
+        name: 'Muted Slate',
+        description: 'Sophisticated matte slate & graphite dark aesthetic',
+        styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        preview: '🌑',
         isPremium: false
     },
     {
         id: 'midnight',
-        name: 'Midnight',
-        description: 'Deep dark mode with neon accents',
+        name: 'Midnight Onyx',
+        description: 'Deep dark mode with stealth contours',
         styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
         preview: '🌙',
         isPremium: false
@@ -144,9 +144,19 @@ export const applySkinOverrides = (
 
     // Custom paint overrides based on skin
     const overrides: Record<MapSkinId, Record<string, any>> = {
-        default: {},
+        default: {
+            'background': { 'background-color': '#111418' },
+            'water': { 'fill-color': '#131922' },
+            'park': { 'fill-color': '#161e18', 'fill-opacity': 0.8 },
+            'landuse': { 'fill-color': '#14181f' },
+            'road': { 'line-color': '#2a303c' },
+            'tunnel': { 'line-color': '#1e232c' },
+            'bridge': { 'line-color': '#333b49' },
+            'building': { 'fill-color': '#1c2128', 'fill-extrusion-color': '#202630' }
+        },
         midnight: {
-            'building': { 'fill-extrusion-color': '#1a1a2e', 'fill-extrusion-opacity': 0.95 },
+            'building': { 'fill-extrusion-color': '#161920', 'fill-extrusion-opacity': 0.95 },
+            'water': { 'fill-color': '#0f141d' }
         },
         cyberpunk: {
             'building': { 'fill-extrusion-color': '#0f0f23', 'fill-extrusion-opacity': 0.95 },
@@ -167,20 +177,30 @@ export const applySkinOverrides = (
     if (!skinOverrides) return;
 
     // Apply overrides after style loads
-    map.once('style.load', () => {
-        Object.entries(skinOverrides).forEach(([layerPrefix, props]) => {
-            const layers = map.getStyle().layers || [];
-            layers.forEach((layer: any) => {
-                if (layer.id.toLowerCase().includes(layerPrefix)) {
-                    Object.entries(props).forEach(([prop, value]) => {
-                        try {
-                            map.setPaintProperty(layer.id, prop, value);
-                        } catch (e) {
-                            // Layer might not support this property
-                        }
-                    });
-                }
+    const applyToMap = () => {
+        try {
+            const layers = map.getStyle()?.layers || [];
+            Object.entries(skinOverrides).forEach(([layerPrefix, props]) => {
+                layers.forEach((layer: any) => {
+                    if (layer.id.toLowerCase().includes(layerPrefix)) {
+                        Object.entries(props).forEach(([prop, value]) => {
+                            try {
+                                map.setPaintProperty(layer.id, prop, value);
+                            } catch {
+                                // Ignore non-applicable properties for specific layer types
+                            }
+                        });
+                    }
+                });
             });
-        });
-    });
+        } catch (e) {
+            console.warn('[applySkinOverrides] Notice:', e);
+        }
+    };
+
+    if (map.isStyleLoaded()) {
+        applyToMap();
+    } else {
+        map.once('style.load', applyToMap);
+    }
 };
