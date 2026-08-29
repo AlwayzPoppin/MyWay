@@ -166,21 +166,29 @@ export const useNavigation = (
             // Proactive corridor tile prefetching for offline dead-zone resilience
             if (route.routeGeometry && route.routeGeometry.length > 0) {
                 let north = -90, south = 90, east = -180, west = 180;
+                let validCount = 0;
                 for (const pt of route.routeGeometry) {
-                    if (pt.lat > north) north = pt.lat;
-                    if (pt.lat < south) south = pt.lat;
-                    if (pt.lng > east) east = pt.lng;
-                    if (pt.lng < west) west = pt.lng;
+                    const lat = Array.isArray(pt) ? pt[1] : (pt as any)?.lat;
+                    const lng = Array.isArray(pt) ? pt[0] : (pt as any)?.lng;
+                    if (typeof lat === 'number' && !isNaN(lat) && typeof lng === 'number' && !isNaN(lng)) {
+                        if (lat > north) north = lat;
+                        if (lat < south) south = lat;
+                        if (lng > east) east = lng;
+                        if (lng < west) west = lng;
+                        validCount++;
+                    }
                 }
-                const corridorBounds = {
-                    north: Math.min(north + 0.015, 85),
-                    south: Math.max(south - 0.015, -85),
-                    east: Math.min(east + 0.015, 180),
-                    west: Math.max(west - 0.015, -180)
-                };
-                offlineMapService.downloadArea('Active Route Corridor', corridorBounds, 13, 15).catch(err => {
-                    console.warn('[useNavigation] Background route corridor tile cache notice:', err);
-                });
+                if (validCount > 0 && north >= south && east >= west) {
+                    const corridorBounds = {
+                        north: Math.min(north + 0.015, 85),
+                        south: Math.max(south - 0.015, -85),
+                        east: Math.min(east + 0.015, 180),
+                        west: Math.max(west - 0.015, -180)
+                    };
+                    offlineMapService.downloadArea('Active Route Corridor', corridorBounds, 12, 14).catch(err => {
+                        console.warn('[useNavigation] Background route corridor tile cache notice:', err);
+                    });
+                }
             }
         } catch (error) {
             console.error("Navigation startup error:", error);

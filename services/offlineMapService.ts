@@ -77,28 +77,51 @@ class OfflineMapService {
         zoomMax: number = 13,
         style: 'light_all' | 'dark_all' = 'dark_all'
     ): string[] {
+        // Bounds sanity check & normalization
+        const north = Math.max(bounds.north, bounds.south);
+        const south = Math.min(bounds.north, bounds.south);
+        const east = Math.max(bounds.east, bounds.west);
+        const west = Math.min(bounds.east, bounds.west);
+
+        // Discard absurd or world-spanning inverted bounds
+        if (Math.abs(north - south) > 20 || Math.abs(east - west) > 20) {
+            console.warn('[offlineMapService] Bounding box too large for tile batch, skipping to prevent memory overflow');
+            return [];
+        }
+
         const urls: string[] = [
             'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
             'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
             'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json'
         ];
         const subdomains = ['a', 'b', 'c', 'd'];
+        const MAX_TOTAL_TILES = 1500;
 
         for (let z = zoomMin; z <= zoomMax; z++) {
-            const topLeft = this.latLngToTile(bounds.north, bounds.west, z);
-            const bottomRight = this.latLngToTile(bounds.south, bounds.east, z);
+            const topLeft = this.latLngToTile(north, west, z);
+            const bottomRight = this.latLngToTile(south, east, z);
 
             const minX = Math.min(topLeft.x, bottomRight.x);
             const maxX = Math.max(topLeft.x, bottomRight.x);
             const minY = Math.min(topLeft.y, bottomRight.y);
             const maxY = Math.max(topLeft.y, bottomRight.y);
 
+            const xSpan = maxX - minX + 1;
+            const ySpan = maxY - minY + 1;
+            if (xSpan * ySpan > 800) {
+                console.warn(`[offlineMapService] Zoom ${z} tile count (${xSpan * ySpan}) exceeds limit, skipping zoom level.`);
+                continue;
+            }
+
             for (let x = minX; x <= maxX; x++) {
                 for (let y = minY; y <= maxY; y++) {
+                    if (urls.length >= MAX_TOTAL_TILES) break;
                     const subdomain = subdomains[(x + y) % subdomains.length];
                     urls.push(`https://${subdomain}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}@2x.png`);
                 }
+                if (urls.length >= MAX_TOTAL_TILES) break;
             }
+            if (urls.length >= MAX_TOTAL_TILES) break;
         }
 
         // Deduplicate URLs
@@ -111,15 +134,24 @@ class OfflineMapService {
         zoomMin: number = 10,
         zoomMax: number = 13
     ): number {
+        const north = Math.max(bounds.north, bounds.south);
+        const south = Math.min(bounds.north, bounds.south);
+        const east = Math.max(bounds.east, bounds.west);
+        const west = Math.min(bounds.east, bounds.west);
+
+        if (Math.abs(north - south) > 20 || Math.abs(east - west) > 20) {
+            return 0;
+        }
+
         let count = 3; // style JSONs
         for (let z = zoomMin; z <= zoomMax; z++) {
-            const topLeft = this.latLngToTile(bounds.north, bounds.west, z);
-            const bottomRight = this.latLngToTile(bounds.south, bounds.east, z);
+            const topLeft = this.latLngToTile(north, west, z);
+            const bottomRight = this.latLngToTile(south, east, z);
             const xCount = Math.abs(bottomRight.x - topLeft.x) + 1;
             const yCount = Math.abs(bottomRight.y - topLeft.y) + 1;
-            count += xCount * yCount;
+            count += Math.min(xCount * yCount, 1000);
         }
-        return count;
+        return Math.min(count, 1500);
     }
 
     // Cancel active download
