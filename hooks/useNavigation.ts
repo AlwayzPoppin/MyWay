@@ -61,6 +61,8 @@ export const useNavigation = (
     const lastSpeedWarningTimeRef = useRef<number>(0);
     const lastCameraAlertStepRef = useRef<number>(-1);
     const navigationStartTimeRef = useRef<number>(0);
+    const isRecalculatingRef = useRef<boolean>(false);
+    const lastOffRouteRecalcTimeRef = useRef<number>(0);
 
     useEffect(() => {
         navStateRef.current = navState;
@@ -433,6 +435,44 @@ export const useNavigation = (
                         }
                     })
                     .catch(err => console.warn('In-drive reroute check error:', err));
+            }
+
+            // --- AUTOMATIC OFF-ROUTE RE-ROUTING ---
+            // If the driver takes a wrong turn or misses a waypoint, automatically calculate a fresh route to destination
+            if (newNavState.isOffRoute && activeRoute.destinationLoc && !isRecalculatingRef.current) {
+                const now = Date.now();
+                if (now - lastOffRouteRecalcTimeRef.current > 4000) { // 4s cooldown to prevent API spam
+                    lastOffRouteRecalcTimeRef.current = now;
+                    isRecalculatingRef.current = true;
+                    console.log('🔄 [Navigation] Off-route detected. Recalculating path to destination...');
+                    showNotification('🔄 Recalculating route...', 3000);
+                    speechService.speak('Recalculating route', { chime: 'turn' });
+
+                    getRouteFromOSRM(userLocation, activeRoute.destinationName, activeRoute.destinationLoc)
+                        .then(newRoute => {
+                            isRecalculatingRef.current = false;
+                            if (newRoute && newRoute.steps && newRoute.steps.length > 0) {
+                                setActiveRoute(newRoute);
+                                setNavState({
+                                    currentStepIndex: 0,
+                                    distanceToNextStep: 0,
+                                    isOffRoute: false,
+                                    hasArrived: false,
+                                    splitIndex: 0
+                                });
+                                showNotification(`🔀 Rerouted via ${newRoute.summary || 'fastest path'}`, 3500);
+                                if (newRoute.steps[0]) {
+                                    speechService.announceManeuver(newRoute.steps[0].instruction, 50, 'initial');
+                                    lastAnnouncedStepIndexRef.current = 0;
+                                    lastAnnouncedProximityRef.current = 'initial';
+                                }
+                            }
+                        })
+                        .catch(err => {
+                            isRecalculatingRef.current = false;
+                            console.warn('[Navigation] Off-route recalculation failed:', err);
+                        });
+                }
             }
 
             if (newNavState.hasArrived && !currentNavState.hasArrived) {

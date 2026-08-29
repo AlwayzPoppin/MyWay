@@ -12,7 +12,7 @@ const getStepCompletionRadius = (speedMph: number = 0): number => {
     // Linear interpolation: 20m at 5mph → 60m at 45mph
     return 20 + ((speedMph - 5) / 40) * 40;
 };
-const OFF_ROUTE_THRESHOLD_METERS = 100;
+const OFF_ROUTE_THRESHOLD_METERS = 45;
 
 // Driving Behavior Thresholds
 const HARD_BRAKE_THRESHOLD = 4.5; // m/s² (~10 mph/s)
