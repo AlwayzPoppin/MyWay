@@ -195,9 +195,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         } else if (mapSkin === 'default') {
             url = theme === 'dark'
                 ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
-                : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+                : 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
         } else if (mapSkin === 'warm_cream') {
-            url = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+            url = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
         } else if (mapSkin === 'muted_slate') {
             url = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
         }

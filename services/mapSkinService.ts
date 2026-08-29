@@ -78,8 +78,8 @@ export const MAP_SKINS: MapSkin[] = [
     {
         id: 'warm_cream',
         name: 'Warm Cream',
-        description: 'Bright warm daylight with cream & off-white ivory tones',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+        description: 'Bright warm daylight with soft cream & off-white ivory tones',
+        styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
         preview: '☀️',
         isPremium: false
     },
