@@ -513,62 +513,6 @@ const searchViaOverpass = async (
     return [];
 };
 
-        return elements.map((el: any, i: number) => {
-            const tags = el.tags || {};
-            
-            const addrParts: string[] = [];
-            if (tags['addr:housenumber']) addrParts.push(tags['addr:housenumber']);
-            if (tags['addr:street']) addrParts.push(tags['addr:street']);
-            if (tags['addr:city']) addrParts.push(tags['addr:city']);
-            if (tags['addr:state']) addrParts.push(tags['addr:state']);
-            if (tags['addr:postcode']) addrParts.push(tags['addr:postcode']);
-            const cleanAddress = addrParts.length > 0 ? addrParts.join(', ') : (tags['addr:full'] || 'Nearby');
-
-            const amenity = tags.amenity || tags.shop || tags.leisure || '';
-            let placeType: Place['type'] = 'other';
-            if (amenity === 'fuel') placeType = 'gas';
-            else if (amenity === 'cafe') placeType = 'coffee';
-            else if (amenity === 'restaurant' || amenity === 'fast_food') placeType = 'food';
-
-            let icon = '📍';
-            if (amenity === 'fuel') icon = '⛽';
-            else if (amenity === 'cafe') icon = '☕';
-            else if (amenity === 'restaurant' || amenity === 'fast_food') icon = '🍔';
-            else if (amenity.includes('supermarket') || amenity.includes('grocery')) icon = '🛒';
-            else if (amenity === 'hairdresser') icon = '💈';
-            else if (amenity === 'pharmacy') icon = '💊';
-            else if (amenity.includes('fitness')) icon = '💪';
-            else if (amenity.includes('bar') || amenity.includes('pub')) icon = '🍺';
-
-            return {
-                id: `overpass-${el.id || i}`,
-                name: tags.name || (
-                    typeOrQuery === 'gas_station' ? 'Gas Station' : 
-                    typeOrQuery === 'cafe' ? 'Coffee Shop' : 
-                    typeOrQuery === 'restaurant' ? 'Restaurant' : 
-                    typeOrQuery === 'hairdresser' ? 'Barber / Salon' : 
-                    typeOrQuery === 'grocery_or_supermarket' ? 'Grocery Store' : 
-                    typeOrQuery === 'pharmacy' ? 'Pharmacy' : 
-                    typeOrQuery === 'gym' ? 'Gym / Fitness' : 
-                    typeOrQuery
-                ),
-                type: placeType,
-                icon,
-                location: {
-                    lat: el.lat ?? el.center?.lat ?? 0,
-                    lng: el.lon ?? el.center?.lon ?? 0
-                },
-                radius: 0.15,
-                brandColor: '#6366f1',
-                description: cleanAddress
-            };
-        });
-    } catch (err) {
-        console.warn('[Overpass] Search failed, falling back to Nominatim:', err);
-        return [];
-    }
-};
-
 // Nominatim fallback — returns real geocoded places (no API key needed)
 const searchViaNominatim = async (
     location: { lat: number; lng: number },
