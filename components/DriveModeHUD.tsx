@@ -622,8 +622,21 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             </div>
           )}
 
-          {/* Right Action Controls: Voice Mute + Cancel */}
+          {/* Right Action Controls: Recenter + Voice Mute + Cancel */}
           <div className="absolute right-6 bottom-6 z-20 pointer-events-auto flex items-center gap-3 animate-in slide-in-from-right duration-500">
+            {/* Recenter Button */}
+            <button
+              onClick={onRecenter}
+              title="Recenter Map onto Vehicle"
+              className={`border flex items-center justify-center shadow-2xl transition-all backdrop-blur-xl active:scale-95 h-20 w-20 rounded-3xl text-2xl cursor-pointer ${
+                isCameraFree
+                  ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_25px_rgba(245,158,11,0.7)] animate-pulse'
+                  : 'bg-black/60 border-white/20 text-white hover:bg-black/80 hover:border-white/40'
+              }`}
+            >
+              <span>🎯</span>
+            </button>
+
             {/* Voice Mute / Unmute Toggle */}
             <button
               onClick={() => {
@@ -660,10 +673,10 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             <div className="flex justify-center mb-3 animate-in fade-in zoom-in duration-200">
               <button
                 onClick={onRecenter}
-                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-full shadow-[0_10px_25px_rgba(99,102,241,0.65)] border border-white/40 font-black text-xs uppercase tracking-wider backdrop-blur-xl active:scale-95 transition-all cursor-pointer"
+                className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-black rounded-full shadow-[0_8px_25px_rgba(245,158,11,0.6)] border-2 border-white font-black text-xs uppercase tracking-wider active:scale-95 transition-all cursor-pointer"
               >
                 <span className="text-sm animate-pulse">🎯</span>
-                <span>Recenter</span>
+                <span>Recenter Map</span>
               </button>
             </div>
           )}
@@ -764,8 +777,21 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               </div>
             </div>
 
-            {/* Mobile Right Action Controls */}
+            {/* Mobile Right Action Controls: Recenter + Voice Mute + Cancel */}
             <div className="flex items-center gap-2">
+              {/* Recenter Button */}
+              <button
+                onClick={onRecenter}
+                title="Recenter Map"
+                className={`border flex items-center justify-center shadow-2xl transition-all backdrop-blur-xl active:scale-95 h-14 w-14 rounded-xl text-xl cursor-pointer ${
+                  isCameraFree
+                    ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.6)] animate-pulse'
+                    : 'bg-black/60 border-white/20 text-white hover:bg-black/80'
+                }`}
+              >
+                <span>🎯</span>
+              </button>
+
               <button
                 onClick={() => {
                   const next = speechService.toggleMuted();
