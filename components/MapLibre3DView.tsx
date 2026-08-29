@@ -353,11 +353,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     console.warn('[MapLibre] setLight:', e);
                 }
 
-                // Sophisticated solid palette for 3D buildings (Warm Limestone vs Muted Graphite)
+                const isGTARadar = mapSkin === 'gta_radar';
+                // Solid opaque Warm Limestone vs Muted Graphite vs GTA Dark Charcoal for 3D buildings
                 const extrusionColor = [
                     'interpolate', ['linear'], ['zoom'],
-                    14, isWarmLight ? '#eae5dc' : '#1c2128',
-                    16, isWarmLight ? '#dfd7ca' : '#242b35'
+                    14, isWarmLight ? '#eae5dc' : isGTARadar ? '#242d38' : '#1c2128',
+                    16, isWarmLight ? '#dfd7ca' : isGTARadar ? '#2e3846' : '#242b35'
                 ];
 
                 // 100% Solid opaque buildings for authentic WebGL depth testing (no see-through artifacts)
@@ -403,6 +404,27 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         }
                     }, labelLayerId);
                 }
+            }
+
+            // GTA Los Santos Radar Vector Styling (Freeway Yellow, Bright White Arterials, Sage Parks, Deep Ocean)
+            if (mapSkin === 'gta_radar') {
+                try {
+                    const motLayers = ['road_mot_fill_noramp', 'road_mot_fill_ramp', 'bridge_mot_fill', 'tunnel_mot_fill'];
+                    motLayers.forEach(id => {
+                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#fbbf24');
+                    });
+                    const trunkLayers = ['road_trunk_fill_noramp', 'road_pri_fill_noramp', 'bridge_trunk_fill', 'bridge_pri_fill'];
+                    trunkLayers.forEach(id => {
+                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#f8fafc');
+                    });
+                    const secLayers = ['road_sec_fill_noramp', 'bridge_sec_fill'];
+                    secLayers.forEach(id => {
+                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#cbd5e1');
+                    });
+                    if (map.current!.getLayer('road_minor_fill')) map.current!.setPaintProperty('road_minor_fill', 'line-color', '#475569');
+                    if (map.current!.getLayer('park')) map.current!.setPaintProperty('park', 'fill-color', '#1a2e22');
+                    if (map.current!.getLayer('water')) map.current!.setPaintProperty('water', 'fill-color', '#0d1721');
+                } catch (e) {}
             }
 
             // AUDIT #6: Improve Map Label Readability with Harmonious Halos
@@ -521,11 +543,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 position: [1.2, isWarmLight ? 55 : 75, isWarmLight ? 35 : 45]
             });
 
-            // Solid opaque Warm Limestone vs Muted Graphite for 3D buildings
+            const isGTARadar = mapSkin === 'gta_radar';
+            // Solid opaque Warm Limestone vs Muted Graphite vs GTA Charcoal for 3D buildings
             const extrusionColor = [
                 'interpolate', ['linear'], ['zoom'],
-                14, isWarmLight ? '#eae5dc' : '#1c2128',
-                16, isWarmLight ? '#dfd7ca' : '#242b35'
+                14, isWarmLight ? '#eae5dc' : isGTARadar ? '#242d38' : '#1c2128',
+                16, isWarmLight ? '#dfd7ca' : isGTARadar ? '#2e3846' : '#242b35'
             ];
 
             const opacityExpr: any = [
@@ -549,6 +572,27 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
+
+            // GTA Los Santos Radar Vector Styling
+            if (isGTARadar) {
+                try {
+                    const motLayers = ['road_mot_fill_noramp', 'road_mot_fill_ramp', 'bridge_mot_fill', 'tunnel_mot_fill'];
+                    motLayers.forEach(id => {
+                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#fbbf24');
+                    });
+                    const trunkLayers = ['road_trunk_fill_noramp', 'road_pri_fill_noramp', 'bridge_trunk_fill', 'bridge_pri_fill'];
+                    trunkLayers.forEach(id => {
+                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#f8fafc');
+                    });
+                    const secLayers = ['road_sec_fill_noramp', 'bridge_sec_fill'];
+                    secLayers.forEach(id => {
+                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#cbd5e1');
+                    });
+                    if (map.current!.getLayer('road_minor_fill')) map.current!.setPaintProperty('road_minor_fill', 'line-color', '#475569');
+                    if (map.current!.getLayer('park')) map.current!.setPaintProperty('park', 'fill-color', '#1a2e22');
+                    if (map.current!.getLayer('water')) map.current!.setPaintProperty('water', 'fill-color', '#0d1721');
+                } catch {}
+            }
 
             // Dynamically update symbol layer halos and colors
             const layers = map.current.getStyle()?.layers || [];
@@ -629,11 +673,20 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         };
 
+        const routeColor = mapSkin === 'gta_radar' ? '#facc15' : '#6366f1';
+        const routeGlowColor = mapSkin === 'gta_radar' ? '#f59e0b' : '#818cf8';
+
         const updateGeoJsonSources = () => {
             if (!map.current) return;
-            // --- RENDER REMAINING (Main Blue Line) ---
+            // --- RENDER REMAINING (Main Line) ---
             if (map.current.getSource(routeId)) {
                 (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(remainingData as any);
+                if (map.current.getLayer(`${routeId}-glow`)) {
+                    map.current.setPaintProperty(`${routeId}-glow`, 'line-color', routeGlowColor);
+                }
+                if (map.current.getLayer(routeId)) {
+                    map.current.setPaintProperty(routeId, 'line-color', routeColor);
+                }
             } else {
                 map.current.addSource(routeId, { 'type': 'geojson', 'data': remainingData as any });
                 
@@ -641,14 +694,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 map.current.addLayer({
                     'id': `${routeId}-glow`, 'type': 'line', 'source': routeId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': '#818cf8', 'line-width': 12, 'line-opacity': 0.3 }
+                    'paint': { 'line-color': routeGlowColor, 'line-width': 12, 'line-opacity': 0.35 }
                 });
 
                 // Main line layer
                 map.current.addLayer({
                     'id': routeId, 'type': 'line', 'source': routeId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': '#6366f1', 'line-width': 8, 'line-opacity': 0.9 }
+                    'paint': { 'line-color': routeColor, 'line-width': 8, 'line-opacity': 0.95 }
                 });
             }
 

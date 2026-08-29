@@ -5,7 +5,7 @@
  * These are vector tile style URLs compatible with MapLibre GL.
  */
 
-export type MapSkinId = 'default' | 'warm_cream' | 'muted_slate';
+export type MapSkinId = 'default' | 'warm_cream' | 'muted_slate' | 'gta_radar';
 
 export interface MapSkin {
     id: MapSkinId;
@@ -89,6 +89,14 @@ export const MAP_SKINS: MapSkin[] = [
         description: 'Sleek matte graphite & deep charcoal dark theme',
         styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
         preview: '🌑',
+        isPremium: false
+    },
+    {
+        id: 'gta_radar',
+        name: 'Los Santos (GTA)',
+        description: 'GTA V radar style with amber freeways, asphalt & golden GPS route',
+        styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        preview: '🕹️',
         isPremium: false
     }
 ];
