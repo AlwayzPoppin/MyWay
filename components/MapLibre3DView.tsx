@@ -400,8 +400,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                                 0
                             ],
                             'fill-extrusion-opacity': opacityExpr
-                        }
                     }, labelLayerId);
+                }
+            }
+
             // AUDIT #6: Improve Map Label Readability with Harmonious Halos
             const isWarmLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
             layers.forEach((layer: any) => {
