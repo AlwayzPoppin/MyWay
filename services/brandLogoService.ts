@@ -1,4 +1,4 @@
-// Brand Logo Service - High-definition SVG vectors and colors for major national brands
+// Brand Logo Service - High-definition SVG vectors and colors for major national and North Carolina regional brands
 import React from 'react';
 
 export interface BrandMeta {
@@ -11,6 +11,123 @@ export interface BrandMeta {
 }
 
 export const BRAND_REGISTRY: Record<string, BrandMeta> = {
+    // --- North Carolina & Regional Supermarkets ---
+    foodlion: {
+        id: 'foodlion',
+        name: 'Food Lion',
+        keywords: ['food lion', 'foodlion'],
+        bg: '#002B49',
+        border: '#E5A823',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="2" y="4" width="20" height="16" rx="3" fill="#002B49"/><path d="M6 14C6 11 8 8 12 8C14 8 15.5 9 16 10C15 10 14 10.5 14 12C14 13.5 15.5 14 17 13.5C16.5 16 14.5 17 12 17C9 17 6 15.5 6 14Z" fill="#FFFFFF"/><path d="M12 9C12.5 8 14 6 17 7C17.5 7.2 16.5 8.5 15 9H12Z" fill="#E5A823"/><circle cx="10" cy="11.5" r="1" fill="#002B49"/><text x="5" y="19" font-size="3.5" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">FOOD LION</text></svg>`
+    },
+    carliecs: {
+        id: 'carliecs',
+        name: "Carlie C's IGA",
+        keywords: ['carlie c', 'carlie cs', "carlie c's", "carlie c's iga", 'carlie cs iga', 'carlie c’s'],
+        bg: '#C8102E',
+        border: '#00873D',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="2" y="4" width="20" height="16" rx="3" fill="#C8102E"/><rect x="4" y="6" width="16" height="6.5" rx="1.5" fill="#FFFFFF"/><text x="4.8" y="11" font-size="3.8" font-weight="900" fill="#C8102E" font-family="Arial Black, sans-serif">CARLIE C'S</text><rect x="6.5" y="13.5" width="11" height="5" rx="2.5" fill="#00873D"/><text x="9" y="17.2" font-size="4.2" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">IGA</text></svg>`
+    },
+    harristeeter: {
+        id: 'harristeeter',
+        name: 'Harris Teeter',
+        keywords: ['harris teeter', 'harristeeter', 'harris teeter supermarket'],
+        bg: '#007A33',
+        border: '#E31837',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="2" y="4" width="20" height="16" rx="3" fill="#007A33"/><circle cx="8.5" cy="10" r="3.2" fill="#E31837"/><path d="M8.5 6.8C9.5 5.5 11 6 11 6C11 6 10.2 7.2 9.2 7.2" stroke="#FFFFFF" stroke-width="0.8" fill="#FFFFFF"/><path d="M12.5 11C13.5 9 16 9 17.5 10C16 11 16 12 17.5 13C15.5 13.5 13.5 12.5 12.5 11Z" fill="#FFFFFF"/><text x="3.5" y="18" font-size="3.2" font-weight="900" fill="#FFFFFF" font-family="Arial, sans-serif">Harris Teeter</text></svg>`
+    },
+    publix: {
+        id: 'publix',
+        name: 'Publix',
+        keywords: ['publix', 'publix supermarket'],
+        bg: '#006644',
+        border: '#FFFFFF',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#006644"/><circle cx="12" cy="12" r="7.5" stroke="#FFFFFF" stroke-width="1.8"/><text x="7.8" y="16.5" font-size="13" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">P</text></svg>`
+    },
+    pigglywiggly: {
+        id: 'pigglywiggly',
+        name: 'Piggly Wiggly',
+        keywords: ['piggly wiggly', 'pigglywiggly', 'the pig'],
+        bg: '#EE3124',
+        border: '#FFFFFF',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#EE3124"/><circle cx="12" cy="12" r="7" fill="#FFFFFF"/><path d="M9 8C8 6 10 5.5 11 7" stroke="#EE3124" stroke-width="1.2"/><path d="M15 8C16 6 14 5.5 13 7" stroke="#EE3124" stroke-width="1.2"/><ellipse cx="12" cy="14" rx="3.5" ry="2.5" fill="#FFC0CB"/><circle cx="10.8" cy="14" r="0.8" fill="#EE3124"/><circle cx="13.2" cy="14" r="0.8" fill="#EE3124"/><circle cx="9.5" cy="10.5" r="1" fill="#000000"/><circle cx="14.5" cy="10.5" r="1" fill="#000000"/></svg>`
+    },
+    lowesfoods: {
+        id: 'lowesfoods',
+        name: 'Lowes Foods',
+        keywords: ['lowes foods', 'lowes food', 'lowe’s foods'],
+        bg: '#2E6930',
+        border: '#D4A017',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="3" y="4" width="18" height="16" rx="3" fill="#2E6930"/><path d="M6 14L12 8L18 14H6Z" fill="#D4A017"/><text x="4" y="18" font-size="3" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">LOWES FOODS</text></svg>`
+    },
+    thefreshmarket: {
+        id: 'thefreshmarket',
+        name: 'The Fresh Market',
+        keywords: ['fresh market', 'the fresh market'],
+        bg: '#1D3C34',
+        border: '#C29B38',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#1D3C34"/><circle cx="12" cy="12" r="7.5" stroke="#C29B38" stroke-width="1.2"/><text x="5.5" y="11" font-size="3.2" font-weight="bold" fill="#FFFFFF" font-family="Georgia, serif">THE FRESH</text><text x="6" y="15" font-size="3.2" font-weight="bold" fill="#C29B38" font-family="Georgia, serif">MARKET</text></svg>`
+    },
+    lidl: {
+        id: 'lidl',
+        name: 'Lidl',
+        keywords: ['lidl', 'lidl us'],
+        bg: '#0050AA',
+        border: '#FFF000',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#0050AA" stroke="#FFF000" stroke-width="1.5"/><circle cx="12" cy="12" r="7.5" fill="#FFF000"/><text x="5.5" y="15.5" font-size="7" font-weight="900" fill="#0050AA" font-family="Arial Black, sans-serif">L</text><text x="9.5" y="15.5" font-size="7" font-weight="900" fill="#E60000" font-family="Arial Black, sans-serif">I</text><text x="11.5" y="15.5" font-size="7" font-weight="900" fill="#0050AA" font-family="Arial Black, sans-serif">DL</text></svg>`
+    },
+    aldi: {
+        id: 'aldi',
+        name: 'ALDI',
+        keywords: ['aldi', 'aldi foods', 'aldi supermarket'],
+        bg: '#00205B',
+        border: '#EB780A',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="3" y="4" width="18" height="16" rx="2" fill="#00205B"/><path d="M7 16L12 6L17 16H13.5L12 12.5L10.5 16H7Z" fill="#EB780A"/><path d="M9 16L12 9.5L15 16H13L12 13.5L11 16H9Z" fill="#00A3E0"/><text x="6" y="19" font-size="3" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">ALDI</text></svg>`
+    },
+    traderjoes: {
+        id: 'traderjoes',
+        name: "Trader Joe's",
+        keywords: ['trader joe', 'trader joes', "trader joe's"],
+        bg: '#BA0C2F',
+        border: '#FFFFFF',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#BA0C2F"/><circle cx="12" cy="12" r="8" stroke="#FFFFFF" stroke-width="0.8"/><text x="4" y="11.5" font-size="3.5" font-weight="bold" fill="#FFFFFF" font-family="Georgia, serif">TRADER</text><text x="5.5" y="15.5" font-size="3.5" font-weight="bold" fill="#FFFFFF" font-family="Georgia, serif">JOE'S</text></svg>`
+    },
+    wholefoods: {
+        id: 'wholefoods',
+        name: 'Whole Foods Market',
+        keywords: ['whole foods', 'wholefoods', 'whole foods market'],
+        bg: '#004C3F',
+        border: '#74C043',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#004C3F"/><path d="M6 13C6 8 9 6 12 6C15 6 18 8 18 13C18 17 15 18 12 18C9 18 6 17 6 13Z" fill="#FFFFFF"/><path d="M12 6C13.5 4 16 5 16 5C16 5 15 7 13.5 7.5" stroke="#74C043" stroke-width="1.2"/><text x="7" y="14" font-size="3" font-weight="900" fill="#004C3F" font-family="Arial Black, sans-serif">WHOLE</text><text x="7.5" y="17" font-size="2.5" font-weight="900" fill="#004C3F" font-family="Arial Black, sans-serif">FOODS</text></svg>`
+    },
+
+    // --- Beloved North Carolina Food & Gas Chains ---
+    bojangles: {
+        id: 'bojangles',
+        name: 'Bojangles',
+        keywords: ['bojangles', 'bojangle', "bojangles'"],
+        bg: '#FFD100',
+        border: '#E31837',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#FFD100"/><path d="M12 4L13.5 7.5H17L14 9.5L15.5 13L12 11L8.5 13L10 9.5L7 7.5H10.5L12 4Z" fill="#E31837"/><text x="4" y="17" font-size="4.2" font-style="italic" font-weight="900" fill="#E31837" font-family="Arial Black, sans-serif">Bojangles</text></svg>`
+    },
+    cookout: {
+        id: 'cookout',
+        name: 'Cook Out',
+        keywords: ['cook out', 'cookout'],
+        bg: '#E31837',
+        border: '#FFD100',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="2" y="4" width="20" height="16" rx="3" fill="#E31837"/><rect x="4" y="6" width="16" height="5" rx="1" fill="#FFD100"/><text x="4.5" y="10" font-size="4" font-weight="900" fill="#E31837" font-family="Arial Black, sans-serif">COOK OUT</text><rect x="5" y="13" width="14" height="2" rx="1" fill="#FFD100"/><rect x="6" y="16" width="12" height="1.5" rx="0.5" fill="#FFFFFF"/></svg>`
+    },
+    sheetz: {
+        id: 'sheetz',
+        name: 'Sheetz',
+        keywords: ['sheetz'],
+        bg: '#C8102E',
+        border: '#FFD100',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="3" y="4" width="18" height="16" rx="4" fill="#C8102E" stroke="#FFD100" stroke-width="1.2"/><text x="6" y="16.5" font-size="14" font-style="italic" font-weight="900" fill="#FFD100" font-family="Arial Black, sans-serif">S</text></svg>`
+    },
+
+    // --- Major National Fast Food & Dining ---
     mcdonalds: {
         id: 'mcdonalds',
         name: "McDonald's",
@@ -91,6 +208,8 @@ export const BRAND_REGISTRY: Record<string, BrandMeta> = {
         border: '#DA1884',
         svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9" fill="#FFFFFF"/><text x="6" y="16" font-size="11" font-weight="900" fill="#FF671F" font-family="Arial, sans-serif">D</text><text x="13" y="16" font-size="11" font-weight="900" fill="#DA1884" font-family="Arial, sans-serif">D</text></svg>`
     },
+
+    // --- Major National Retailers ---
     target: {
         id: 'target',
         name: 'Target',
@@ -115,6 +234,32 @@ export const BRAND_REGISTRY: Record<string, BrandMeta> = {
         border: '#005DAA',
         svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="3" y="5" width="18" height="14" rx="3" fill="#005DAA"/><text x="5" y="15.5" font-size="10" font-weight="900" fill="#E31837" font-style="italic" font-family="Arial Black, sans-serif">C</text><text x="12" y="15.5" font-size="7" font-weight="900" fill="#FFFFFF" font-family="Arial, sans-serif">OSTCO</text></svg>`
     },
+    homedepot: {
+        id: 'homedepot',
+        name: 'The Home Depot',
+        keywords: ['home depot', 'the home depot', 'homedepot'],
+        bg: '#F96302',
+        border: '#FFFFFF',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="4" y="4" width="16" height="16" rx="2" fill="#F96302"/><text x="6" y="12" font-size="5" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">THE</text><text x="5" y="17" font-size="5" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">HOME</text></svg>`
+    },
+    lowes: {
+        id: 'lowes',
+        name: "Lowe's",
+        keywords: ['lowes', "lowe's", "lowe's home improvement"],
+        bg: '#004990',
+        border: '#FFFFFF',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><path d="M4 8L12 4L20 8V19H4V8Z" fill="#004990"/><text x="5.5" y="15" font-size="7" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">LOWE'S</text></svg>`
+    },
+    bestbuy: {
+        id: 'bestbuy',
+        name: 'Best Buy',
+        keywords: ['best buy', 'bestbuy'],
+        bg: '#0046BE',
+        border: '#FFE600',
+        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="4" y="5" width="16" height="14" rx="2" fill="#0046BE"/><path d="M15 6L19 10L14 15L10 11L15 6Z" fill="#FFE600"/><circle cx="16" cy="9" r="1" fill="#000000"/></svg>`
+    },
+
+    // --- Major Gas Stations ---
     shell: {
         id: 'shell',
         name: 'Shell',
@@ -158,7 +303,7 @@ export const BRAND_REGISTRY: Record<string, BrandMeta> = {
     circlek: {
         id: 'circlek',
         name: 'Circle K',
-        keywords: ['circle k', 'circlek'],
+        keywords: ['circle k', 'circlek', 'kangaroo express'],
         bg: '#D41F26',
         border: '#E87722',
         svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9" fill="#D41F26"/><circle cx="12" cy="12" r="7" stroke="#E87722" stroke-width="1.5"/><text x="8" y="16.5" font-size="12" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">K</text></svg>`
@@ -179,6 +324,8 @@ export const BRAND_REGISTRY: Record<string, BrandMeta> = {
         border: '#FFD100',
         svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><circle cx="12" cy="12" r="9.5" fill="#C8102E"/><path d="M5 14C8 10 13 8 19 8C17 11 14 13 11 15C8 17 6 16 5 14Z" fill="#FFD100"/></svg>`
     },
+
+    // --- Pharmacies & Banks ---
     cvs: {
         id: 'cvs',
         name: 'CVS Pharmacy',
@@ -210,30 +357,6 @@ export const BRAND_REGISTRY: Record<string, BrandMeta> = {
         bg: '#012169',
         border: '#E31837',
         svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="3" y="5" width="18" height="14" rx="2" fill="#012169"/><rect x="6" y="8" width="4" height="8" fill="#E31837"/><rect x="11" y="8" width="7" height="8" fill="#E31837"/></svg>`
-    },
-    homedepot: {
-        id: 'homedepot',
-        name: 'The Home Depot',
-        keywords: ['home depot', 'the home depot', 'homedepot'],
-        bg: '#F96302',
-        border: '#FFFFFF',
-        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="4" y="4" width="16" height="16" rx="2" fill="#F96302"/><text x="6" y="12" font-size="5" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">THE</text><text x="5" y="17" font-size="5" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">HOME</text></svg>`
-    },
-    lowes: {
-        id: 'lowes',
-        name: "Lowe's",
-        keywords: ['lowes', "lowe's", "lowe's home improvement"],
-        bg: '#004990',
-        border: '#FFFFFF',
-        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><path d="M4 8L12 4L20 8V19H4V8Z" fill="#004990"/><text x="5.5" y="15" font-size="7" font-weight="900" fill="#FFFFFF" font-family="Arial Black, sans-serif">LOWE'S</text></svg>`
-    },
-    bestbuy: {
-        id: 'bestbuy',
-        name: 'Best Buy',
-        keywords: ['best buy', 'bestbuy'],
-        bg: '#0046BE',
-        border: '#FFE600',
-        svg: `<svg viewBox="0 0 24 24" fill="none" class="w-full h-full"><rect x="4" y="5" width="16" height="14" rx="2" fill="#0046BE"/><path d="M15 6L19 10L14 15L10 11L15 6Z" fill="#FFE600"/><circle cx="16" cy="9" r="1" fill="#000000"/></svg>`
     }
 };
 

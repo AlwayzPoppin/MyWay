@@ -272,12 +272,13 @@ const searchViaPhoton = async (
             const nLower = (props.name || '').toLowerCase();
             if (nLower.includes('taco') || nLower.includes('burrito') || nLower.includes('mexican')) icon = '🌮';
             else if (nLower.includes('pizza')) icon = '🍕';
-            else if (nLower.includes('mcdonald') || nLower.includes('burger') || nLower.includes('wendy') || nLower.includes('jack in the box') || nLower.includes('sonic')) icon = '🍔';
+            else if (nLower.includes('mcdonald') || nLower.includes('burger') || nLower.includes('wendy') || nLower.includes('jack in the box') || nLower.includes('sonic') || nLower.includes('cook out') || nLower.includes('cookout')) icon = '🍔';
+            else if (nLower.includes('bojangles') || nLower.includes('chick-fil-a') || nLower.includes('kfc') || nLower.includes('popeyes') || nLower.includes('chicken')) icon = '🍗';
             else if (nLower.includes('coffee') || nLower.includes('starbucks') || nLower.includes('dunkin')) icon = '☕';
-            else if (nLower.includes('fuel') || nLower.includes('gas') || nLower.includes('shell') || nLower.includes('exxon') || nLower.includes('chevron') || nLower.includes('bp') || nLower.includes('speedway')) icon = '⛽';
-            else if (nLower.includes('walmart') || nLower.includes('target') || nLower.includes('costco') || nLower.includes('kroger') || nLower.includes('market') || nLower.includes('grocery')) icon = '🛒';
+            else if (nLower.includes('fuel') || nLower.includes('gas') || nLower.includes('shell') || nLower.includes('exxon') || nLower.includes('chevron') || nLower.includes('bp') || nLower.includes('speedway') || nLower.includes('sheetz') || nLower.includes('circle k') || nLower.includes('wawa')) icon = '⛽';
+            else if (nLower.includes('food lion') || nLower.includes('carlie c') || nLower.includes('harris teeter') || nLower.includes('publix') || nLower.includes('piggly wiggly') || nLower.includes('lowes foods') || nLower.includes('fresh market') || nLower.includes('lidl') || nLower.includes('aldi') || nLower.includes('trader joe') || nLower.includes('whole foods') || nLower.includes('walmart') || nLower.includes('target') || nLower.includes('costco') || nLower.includes('kroger') || nLower.includes('market') || nLower.includes('grocery') || nLower.includes('supermarket')) icon = '🛒';
             else if (nLower.includes('pharmacy') || nLower.includes('walgreens') || nLower.includes('cvs')) icon = '💊';
-            else if (nLower.includes('bank') || nLower.includes('atm') || nLower.includes('chase') || nLower.includes('wells fargo')) icon = '🏦';
+            else if (nLower.includes('bank') || nLower.includes('atm') || nLower.includes('chase') || nLower.includes('wells fargo') || nLower.includes('bank of america')) icon = '🏦';
 
             // Determine venue/business name vs street address
             let displayName = props.name;
