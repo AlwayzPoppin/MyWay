@@ -183,7 +183,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const wasNavigatingRef = useRef<boolean>(false); // Track nav exit for camera reset
 
     // Get the skin style URL
-    // If skin is default, respect the app theme (Light/Dark)
+    // If skin is default, respect the app theme (Warm Bright Light vs Muted Slate Dark)
     const styleUrl = useMemo(() => {
         const skin = getMapSkin(mapSkin as MapSkinId);
         let url: any = skin.styleUrl;
@@ -192,8 +192,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             url = SATELLITE_STYLE;
         } else if (mapStyle === 'terrain') {
             url = TERRAIN_STYLE;
-        } else if (mapSkin === 'default' && theme === 'dark') {
-            url = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+        } else if (mapSkin === 'default') {
+            url = theme === 'dark'
+                ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+                : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
         }
         return url;
     }, [mapSkin, mapStyle, theme]);
@@ -312,7 +314,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
             // Apply skin-specific color overrides
             if (mapStyle === 'standard') {
-                applySkinOverrides(map.current, mapSkin as MapSkinId);
+                applySkinOverrides(map.current, mapSkin as MapSkinId, theme);
             }
 
             const layers = map.current.getStyle().layers || [];

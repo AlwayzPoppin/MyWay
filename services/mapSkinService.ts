@@ -138,13 +138,14 @@ export const getAvailableSkins = (isPlatinum: boolean): MapSkin[] => {
  */
 export const applySkinOverrides = (
     map: any, // maplibregl.Map
-    skinId: MapSkinId
+    skinId: MapSkinId,
+    theme: 'light' | 'dark' = 'dark'
 ): void => {
     if (!map) return;
 
-    // Custom paint overrides based on skin
+    // Custom paint overrides based on skin & theme
     const overrides: Record<MapSkinId, Record<string, any>> = {
-        default: {
+        default: theme === 'dark' ? {
             'background': { 'background-color': '#111418' },
             'water': { 'fill-color': '#131922' },
             'park': { 'fill-color': '#161e18', 'fill-opacity': 0.8 },
@@ -153,6 +154,17 @@ export const applySkinOverrides = (
             'tunnel': { 'line-color': '#1e232c' },
             'bridge': { 'line-color': '#333b49' },
             'building': { 'fill-color': '#1c2128', 'fill-extrusion-color': '#202630' }
+        } : {
+            // Warm Bright Light Mode (Sunny Parchment / Golden Daylight)
+            'background': { 'background-color': '#fcf9f2' },
+            'water': { 'fill-color': '#c2e0f5' },
+            'park': { 'fill-color': '#daebd0', 'fill-opacity': 0.85 },
+            'landuse': { 'fill-color': '#f5eee1' },
+            'road': { 'line-color': '#ffffff' },
+            'tunnel': { 'line-color': '#e8dfcd' },
+            'bridge': { 'line-color': '#f7f1e6' },
+            'highway': { 'line-color': '#fed7aa' },
+            'building': { 'fill-color': '#eae3d5', 'fill-extrusion-color': '#dfd6c4' }
         },
         midnight: {
             'building': { 'fill-extrusion-color': '#161920', 'fill-extrusion-opacity': 0.95 },
