@@ -7,7 +7,13 @@ import { httpsCallable } from 'firebase/functions';
 // SECURE: API keys are handled server-side in Firebase Functions
 // We use a proxy function to avoid exposing keys in the client bundle.
 
+let isCloudAIAvailable = true;
+
 const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.0-flash') => {
+  if (!isCloudAIAvailable) {
+    return { text: '', candidates: [] };
+  }
+
   const isDevLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   const clientApiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
 
@@ -29,20 +35,20 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
   // 2. DEV FALLBACK: Call Gemini directly using client-side API key
   const apiKey = clientApiKey;
   if (!apiKey) {
-    throw new Error('No Gemini API key available. Set VITE_GEMINI_API_KEY in .env or deploy Cloud Functions.');
+    isCloudAIAvailable = false;
+    return { text: '', candidates: [] };
   }
 
-  const genAI = new GoogleGenAI({ apiKey });
-  const promptText = typeof prompt === 'string'
-    ? prompt
-    : Array.isArray(prompt)
-      ? prompt.map((p: any) => p.parts?.map((pt: any) => pt.text).join(' ')).join('\n')
-      : JSON.stringify(prompt);
-
-  // Use official gemini-2.0-flash or gemini-1.5-flash
-  const sdkModel = model || 'gemini-2.0-flash';
-
   try {
+    const genAI = new GoogleGenAI({ apiKey });
+    const promptText = typeof prompt === 'string'
+      ? prompt
+      : Array.isArray(prompt)
+        ? prompt.map((p: any) => p.parts?.map((pt: any) => pt.text).join(' ')).join('\n')
+        : JSON.stringify(prompt);
+
+    const sdkModel = model || 'gemini-2.0-flash';
+
     const response = await genAI.models.generateContent({
       model: sdkModel,
       contents: promptText,
@@ -54,7 +60,8 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
       candidates: []
     };
   } catch (apiErr: any) {
-    console.warn('🤖 [Gemini] Cloud AI endpoint offline/unreachable, activating local intelligence engine.');
+    isCloudAIAvailable = false;
+    console.warn('🤖 [Gemini] Cloud AI endpoint offline/unreachable, switched to local intelligence engine.');
     return {
       text: '',
       candidates: []
