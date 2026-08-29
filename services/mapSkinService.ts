@@ -109,61 +109,12 @@ export const getAvailableSkins = (isPlatinum: boolean): MapSkin[] => {
 };
 
 /**
- * Apply dynamic color overrides to a skin (Generative aspect)
- * This modifies the style at runtime for custom theming
+ * Apply dynamic color overrides to a skin (kept for backward compatibility)
  */
 export const applySkinOverrides = (
-    map: any, // maplibregl.Map
-    skinId: MapSkinId,
-    theme: 'light' | 'dark' = 'dark'
+    _map: any,
+    _skinId: MapSkinId,
+    _theme: 'light' | 'dark' = 'dark'
 ): void => {
-    if (!map) return;
-
-    // Custom paint overrides based on skin & theme
-    const overrides: Record<MapSkinId, Record<string, any>> = {
-        default: theme === 'dark' ? {
-            'background': { 'background-color': '#111418' },
-            'water': { 'fill-color': '#131922' },
-            'park': { 'fill-color': '#161e18', 'fill-opacity': 0.8 },
-            'road': { 'line-color': '#2a303c' }
-        } : {},
-        warm_cream: {},
-        muted_slate: {
-            'background': { 'background-color': '#111418' },
-            'water': { 'fill-color': '#131922' },
-            'park': { 'fill-color': '#161e18', 'fill-opacity': 0.8 },
-            'road': { 'line-color': '#2a303c' }
-        }
-    };
-
-    const skinOverrides = overrides[skinId];
-    if (!skinOverrides) return;
-
-    // Apply overrides after style loads
-    const applyToMap = () => {
-        try {
-            const layers = map.getStyle()?.layers || [];
-            Object.entries(skinOverrides).forEach(([layerPrefix, props]) => {
-                layers.forEach((layer: any) => {
-                    if (layer.id.toLowerCase().includes(layerPrefix)) {
-                        Object.entries(props).forEach(([prop, value]) => {
-                            try {
-                                map.setPaintProperty(layer.id, prop, value);
-                            } catch {
-                                // Ignore non-applicable properties for specific layer types
-                            }
-                        });
-                    }
-                });
-            });
-        } catch (e) {
-            console.warn('[applySkinOverrides] Notice:', e);
-        }
-    };
-
-    if (map.isStyleLoaded()) {
-        applyToMap();
-    } else {
-        map.once('style.load', applyToMap);
-    }
+    // Styles are cleanly and natively handled by the vector styleUrl (Voyager for Warm Cream, Dark Matter for Muted Slate)
 };

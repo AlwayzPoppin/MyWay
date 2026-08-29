@@ -502,11 +502,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     useEffect(() => {
         if (!map.current) return;
 
-        // Apply skin-specific vector color overrides
-        if (mapStyle === 'standard') {
-            applySkinOverrides(map.current, mapSkin as MapSkinId, theme);
-        }
-
         if (!map.current.getLayer('buildings-3d')) return;
 
         const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
