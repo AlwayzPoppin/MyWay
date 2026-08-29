@@ -14,33 +14,16 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
     return { text: '', candidates: [] };
   }
 
-  const isDevLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-  const clientApiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
+  const clientApiKey = ((import.meta as any).env.VITE_GEMINI_API_KEY || '').trim();
 
-  // 1. In local development with client key, bypass cloud proxy to prevent CORS preflight noise
-  if (!isDevLocal || !clientApiKey) {
-    try {
-      const geminiFn = httpsCallable<
-        { prompt: any; config?: any; model?: string },
-        { text: string; candidates: any[] }
-      >(functions, 'callGeminiAI');
-
-      const result = await geminiFn({ prompt, config, model });
-      return result.data;
-    } catch (proxyError: any) {
-      console.warn('☁️ Cloud Function proxy unavailable, using direct Gemini fallback:', proxyError.code || proxyError.message);
-    }
-  }
-
-  // 2. DEV FALLBACK: Call Gemini directly using client-side API key
-  const apiKey = clientApiKey?.trim();
-  if (!apiKey || apiKey.length < 20 || apiKey === 'your_gemini_api_key_here') {
+  // If no Gemini API key is configured, immediately run local heuristics with 0 network calls
+  if (!clientApiKey || clientApiKey.length < 20 || clientApiKey === 'your_gemini_api_key_here') {
     isCloudAIAvailable = false;
     return { text: '', candidates: [] };
   }
 
   try {
-    const genAI = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenAI({ apiKey: clientApiKey });
     const promptText = typeof prompt === 'string'
       ? prompt
       : Array.isArray(prompt)
@@ -61,7 +44,6 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
     };
   } catch (apiErr: any) {
     isCloudAIAvailable = false;
-    console.warn('🤖 [Gemini] Cloud AI endpoint offline/unreachable, switched to local intelligence engine.');
     return {
       text: '',
       candidates: []
