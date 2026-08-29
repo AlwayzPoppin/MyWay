@@ -598,20 +598,21 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                             <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                               {item.name || item.query}
                             </h4>
-                          {item.frequencyCount && item.frequencyCount > 1 && (
-                            <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0">
-                              🔥 {item.frequencyCount}x
+                            {item.frequencyCount && item.frequencyCount > 1 && (
+                              <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0">
+                                🔥 {item.frequencyCount}x
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-400 font-semibold shrink-0">
+                              {formatRelativeTime(item.timestamp)}
                             </span>
+                          </div>
+                          {item.description && (
+                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {item.description}
+                            </p>
                           )}
-                          <span className="text-[10px] text-slate-400 font-semibold shrink-0">
-                            {formatRelativeTime(item.timestamp)}
-                          </span>
                         </div>
-                        {item.description && (
-                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                            {item.description}
-                          </p>
-                        )}
                       </div>
 
                       {/* Quick 1-Tap Navigate & Delete Actions */}
