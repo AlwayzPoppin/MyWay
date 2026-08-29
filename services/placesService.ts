@@ -267,11 +267,27 @@ const searchViaPhoton = async (
             let icon = '📍';
             if (osmValue === 'fuel') icon = '⛽';
             else if (osmValue === 'cafe') icon = '☕';
-            else if (osmValue === 'restaurant' || osmValue === 'fast_food' || props.name?.toLowerCase().includes('mcdonald')) icon = '🍔';
+            else if (osmValue === 'restaurant' || osmValue === 'fast_food') icon = '🍔';
+            
+            const nLower = (props.name || '').toLowerCase();
+            if (nLower.includes('taco') || nLower.includes('burrito') || nLower.includes('mexican')) icon = '🌮';
+            else if (nLower.includes('pizza')) icon = '🍕';
+            else if (nLower.includes('mcdonald') || nLower.includes('burger') || nLower.includes('wendy') || nLower.includes('jack in the box') || nLower.includes('sonic')) icon = '🍔';
+            else if (nLower.includes('coffee') || nLower.includes('starbucks') || nLower.includes('dunkin')) icon = '☕';
+            else if (nLower.includes('fuel') || nLower.includes('gas') || nLower.includes('shell') || nLower.includes('exxon') || nLower.includes('chevron') || nLower.includes('bp') || nLower.includes('speedway')) icon = '⛽';
+            else if (nLower.includes('walmart') || nLower.includes('target') || nLower.includes('costco') || nLower.includes('kroger') || nLower.includes('market') || nLower.includes('grocery')) icon = '🛒';
+            else if (nLower.includes('pharmacy') || nLower.includes('walgreens') || nLower.includes('cvs')) icon = '💊';
+            else if (nLower.includes('bank') || nLower.includes('atm') || nLower.includes('chase') || nLower.includes('wells fargo')) icon = '🏦';
+
+            // Determine venue/business name vs street address
+            let displayName = props.name;
+            if (!displayName || /^\d+$/.test(displayName)) {
+                displayName = streetAddr || query.trim();
+            }
 
             return {
                 id: `photon-${props.osm_id || i}`,
-                name: (props.housenumber && props.street) ? `${props.housenumber} ${props.street}` : (props.name || streetAddr || query),
+                name: displayName,
                 type: placeType,
                 icon,
                 location: { lat, lng },
@@ -441,11 +457,30 @@ const searchViaNominatim = async (
             else if (r.type === 'cafe') placeType = 'coffee';
             else if (r.type === 'restaurant' || r.type === 'fast_food') placeType = 'food';
 
+            let icon = '📍';
+            if (r.type === 'university') icon = '🏫';
+            else if (r.type === 'restaurant' || r.type === 'fast_food') icon = '🍔';
+            else if (r.type === 'fuel') icon = '⛽';
+            else if (r.type === 'cafe') icon = '☕';
+
+            const rawName = r.name || addr.shop || addr.amenity || addr.leisure;
+            let displayName = rawName;
+            if (!displayName || /^\d+$/.test(displayName)) {
+                displayName = streetAddr || query.trim();
+            }
+
+            const nLower = displayName.toLowerCase();
+            if (nLower.includes('taco') || nLower.includes('burrito') || nLower.includes('mexican')) icon = '🌮';
+            else if (nLower.includes('pizza')) icon = '🍕';
+            else if (nLower.includes('mcdonald') || nLower.includes('burger')) icon = '🍔';
+            else if (nLower.includes('coffee') || nLower.includes('starbucks')) icon = '☕';
+            else if (nLower.includes('fuel') || nLower.includes('gas') || nLower.includes('shell') || nLower.includes('exxon')) icon = '⛽';
+
             return {
                 id: `nominatim-${r.place_id || i}`,
-                name: streetAddr || query,
+                name: displayName,
                 type: placeType,
-                icon: r.type === 'university' ? '🏫' : (r.type === 'restaurant' || r.type === 'fast_food') ? '🍔' : r.type === 'fuel' ? '⛽' : r.type === 'cafe' ? '☕' : '📍',
+                icon,
                 location: {
                     lat: parseFloat(r.lat),
                     lng: parseFloat(r.lon)

@@ -486,6 +486,16 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                 ) : suggestions.length > 0 ? (
                   suggestions.map((place) => {
                     const distMiles = getDistanceMiles(userLocation, place.location);
+                    
+                    // Extract branch/street differentiator (e.g. "5009 Santa Fe Drive") from description
+                    let streetBadge = '';
+                    if (place.description) {
+                      const firstPart = place.description.split(',')[0].trim();
+                      if (firstPart && firstPart.toLowerCase() !== place.name.toLowerCase()) {
+                        streetBadge = firstPart;
+                      }
+                    }
+
                     return (
                       <div
                         key={place.id}
@@ -495,24 +505,38 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                             ? 'bg-white/5 hover:bg-indigo-600/15 border-white/5 hover:border-indigo-500/30'
                             : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200'}`}
                       >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                              {place.name}
-                            </h4>
-                            {distMiles && (
-                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                                theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'
-                              }`}>
-                                ⚡ {distMiles}
-                              </span>
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <span className="text-xl shrink-0 p-1.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
+                            {place.icon || '📍'}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                {place.name}
+                              </h4>
+                              {streetBadge && (
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                                  theme === 'dark'
+                                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                    : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                }`}>
+                                  {streetBadge}
+                                </span>
+                              )}
+                              {distMiles && (
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-auto ${
+                                  theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'
+                                }`}>
+                                  ⚡ {distMiles}
+                                </span>
+                              )}
+                            </div>
+                            {place.description && (
+                              <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                {place.description}
+                              </p>
                             )}
                           </div>
-                          {place.description && (
-                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {place.description}
-                            </p>
-                          )}
                         </div>
 
                         {/* Quick 1-Tap GO button */}
