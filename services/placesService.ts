@@ -155,23 +155,14 @@ const searchViaProxy = async (
         if (!isDuplicate) uniqueResults.push(p);
     }
 
-    // Sort strictly with local proximity priority:
-    // Distance < 80km comes first, sorted by distance ascending.
+    // Sort strictly with local proximity priority (closest stores first):
     uniqueResults.sort((a, b) => {
         const distA = getDistanceMeters(validLoc.lat, validLoc.lng, a.location.lat, a.location.lng);
         const distB = getDistanceMeters(validLoc.lat, validLoc.lng, b.location.lat, b.location.lng);
-
-        const aIsLocal = distA <= 80000;
-        const bIsLocal = distB <= 80000;
-
-        if (aIsLocal && !bIsLocal) return -1;
-        if (!aIsLocal && bIsLocal) return 1;
-
-        // If both are local or both non-local, sort by distance ascending
         return distA - distB;
     });
 
-    results = uniqueResults.slice(0, 15);
+    results = uniqueResults.slice(0, 20);
 
     // Cache the validated & sorted results
     setCachedResults(cacheKey, results);
@@ -186,7 +177,7 @@ const searchViaProxy = async (
     return results;
 };
 
-// Search via OSM (Photon for lightning-fast POIs/autocomplete, Nominatim for addresses, Overpass for categories)
+// Search via OSM (Photon for lightning-fast POIs/autocomplete, Nominatim for addresses, Overpass for categories & local businesses)
 const searchViaOSM = async (
     location: { lat: number; lng: number },
     query: string,
@@ -198,23 +189,18 @@ const searchViaOSM = async (
         if (results && results.length > 0) return results;
     }
 
-    // 2. Specific text search (e.g. "168 glen", "123 Main St", "MCDONALDS")
+    // 2. Specific text search (e.g. "golden china", "168 glen", "123 Main St", "MCDONALDS")
     if (query && query.trim().length > 0) {
-        // Query Photon (fast prefix autocomplete with proximity) and Nominatim concurrently
-        const [photonResults, nominatimResults] = await Promise.all([
+        // Query Photon, Nominatim, and Overpass (for local neighborhood restaurants & businesses) concurrently
+        const [photonResults, nominatimResults, overpassNameResults] = await Promise.all([
             searchViaPhoton(location, query).catch(() => [] as Place[]),
-            searchViaNominatim(location, query).catch(() => [] as Place[])
+            searchViaNominatim(location, query).catch(() => [] as Place[]),
+            searchViaOverpass(location, query.trim(), true).catch(() => [] as Place[])
         ]);
 
-        const combined = [...photonResults, ...nominatimResults];
+        const combined = [...overpassNameResults, ...photonResults, ...nominatimResults];
         if (combined.length > 0) {
             return combined;
-        }
-
-        // Tertiary fallback to Overpass name query
-        const overpassNameResults = await searchViaOverpass(location, query.trim(), true);
-        if (overpassNameResults && overpassNameResults.length > 0) {
-            return overpassNameResults;
         }
     }
 
@@ -314,9 +300,15 @@ const searchViaOverpass = async (
 
         let amenityQuery = '';
         if (isNameQuery) {
-            // Flexible regex: handle words and optional apostrophes (e.g. "mcdonalds" -> "mcdonald'?s?")
-            const root = typeOrQuery.toLowerCase().replace(/['s]/g, '');
-            amenityQuery = `nw["name"~"${root}",i](around:15000, {{lat}}, {{lng}});`;
+            const cleanQuery = typeOrQuery.toLowerCase().trim();
+            const words = cleanQuery.split(/\s+/).filter(w => w.length >= 2);
+            const regexParts = words.length > 0 ? words.map(w => w.replace(/['s]/g, '')).join('.*') : cleanQuery.replace(/['s]/g, '');
+            amenityQuery = `(
+                nw["name"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
+                nw["brand"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
+                nw["cuisine"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
+                nw["shop"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
+            );`;
         } else if (typeOrQuery === 'gas_station') {
             amenityQuery = 'nw["amenity"="fuel"](around:5000, {{lat}}, {{lng}});';
         } else if (typeOrQuery === 'cafe') {

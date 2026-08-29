@@ -149,6 +149,21 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           ))
         ];
 
+        // Sort: saved places first, then strictly by distance from driver (closest stores first)
+        combined.sort((a, b) => {
+          const aIsSaved = matchingSaved.some(s => s.id === a.id);
+          const bIsSaved = matchingSaved.some(s => s.id === b.id);
+          if (aIsSaved && !bIsSaved) return -1;
+          if (!aIsSaved && bIsSaved) return 1;
+
+          if (loc && a.location && b.location) {
+            const distA = (a.location.lat - loc.lat) ** 2 + (a.location.lng - loc.lng) ** 2;
+            const distB = (b.location.lat - loc.lat) ** 2 + (b.location.lng - loc.lng) ** 2;
+            return distA - distB;
+          }
+          return 0;
+        });
+
         setSuggestions(combined);
         if (combined.length > 0) {
           setActiveTab('suggestions');
