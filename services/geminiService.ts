@@ -33,8 +33,8 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
   }
 
   // 2. DEV FALLBACK: Call Gemini directly using client-side API key
-  const apiKey = clientApiKey;
-  if (!apiKey) {
+  const apiKey = clientApiKey?.trim();
+  if (!apiKey || apiKey.length < 20 || apiKey === 'your_gemini_api_key_here') {
     isCloudAIAvailable = false;
     return { text: '', candidates: [] };
   }
