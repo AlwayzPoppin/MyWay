@@ -279,16 +279,23 @@ const searchViaOSM = async (
 
     // 2. Specific text search (e.g. "chinese food", "golden china", "123 Main St", "MCDONALDS")
     if (query && query.trim().length > 0) {
-        const patterns = getCuisineAndCategoryPatterns(query);
-        // Query Photon, Nominatim, and Overpass concurrently
-        const [photonDirect, photonCore, overpassResults, nominatimResults] = await Promise.all([
-            searchViaPhoton(location, query).catch(() => [] as Place[]),
-            patterns.searchCore !== query ? searchViaPhoton(location, patterns.searchCore).catch(() => [] as Place[]) : Promise.resolve([] as Place[]),
-            searchViaOverpass(location, query.trim(), true).catch(() => [] as Place[]),
-            searchViaNominatim(location, query).catch(() => [] as Place[])
+        const qTrim = query.trim();
+        const patterns = getCuisineAndCategoryPatterns(qTrim);
+
+        // Detect if query already has a city or state specified
+        const hasCity = qTrim.includes(',') || /\b(nc|north carolina|fayetteville|spring lake|hope mills|raleigh|durham|charlotte)\b/i.test(qTrim);
+        const cityQuery = !hasCity && qTrim.length >= 3 ? `${qTrim} Fayetteville` : null;
+
+        // Query Photon, Nominatim, and Overpass concurrently across multiple vectors
+        const [photonDirect, photonCore, photonCity, overpassResults, nominatimResults] = await Promise.all([
+            searchViaPhoton(location, qTrim).catch(() => [] as Place[]),
+            patterns.searchCore !== qTrim ? searchViaPhoton(location, patterns.searchCore).catch(() => [] as Place[]) : Promise.resolve([] as Place[]),
+            cityQuery ? searchViaPhoton(location, cityQuery).catch(() => [] as Place[]) : Promise.resolve([] as Place[]),
+            searchViaOverpass(location, qTrim, true).catch(() => [] as Place[]),
+            searchViaNominatim(location, qTrim).catch(() => [] as Place[])
         ]);
 
-        const combined = [...overpassResults, ...photonDirect, ...photonCore, ...nominatimResults];
+        const combined = [...overpassResults, ...photonCity, ...photonDirect, ...photonCore, ...nominatimResults];
         if (combined.length > 0) {
             return combined;
         }
@@ -381,63 +388,130 @@ const searchViaPhoton = async (
     }
 };
 
-// Overpass API fallback — returns up to 25 nearby places using radius searches or name matching
+const OVERPASS_MIRRORS = [
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass-api.de/api/interpreter'
+];
+
+// Overpass API fallback — returns up to 35 nearby places using multi-mirror radius searches or name matching
 const searchViaOverpass = async (
     location: { lat: number; lng: number },
     typeOrQuery: string,
     isNameQuery: boolean = false
 ): Promise<Place[]> => {
-    try {
-        console.log(`🗺️ [Overpass] Query center: (${location.lat}, ${location.lng}) | ${isNameQuery ? 'name' : 'type'}: ${typeOrQuery}`);
+    let amenityQuery = '';
+    if (isNameQuery) {
+        const patterns = getCuisineAndCategoryPatterns(typeOrQuery);
+        amenityQuery = `(
+            nw["cuisine"~"${patterns.cuisinePattern}",i](around:25000, {{lat}}, {{lng}});
+            nw["name"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
+            nw["brand"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
+            nw["shop"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
+        );`;
+    } else if (typeOrQuery === 'gas_station') {
+        amenityQuery = 'nw["amenity"="fuel"](around:8000, {{lat}}, {{lng}});';
+    } else if (typeOrQuery === 'cafe') {
+        amenityQuery = 'nw["amenity"="cafe"](around:8000, {{lat}}, {{lng}});';
+    } else if (typeOrQuery === 'restaurant') {
+        amenityQuery = 'nw["amenity"~"restaurant|fast_food"](around:8000, {{lat}}, {{lng}});';
+    } else if (typeOrQuery === 'grocery_or_supermarket') {
+        amenityQuery = 'nw["shop"~"supermarket|grocery"](around:8000, {{lat}}, {{lng}});';
+    } else if (typeOrQuery === 'hairdresser') {
+        amenityQuery = 'nw["shop"="hairdresser"](around:8000, {{lat}}, {{lng}});';
+    } else if (typeOrQuery === 'pharmacy') {
+        amenityQuery = 'nw["amenity"="pharmacy"](around:8000, {{lat}}, {{lng}});';
+    } else if (typeOrQuery === 'gym') {
+        amenityQuery = 'nw["leisure"="fitness_centre"](around:8000, {{lat}}, {{lng}});';
+    } else if (typeOrQuery === 'bar') {
+        amenityQuery = 'nw["amenity"~"bar|pub"](around:8000, {{lat}}, {{lng}});';
+    }
 
-        let amenityQuery = '';
-        if (isNameQuery) {
-            const patterns = getCuisineAndCategoryPatterns(typeOrQuery);
-            amenityQuery = `(
-                nw["cuisine"~"${patterns.cuisinePattern}",i](around:25000, {{lat}}, {{lng}});
-                nw["name"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
-                nw["brand"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
-                nw["shop"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
-            );`;
-        } else if (typeOrQuery === 'gas_station') {
-            amenityQuery = 'nw["amenity"="fuel"](around:5000, {{lat}}, {{lng}});';
-        } else if (typeOrQuery === 'cafe') {
-            amenityQuery = 'nw["amenity"="cafe"](around:5000, {{lat}}, {{lng}});';
-        } else if (typeOrQuery === 'restaurant') {
-            amenityQuery = 'nw["amenity"~"restaurant|fast_food"](around:5000, {{lat}}, {{lng}});';
-        } else if (typeOrQuery === 'grocery_or_supermarket') {
-            amenityQuery = 'nw["shop"~"supermarket|grocery"](around:5000, {{lat}}, {{lng}});';
-        } else if (typeOrQuery === 'hairdresser') {
-            amenityQuery = 'nw["shop"="hairdresser"](around:5000, {{lat}}, {{lng}});';
-        } else if (typeOrQuery === 'pharmacy') {
-            amenityQuery = 'nw["amenity"="pharmacy"](around:5000, {{lat}}, {{lng}});';
-        } else if (typeOrQuery === 'gym') {
-            amenityQuery = 'nw["leisure"="fitness_centre"](around:5000, {{lat}}, {{lng}});';
-        } else if (typeOrQuery === 'bar') {
-            amenityQuery = 'nw["amenity"~"bar|pub"](around:5000, {{lat}}, {{lng}});';
+    if (!amenityQuery) return [];
+
+    const query = amenityQuery
+        .replaceAll('{{lat}}', location.lat.toString())
+        .replaceAll('{{lng}}', location.lng.toString());
+
+    const overpassQL = `[out:json][timeout:6];${query}out center 35;`;
+
+    for (const mirror of OVERPASS_MIRRORS) {
+        try {
+            const url = `${mirror}?data=${encodeURIComponent(overpassQL)}`;
+            const response = await fetch(url, {
+                headers: { 'User-Agent': 'MyWay-GPS-Dev/1.0' },
+                signal: AbortSignal.timeout(3500)
+            });
+
+            if (!response.ok) continue;
+
+            const data = await response.json();
+            const elements = data.elements || [];
+            if (elements.length === 0) continue;
+
+            return elements.map((el: any, i: number) => {
+                const tags = el.tags || {};
+                
+                const addrParts: string[] = [];
+                if (tags['addr:housenumber']) addrParts.push(tags['addr:housenumber']);
+                if (tags['addr:street']) addrParts.push(tags['addr:street']);
+                if (tags['addr:city']) addrParts.push(tags['addr:city']);
+                if (tags['addr:state']) addrParts.push(tags['addr:state']);
+                if (tags['addr:postcode']) addrParts.push(tags['addr:postcode']);
+                const cleanAddress = addrParts.length > 0 ? addrParts.join(', ') : (tags['addr:full'] || 'Nearby');
+
+                const amenity = tags.amenity || tags.shop || tags.leisure || '';
+                let placeType: Place['type'] = 'other';
+                if (amenity === 'fuel') placeType = 'gas';
+                else if (amenity === 'cafe') placeType = 'coffee';
+                else if (amenity === 'restaurant' || amenity === 'fast_food') placeType = 'food';
+
+                let icon = '📍';
+                if (amenity === 'fuel') icon = '⛽';
+                else if (amenity === 'cafe') icon = '☕';
+                else if (amenity === 'restaurant' || amenity === 'fast_food') icon = '🍔';
+                else if (amenity.includes('supermarket') || amenity.includes('grocery')) icon = '🛒';
+                else if (amenity === 'hairdresser') icon = '💈';
+                else if (amenity === 'pharmacy') icon = '💊';
+                else if (amenity.includes('fitness')) icon = '💪';
+                else if (amenity.includes('bar') || amenity.includes('pub')) icon = '🍺';
+
+                const nLower = (tags.name || '').toLowerCase();
+                if (nLower.includes('chinese') || nLower.includes('wok') || nLower.includes('asian') || nLower.includes('sino') || nLower.includes('panda')) icon = '🥡';
+                else if (nLower.includes('taco') || nLower.includes('mexican')) icon = '🌮';
+                else if (nLower.includes('pizza')) icon = '🍕';
+                else if (nLower.includes('sushi') || nLower.includes('japanese') || nLower.includes('ramen')) icon = '🍣';
+
+                return {
+                    id: `overpass-${el.id || i}`,
+                    name: tags.name || (
+                        typeOrQuery === 'gas_station' ? 'Gas Station' : 
+                        typeOrQuery === 'cafe' ? 'Coffee Shop' : 
+                        typeOrQuery === 'restaurant' ? 'Restaurant' : 
+                        typeOrQuery === 'hairdresser' ? 'Barber / Salon' : 
+                        typeOrQuery === 'grocery_or_supermarket' ? 'Grocery Store' : 
+                        typeOrQuery === 'pharmacy' ? 'Pharmacy' : 
+                        typeOrQuery === 'gym' ? 'Gym / Fitness' : 
+                        typeOrQuery
+                    ),
+                    type: placeType,
+                    icon,
+                    location: {
+                        lat: el.lat ?? el.center?.lat ?? 0,
+                        lng: el.lon ?? el.center?.lon ?? 0
+                    },
+                    radius: 0.15,
+                    brandColor: '#6366f1',
+                    description: cleanAddress
+                };
+            });
+        } catch {
+            // Try next mirror
+            continue;
         }
-
-        if (!amenityQuery) return [];
-
-        const query = amenityQuery
-            .replaceAll('{{lat}}', location.lat.toString())
-            .replaceAll('{{lng}}', location.lng.toString());
-
-        const overpassQL = `[out:json];${query}out center 15;`;
-        console.log(`🗺️ [Overpass] Final QL: ${overpassQL}`);
-        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQL)}`;
-
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'MyWay-GPS-Dev/1.0' },
-            signal: AbortSignal.timeout(4000)
-        });
-
-        if (!response.ok) {
-            throw new Error(`Overpass API status ${response.status}`);
-        }
-
-        const data = await response.json();
-        const elements = data.elements || [];
+    }
+    return [];
+};
 
         return elements.map((el: any, i: number) => {
             const tags = el.tags || {};
