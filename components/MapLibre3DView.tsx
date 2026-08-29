@@ -345,25 +345,26 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 try {
                     map.current.setLight({
                         anchor: 'viewport',
-                        color: isWarmLight ? '#fffbf0' : '#f1f5f9',
-                        intensity: isWarmLight ? 0.55 : 0.28,
-                        position: [1.15, isWarmLight ? 60 : 75, isWarmLight ? 40 : 45]
+                        color: isWarmLight ? '#ffffff' : '#f1f5f9',
+                        intensity: isWarmLight ? 0.62 : 0.28,
+                        position: [1.2, isWarmLight ? 55 : 75, isWarmLight ? 35 : 45]
                     });
                 } catch (e) {
                     console.warn('[MapLibre] setLight:', e);
                 }
 
-                // Sophisticated palette for 3D buildings (Warm Cream Sandstone vs Muted Graphite)
+                // Sophisticated solid palette for 3D buildings (Warm Limestone vs Muted Graphite)
                 const extrusionColor = [
                     'interpolate', ['linear'], ['zoom'],
-                    14, isWarmLight ? '#eae3d5' : '#1c2128',
-                    16, isWarmLight ? '#dfd6c4' : '#242b35'
+                    14, isWarmLight ? '#eae5dc' : '#1c2128',
+                    16, isWarmLight ? '#dfd7ca' : '#242b35'
                 ];
 
+                // 100% Solid opaque buildings for authentic WebGL depth testing (no see-through artifacts)
                 const opacityExpr: any = [
                     'interpolate', ['linear'], ['zoom'],
                     13.5, 0,
-                    14.5, 0.95
+                    14.5, 1.0
                 ];
 
                 const heightExpr: any = [
@@ -511,16 +512,22 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         try {
             map.current.setLight({
                 anchor: 'viewport',
-                color: isWarmLight ? '#fff9eb' : '#f1f5f9',
-                intensity: isWarmLight ? 0.65 : 0.28,
+                color: isWarmLight ? '#ffffff' : '#f1f5f9',
+                intensity: isWarmLight ? 0.62 : 0.28,
                 position: [1.2, isWarmLight ? 55 : 75, isWarmLight ? 35 : 45]
             });
 
-            // Warm Cream Sandstone vs Muted Graphite for 3D buildings
+            // Solid opaque Warm Limestone vs Muted Graphite for 3D buildings
             const extrusionColor = [
                 'interpolate', ['linear'], ['zoom'],
-                14, isWarmLight ? '#e6decb' : '#1c2128',
-                16, isWarmLight ? '#dfd6c0' : '#242b35'
+                14, isWarmLight ? '#eae5dc' : '#1c2128',
+                16, isWarmLight ? '#dfd7ca' : '#242b35'
+            ];
+
+            const opacityExpr: any = [
+                'interpolate', ['linear'], ['zoom'],
+                13.5, 0,
+                14.5, 1.0
             ];
 
             const heightExpr: any = [
@@ -537,6 +544,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
+            map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
         } catch (e) {
             console.warn('[MapLibre] Dynamic building style update:', e);
         }
