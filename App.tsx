@@ -770,7 +770,7 @@ const App: React.FC = () => {
         {!isDriveMode && isMobile && !activeModal && !isBottomSheetExpanded && (
           <button
             onClick={() => setActiveModal('settings')}
-            className="absolute top-6 left-6 z-[90] group flex items-center gap-3 transition-all duration-300"
+            className="absolute top-14 left-4 z-[90] group flex items-center gap-3 transition-all duration-300 pointer-events-auto"
           >
             <div className={`relative w-11 h-11 rounded-full border-2 overflow-hidden shadow-2xl transition-all duration-300
               ${theme === 'dark' ? 'bg-slate-800 border-white/20' : 'bg-white border-slate-200'}
@@ -1198,6 +1198,10 @@ const App: React.FC = () => {
                         showNotification("📍 Centered on your location", 2000);
                       }}
                       onQuickStop={() => setActiveModal('quickstop')}
+                      onOpenMessages={() => {
+                        setMessagingRecipientId(null);
+                        setActiveModal('messaging');
+                      }}
                       theme={theme}
                       userPlaces={userPlaces}
                       onSelectSavedPlace={handleSelectPlace}
@@ -1211,7 +1215,7 @@ const App: React.FC = () => {
               {/* Safety Insights - Repositioned to Top Center Drawer as per Audit */}
               {!activeModal && !isBottomSheetExpanded && (
                 <OverlayManager>
-                  <div className={`absolute left-1/2 -translate-x-1/2 z-50 ${isMobile ? 'top-4 w-auto max-w-[90%]' : 'top-6 w-auto'}`}>
+                  <div className={`absolute left-1/2 -translate-x-1/2 z-50 ${isMobile ? 'top-14 w-auto max-w-[90%]' : 'top-6 w-auto'}`}>
                     <InsightsBar
                       insights={insights}
                       theme={theme}
@@ -1229,7 +1233,7 @@ const App: React.FC = () => {
           {/* Action Hub — Unified vertical pill */}
           {!activeModal && !isBottomSheetExpanded && (
             <OverlayManager>
-              <div className={`absolute flex flex-col items-end z-[60] pointer-events-auto ${isMobile ? 'top-4 right-4' : 'bottom-40 right-6'}`}>
+              <div className={`absolute flex flex-col items-end z-[60] pointer-events-auto ${isMobile ? 'top-14 right-4' : 'bottom-40 right-6'}`}>
 
                 {/* Unified Action Cluster */}
                 <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl relative">
@@ -1275,16 +1279,7 @@ const App: React.FC = () => {
                     )}
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setMessagingRecipientId(null);
-                      setActiveModal('messaging');
-                    }}
-                    className="w-11 h-11 rounded-2xl bg-white/5 text-slate-300 flex items-center justify-center hover:bg-white/10 transition-all"
-                    title="Family Chat & DMs"
-                  >
-                    <span className="text-xl">💬</span>
-                  </button>
+                  {/* Hold to SOS */}
                   <HoldToActivate
                     onActivate={handleTriggerSOS}
                     duration={2000}

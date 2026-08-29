@@ -10,6 +10,7 @@ interface SearchBoxProps {
   onLocate?: () => void;
   onQuickStop?: () => void;
   onTestDrive?: () => void;
+  onOpenMessages?: () => void;
   onCategorySearch?: (type: 'gas' | 'coffee' | 'food' | 'grocery') => void;
   theme: 'light' | 'dark';
   userPlaces?: Place[];
@@ -47,6 +48,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   onLocate,
   onQuickStop,
   onTestDrive,
+  onOpenMessages,
   onCategorySearch,
   theme,
   userPlaces = [],
@@ -310,12 +312,23 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         <div className="w-px h-8 bg-white/10 mx-1" />
 
         <div className="flex items-center gap-1.5 pr-1">
+          {onOpenMessages && (
+            <button
+              type="button"
+              onClick={onOpenMessages}
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all border
+                ${theme === 'dark' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/20 active:scale-90' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100 active:scale-90'}`}
+              title="Family Chat & Messages"
+            >
+              <span className="text-xl">💬</span>
+            </button>
+          )}
           {onLocate && (
             <button
               type="button"
               onClick={onLocate}
               className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all border border-white/5
-                ${theme === 'dark' ? 'bg-white/5 text-slate-300 hover:bg-white/10' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                ${theme === 'dark' ? 'bg-white/5 text-slate-300 hover:bg-white/10 active:scale-90' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-90'}`}
               title="Current Location"
             >
               <span className="text-xl">🎯</span>
@@ -326,7 +339,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               type="button"
               onClick={onQuickStop}
               className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all border
-                ${theme === 'dark' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500 hover:bg-amber-500/20' : 'bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100'}`}
+                ${theme === 'dark' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500 hover:bg-amber-500/20 active:scale-90' : 'bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100 active:scale-90'}`}
               title="Saved Places & Favorites"
             >
               <span className="text-lg">⭐</span>
