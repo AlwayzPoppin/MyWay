@@ -121,13 +121,25 @@ self.addEventListener('message', (event) => {
         initializeFCM(event.data.config);
     }
     
+    const target = (event.ports && event.ports[0]) || event.source;
+
     if (event.data.type === 'CACHE_TILES') {
-        cacheTiles(event.data.tiles, event.source);
+        cacheTiles(event.data.tiles, target);
     }
 
     if (event.data.type === 'CLEAR_CACHE') {
         caches.delete(TILE_CACHE_NAME).then(() => {
-            event.source.postMessage({ type: 'CACHE_CLEARED' });
+            if (target && target.postMessage) {
+                target.postMessage({ type: 'CACHE_CLEARED' });
+            }
+        });
+    }
+
+    if (event.data.type === 'GET_CACHE_SIZE') {
+        caches.open(TILE_CACHE_NAME).then((cache) => cache.keys()).then((keys) => {
+            if (target && target.postMessage) {
+                target.postMessage({ type: 'CACHE_SIZE', count: keys.length });
+            }
         });
     }
 });
@@ -152,13 +164,17 @@ async function cacheTiles(tileUrls, client) {
                 cached++;
                 currentCount++;
             }
-            client.postMessage({ type: 'CACHE_PROGRESS', cached, total });
+            if (client && client.postMessage) {
+                client.postMessage({ type: 'CACHE_PROGRESS', cached, total });
+            }
         } catch (error) {
             console.warn('[SW] Failed to cache tile:', url);
         }
     }
 
-    client.postMessage({ type: 'CACHE_COMPLETE', cached });
+    if (client && client.postMessage) {
+        client.postMessage({ type: 'CACHE_COMPLETE', cached });
+    }
 }
 
 self.addEventListener('notificationclick', (event) => {

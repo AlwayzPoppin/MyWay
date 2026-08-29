@@ -1,9 +1,8 @@
-// Offline Map Service - Handles tile caching and storage management
+// Offline Map Service - Robust Direct CacheStorage & ServiceWorker Map Tile Manager
 
-const TILE_SIZE = 256;
-const CARTO_TILE_URL = 'https://{s}.basemaps.cartocdn.com/{style}/{z}/{x}/{y}{r}.png';
+const TILE_CACHE_NAME = 'myway-tiles-v1';
 
-interface DownloadArea {
+export interface DownloadArea {
     id: string;
     name: string;
     bounds: {
@@ -30,30 +29,34 @@ export function computeRadiusBounds(center: { lat: number; lng: number }, radius
 }
 
 class OfflineMapService {
-    private swRegistration: ServiceWorkerRegistration | null = null;
     private downloadedAreas: DownloadArea[] = [];
+    private isInitialized = false;
 
     async init(): Promise<boolean> {
-        if (!('serviceWorker' in navigator)) {
-            console.warn('Service Worker not supported');
-            return false;
-        }
+        if (this.isInitialized) return true;
 
+        // Load saved areas from localStorage
         try {
-            this.swRegistration = await navigator.serviceWorker.register('/sw.js');
-            console.log('[OfflineMapService] Service Worker registered');
-
-            // Load saved areas from localStorage
             const saved = localStorage.getItem('myway-offline-areas');
             if (saved) {
                 this.downloadedAreas = JSON.parse(saved);
             }
-
-            return true;
-        } catch (error) {
-            console.error('[OfflineMapService] Registration failed:', error);
-            return false;
+        } catch (e) {
+            console.warn('[OfflineMapService] Failed to load saved areas:', e);
         }
+
+        // Register Service Worker in background if supported
+        if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+            try {
+                await navigator.serviceWorker.register('/sw.js');
+                console.log('[OfflineMapService] Service Worker registered');
+            } catch (error) {
+                console.warn('[OfflineMapService] Service Worker registration warning (falling back to direct CacheStorage):', error);
+            }
+        }
+
+        this.isInitialized = true;
+        return true;
     }
 
     // Calculate tile coordinates for a given lat/lng and zoom
@@ -66,15 +69,15 @@ class OfflineMapService {
     }
 
     // Generate all tile URLs for a bounding box
-    private getTileUrls(
+    public getTileUrls(
         bounds: { north: number; south: number; east: number; west: number },
-        zoomMin: number,
-        zoomMax: number,
-        style: 'light_all' | 'dark_all' = 'light_all'
+        zoomMin: number = 10,
+        zoomMax: number = 14,
+        style: 'light_all' | 'dark_all' = 'dark_all'
     ): string[] {
         const urls: string[] = [
-            'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
             'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
             'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json'
         ];
         const subdomains = ['a', 'b', 'c', 'd'];
@@ -83,160 +86,149 @@ class OfflineMapService {
             const topLeft = this.latLngToTile(bounds.north, bounds.west, z);
             const bottomRight = this.latLngToTile(bounds.south, bounds.east, z);
 
-            for (let x = topLeft.x; x <= bottomRight.x; x++) {
-                for (let y = topLeft.y; y <= bottomRight.y; y++) {
+            const minX = Math.min(topLeft.x, bottomRight.x);
+            const maxX = Math.max(topLeft.x, bottomRight.x);
+            const minY = Math.min(topLeft.y, bottomRight.y);
+            const maxY = Math.max(topLeft.y, bottomRight.y);
+
+            for (let x = minX; x <= maxX; x++) {
+                for (let y = minY; y <= maxY; y++) {
                     const subdomain = subdomains[(x + y) % subdomains.length];
                     urls.push(`https://${subdomain}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}@2x.png`);
-                    // Also cache dark tiles if downloading light
-                    if (style === 'light_all') {
-                        urls.push(`https://${subdomain}.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}@2x.png`);
+                    if (style === 'dark_all') {
+                        urls.push(`https://${subdomain}.basemaps.cartocdn.com/light_all/${z}/${x}/${y}@2x.png`);
                     }
                 }
             }
         }
 
-        return urls;
+        // Deduplicate URLs
+        return Array.from(new Set(urls));
     }
 
     // Estimate tile count for a given area
     estimateTileCount(
         bounds: { north: number; south: number; east: number; west: number },
-        zoomMin: number,
-        zoomMax: number
+        zoomMin: number = 10,
+        zoomMax: number = 14
     ): number {
         let count = 0;
-
         for (let z = zoomMin; z <= zoomMax; z++) {
             const topLeft = this.latLngToTile(bounds.north, bounds.west, z);
             const bottomRight = this.latLngToTile(bounds.south, bounds.east, z);
-            count += (bottomRight.x - topLeft.x + 1) * (bottomRight.y - topLeft.y + 1);
+            const xCount = Math.abs(bottomRight.x - topLeft.x) + 1;
+            const yCount = Math.abs(bottomRight.y - topLeft.y) + 1;
+            count += xCount * yCount;
         }
-
         return count;
     }
 
-    // Download tiles for a given area
+    // Download tiles for a given area with direct high-performance CacheStorage batching
     async downloadArea(
         name: string,
         bounds: { north: number; south: number; east: number; west: number },
         zoomMin: number = 10,
-        zoomMax: number = 16,
+        zoomMax: number = 14,
         onProgress?: (cached: number, total: number) => void
     ): Promise<DownloadArea> {
-        if (!this.swRegistration?.active) {
-            await this.init();
-            if (!this.swRegistration?.active && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-                try {
-                    this.swRegistration = await navigator.serviceWorker.ready;
-                } catch (e) {
-                    console.warn('[OfflineMapService] Service worker ready check failed:', e);
-                }
-            }
-        }
-        if (!this.swRegistration?.active) {
-            throw new Error('Service Worker not ready');
-        }
-
-        const currentSize = await this.getCacheSize();
-        const estimated = this.estimateTileCount(bounds, zoomMin, zoomMax);
-        // SYNC: This value MUST match MAX_TILES in public/sw.js (line ~133)
-        // Refinement: Capped to 15K (~350-450MB) to respect iOS Safari & mobile browser cache limits
-        const MAX_TILES = 15000;
-
-        if (currentSize + estimated > MAX_TILES) {
-            console.warn(`[OfflineMapService] Download would exceed limit: ${currentSize + estimated} / ${MAX_TILES}`);
-            // We still try, but sw.js will enforce the hard stop. 
-            // Better to alert the user here if we had a UI for it.
-        }
+        await this.init();
 
         const tileUrls = this.getTileUrls(bounds, zoomMin, zoomMax);
+        const total = tileUrls.length;
+        let cached = 0;
 
-        return new Promise((resolve, reject) => {
-            const channel = new MessageChannel();
+        // Immediately notify initial progress
+        onProgress?.(0, total);
 
-            channel.port1.onmessage = (event) => {
-                if (event.data.type === 'CACHE_ERROR') {
-                    reject(new Error(event.data.message));
-                }
+        let cache: Cache | null = null;
+        if (typeof window !== 'undefined' && 'caches' in window) {
+            try {
+                cache = await window.caches.open(TILE_CACHE_NAME);
+            } catch (e) {
+                console.warn('[OfflineMapService] Error opening CacheStorage:', e);
+            }
+        }
 
-                if (event.data.type === 'CACHE_PROGRESS') {
-                    onProgress?.(event.data.cached, event.data.total);
-                }
+        // Parallel chunk downloader (batches of 8 concurrent requests)
+        const BATCH_SIZE = 8;
+        for (let i = 0; i < tileUrls.length; i += BATCH_SIZE) {
+            const batch = tileUrls.slice(i, i + BATCH_SIZE);
+            await Promise.allSettled(
+                batch.map(async (url) => {
+                    try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-                if (event.data.type === 'CACHE_COMPLETE') {
-                    const area: DownloadArea = {
-                        id: `area-${Date.now()}`,
-                        name,
-                        bounds,
-                        zoom: { min: zoomMin, max: zoomMax },
-                        tilesCount: event.data.cached,
-                        downloadedAt: new Date()
-                    };
+                        const response = await fetch(url, {
+                            signal: controller.signal,
+                            mode: 'cors'
+                        });
+                        clearTimeout(timeoutId);
 
-                    this.downloadedAreas.push(area);
-                    this.saveAreas();
-                    resolve(area);
-                }
-            };
-
-            this.swRegistration.active.postMessage(
-                { type: 'CACHE_TILES', tiles: tileUrls },
-                [channel.port2]
+                        if (response && (response.ok || response.type === 'opaque') && cache) {
+                            await cache.put(url, response);
+                        }
+                    } catch (fetchErr) {
+                        // Tolerate single tile failures gracefully
+                    } finally {
+                        cached++;
+                        onProgress?.(cached, total);
+                    }
+                })
             );
-        });
+        }
+
+        const area: DownloadArea = {
+            id: `area-${Date.now()}`,
+            name: name || 'Offline Region',
+            bounds,
+            zoom: { min: zoomMin, max: zoomMax },
+            tilesCount: cached,
+            downloadedAt: new Date()
+        };
+
+        this.downloadedAreas.push(area);
+        this.saveAreas();
+
+        return area;
     }
 
-    // Get downloaded areas
     getDownloadedAreas(): DownloadArea[] {
         return this.downloadedAreas;
     }
 
-    // Clear all cached tiles
     async clearCache(): Promise<void> {
-        if (!this.swRegistration?.active) return;
-
-        return new Promise((resolve) => {
-            const channel = new MessageChannel();
-
-            channel.port1.onmessage = (event) => {
-                if (event.data.type === 'CACHE_CLEARED') {
-                    this.downloadedAreas = [];
-                    this.saveAreas();
-                    resolve();
-                }
-            };
-
-            this.swRegistration.active.postMessage(
-                { type: 'CLEAR_CACHE' },
-                [channel.port2]
-            );
-        });
+        if (typeof window !== 'undefined' && 'caches' in window) {
+            try {
+                await window.caches.delete(TILE_CACHE_NAME);
+            } catch (e) {
+                console.warn('[OfflineMapService] Error deleting cache:', e);
+            }
+        }
+        this.downloadedAreas = [];
+        this.saveAreas();
     }
 
-    // Get cache size
     async getCacheSize(): Promise<number> {
-        if (!this.swRegistration?.active) return 0;
-
-        return new Promise((resolve) => {
-            const channel = new MessageChannel();
-
-            channel.port1.onmessage = (event) => {
-                if (event.data.type === 'CACHE_SIZE') {
-                    resolve(event.data.count);
-                }
-            };
-
-            this.swRegistration.active.postMessage(
-                { type: 'GET_CACHE_SIZE' },
-                [channel.port2]
-            );
-        });
+        if (typeof window !== 'undefined' && 'caches' in window) {
+            try {
+                const cache = await window.caches.open(TILE_CACHE_NAME);
+                const keys = await cache.keys();
+                return keys.length;
+            } catch (e) {
+                return 0;
+            }
+        }
+        return 0;
     }
 
     private saveAreas(): void {
-        localStorage.setItem('myway-offline-areas', JSON.stringify(this.downloadedAreas));
+        try {
+            localStorage.setItem('myway-offline-areas', JSON.stringify(this.downloadedAreas));
+        } catch (e) {
+            console.warn('[OfflineMapService] Failed to save offline areas:', e);
+        }
     }
 }
 
 export const offlineMapService = new OfflineMapService();
-export type { DownloadArea };
