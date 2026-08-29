@@ -7,7 +7,7 @@ import { httpsCallable } from 'firebase/functions';
 // SECURE: API keys are handled server-side in Firebase Functions
 // We use a proxy function to avoid exposing keys in the client bundle.
 
-const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.5-flash') => {
+const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.0-flash') => {
   const isDevLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   const clientApiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
 
@@ -27,7 +27,6 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
   }
 
   // 2. DEV FALLBACK: Call Gemini directly using client-side API key
-  // ⚠️ In production, always use the Cloud Function proxy to keep keys server-side
   const apiKey = clientApiKey;
   if (!apiKey) {
     throw new Error('No Gemini API key available. Set VITE_GEMINI_API_KEY in .env or deploy Cloud Functions.');
@@ -40,19 +39,35 @@ const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemin
       ? prompt.map((p: any) => p.parts?.map((pt: any) => pt.text).join(' ')).join('\n')
       : JSON.stringify(prompt);
 
-  // Always use gemini-2.5-flash for client-side SDK calls
-  const sdkModel = 'gemini-2.5-flash';
+  // Use official gemini-2.0-flash or gemini-1.5-flash
+  const sdkModel = model || 'gemini-2.0-flash';
 
-  const response = await genAI.models.generateContent({
-    model: sdkModel,
-    contents: promptText,
-    config: config || undefined
-  });
+  try {
+    const response = await genAI.models.generateContent({
+      model: sdkModel,
+      contents: promptText,
+      config: config || undefined
+    });
 
-  return {
-    text: response.text || '',
-    candidates: []
-  };
+    return {
+      text: response.text || '',
+      candidates: []
+    };
+  } catch (apiErr: any) {
+    // Fallback to gemini-1.5-flash if 2.0 returns model error
+    if (sdkModel !== 'gemini-1.5-flash') {
+      const fallbackResp = await genAI.models.generateContent({
+        model: 'gemini-1.5-flash',
+        contents: promptText,
+        config: config || undefined
+      });
+      return {
+        text: fallbackResp.text || '',
+        candidates: []
+      };
+    }
+    throw apiErr;
+  }
 };
 
 // SECURITY: Direct API key access has been removed to prevent exposure in client bundle.
@@ -220,9 +235,9 @@ export const getRouteToDestination = async (start: { lat: number, lng: number },
 };
 
 export const getFamilyInsights = async (members: FamilyMember[]): Promise<DailyInsight[]> => {
-  const context = members.map(m => `${m.name}: ${m.status}, ${m.battery}%`).join('\n');
-  return withRetry(async () => {
-    const data = await callGeminiProxy(`Insights for: ${context}. Return JSON array.`, {
+  try {
+    const context = members.map(m => `${m.name}: ${m.status}, battery ${m.battery}%, speed ${m.speed || 0}`).join('\n');
+    const data = await callGeminiProxy(`Insights for: ${context}. Return JSON array of 2-3 safety or reminder items.`, {
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.ARRAY,
@@ -236,9 +251,42 @@ export const getFamilyInsights = async (members: FamilyMember[]): Promise<DailyI
           required: ["title", "description", "category"]
         }
       }
+    }, 'gemini-2.0-flash');
+    const parsed = JSON.parse(data.text || "[]");
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+  } catch (err) {
+    // Graceful smart heuristic fallback (offline or without API key)
+  }
+
+  // Local smart rule-based insights
+  const insights: DailyInsight[] = [];
+  const lowBatteryMember = members.find(m => m.battery && m.battery < 25);
+  if (lowBatteryMember) {
+    insights.push({
+      title: `Low Battery Alert`,
+      description: `${lowBatteryMember.name}'s battery is at ${lowBatteryMember.battery}%.`,
+      category: 'reminder'
     });
-    return JSON.parse(data.text || "[]");
-  });
+  }
+
+  const movingMember = members.find(m => m.speed && m.speed > 5);
+  if (movingMember) {
+    insights.push({
+      title: `In Transit`,
+      description: `${movingMember.name} is moving at ${Math.round(movingMember.speed * 2.237)} mph.`,
+      category: 'safety'
+    });
+  }
+
+  if (insights.length === 0) {
+    insights.push({
+      title: `All Clear`,
+      description: `All family members are safe and accounted for.`,
+      category: 'safety'
+    });
+  }
+
+  return insights;
 };
 
 export const askOmni = async (query: string, members: FamilyMember[], history: any[]) => {
