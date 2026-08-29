@@ -330,8 +330,8 @@ const searchViaOverpass = async (
         if (!amenityQuery) return [];
 
         const query = amenityQuery
-            .replace('{{lat}}', location.lat.toString())
-            .replace('{{lng}}', location.lng.toString());
+            .replaceAll('{{lat}}', location.lat.toString())
+            .replaceAll('{{lng}}', location.lng.toString());
 
         const overpassQL = `[out:json];${query}out center 15;`;
         console.log(`🗺️ [Overpass] Final QL: ${overpassQL}`);

@@ -198,12 +198,26 @@ export const updateUserProfile = async (uid: string, updates: Partial<UserProfil
 };
  
 /**
- * Upload a profile image to Firebase Storage and return the public URL.
+ * Upload a profile image to Firebase Storage and return the public URL (with Data URI fallback for CORS).
  */
 export const uploadProfileImage = async (uid: string, file: File): Promise<string> => {
-    const fileRef = storageRef(storage, `avatars/${uid}/${Date.now()}_${file.name}`);
-    const result = await uploadBytes(fileRef, file);
-    return await getDownloadURL(result.ref);
+    try {
+        const fileRef = storageRef(storage, `avatars/${uid}/${Date.now()}_${file.name}`);
+        const result = await uploadBytes(fileRef, file);
+        return await getDownloadURL(result.ref);
+    } catch (storageErr) {
+        console.warn('[uploadProfileImage] Cloud Storage unavailable or CORS-blocked, using compressed Data URI fallback:', storageErr);
+        return new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const dataUrl = e.target?.result as string;
+                if (dataUrl) resolve(dataUrl);
+                else reject(new Error('Failed to read image file'));
+            };
+            reader.onerror = () => reject(new Error('FileReader error'));
+            reader.readAsDataURL(file);
+        });
+    }
 };
 
 // Family Circle Functions
