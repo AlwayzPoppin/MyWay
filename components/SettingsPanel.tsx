@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { MapSkinId } from '../services/mapSkinService';
+import { MapSkinId, MAP_SKINS } from '../services/mapSkinService';
 import StorageManager from './StorageManager';
 import { PrivacyMode, Vehicle } from '../types';
 import { vehicleFuelService, VEHICLE_PRESETS } from '../services/vehicleFuelService';
@@ -762,31 +762,40 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
                         {/* Map Skin Selector */}
                         <div>
-                            <h4 className={`text-xs font-black mb-2 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Map Skin</h4>
-                            <div className="grid grid-cols-2 gap-2">
-                                <button
-                                    onClick={() => updateSetting('mapSkin', 'default')}
-                                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                                        localSettings.mapSkin === 'default'
-                                            ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
-                                            : theme === 'dark'
-                                                ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
-                                    }`}
-                                >
-                                    <span>🗺️</span>
-                                    <span>Default</span>
-                                </button>
-                                <div
-                                    className={`py-2.5 px-3 rounded-xl border border-dashed text-xs font-bold flex items-center justify-center gap-1.5 select-none ${
-                                        theme === 'dark'
-                                            ? 'bg-white/5 border-white/20 text-slate-400'
-                                            : 'bg-slate-50 border-slate-300 text-slate-500'
-                                    }`}
-                                >
-                                    <span className="text-amber-400">✨</span>
-                                    <span>More coming soon</span>
-                                </div>
+                            <div className="flex items-center justify-between mb-2">
+                                <h4 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Map Theme & Skin</h4>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${theme === 'dark' ? 'bg-white/10 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+                                    {MAP_SKINS.length} Themes
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {MAP_SKINS.map((skin) => {
+                                    const isSelected = (localSettings.mapSkin || 'default') === skin.id;
+                                    return (
+                                        <button
+                                            key={skin.id}
+                                            onClick={() => updateSetting('mapSkin', skin.id)}
+                                            className={`p-2.5 rounded-xl border text-left flex flex-col gap-1 transition-all relative overflow-hidden ${
+                                                isSelected
+                                                    ? 'bg-indigo-600/20 border-indigo-500 ring-2 ring-indigo-500/40 text-white shadow-lg'
+                                                    : theme === 'dark'
+                                                        ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-base">{skin.preview}</span>
+                                                {isSelected && (
+                                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                                )}
+                                            </div>
+                                            <div className="font-black text-xs leading-tight">{skin.name}</div>
+                                            <div className={`text-[10px] leading-tight line-clamp-1 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                {skin.description}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
