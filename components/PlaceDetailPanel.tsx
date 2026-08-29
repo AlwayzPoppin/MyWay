@@ -4,6 +4,7 @@ import { Place, Location, NavigationRoute, FamilyMember } from '../types';
 import { fetchRouteOptions } from '../services/osrmService';
 import { vehicleFuelService } from '../services/vehicleFuelService';
 import { convoyService } from '../services/convoyService';
+import BrandIcon from './BrandIcon';
 
 interface PlaceDetailPanelProps {
     place: Place;
@@ -248,9 +249,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     {/* Top Row: Icon + Info + Close */}
                     <div className="flex items-start gap-4">
                         {/* Place Icon */}
-                        <div className="w-14 h-14 rounded-2xl bg-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-600/30">
-                            <span className="text-2xl">{place.icon}</span>
-                        </div>
+                        <BrandIcon placeName={place.name} defaultIcon={place.icon} size="xl" className="shadow-lg" />
 
                         {/* Place Info */}
                         <div className="flex-1 min-w-0">
@@ -848,7 +847,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
                             {/* Destination Summary */}
                             <div className="p-3 rounded-2xl bg-white/5 border border-white/5 flex items-center gap-3">
-                                <span className="text-3xl">{place.icon || '📍'}</span>
+                                <BrandIcon placeName={place.name} defaultIcon={place.icon || '📍'} size="lg" />
                                 <div className="min-w-0 flex-1">
                                     <h4 className="text-sm font-black truncate">{place.name}</h4>
                                     <p className="text-xs text-slate-400">

@@ -5,6 +5,7 @@ import { FamilyMember, Place, CircleTask, Location } from '../types';
 import { MapSkinId, getMapSkin, applySkinOverrides, SATELLITE_STYLE, TERRAIN_STYLE } from '../services/mapSkinService';
 import { getDistanceMeters, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
+import { getBrandMeta } from '../services/brandLogoService';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
 const circleCoordsCache = new Map<string, [number, number][]>();
@@ -711,8 +712,47 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         places.forEach(place => {
             if (!placesMarkersRef.current.has(place.id)) {
                 const el = document.createElement('div');
-                el.className = 'maplibre-place-marker';
-                el.innerHTML = `<div style="font-size: 24px;">${place.icon}</div>`;
+                el.className = 'maplibre-place-marker group transition-transform hover:scale-110';
+                
+                const brand = getBrandMeta(place.name);
+                if (brand) {
+                    el.innerHTML = `
+                        <div style="
+                            width: 38px;
+                            height: 38px;
+                            border-radius: 12px;
+                            background: ${brand.bg};
+                            border: 2px solid ${brand.border};
+                            box-shadow: 0 6px 16px rgba(0,0,0,0.5), 0 0 12px ${brand.border}55;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            padding: 5px;
+                            cursor: pointer;
+                        ">
+                            ${brand.svg}
+                        </div>
+                    `;
+                } else {
+                    el.innerHTML = `
+                        <div style="
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 12px;
+                            background: rgba(15, 23, 42, 0.9);
+                            backdrop-filter: blur(8px);
+                            border: 2px solid rgba(255, 255, 255, 0.2);
+                            box-shadow: 0 6px 16px rgba(0,0,0,0.5);
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            font-size: 20px;
+                            cursor: pointer;
+                        ">
+                            ${place.icon || '📍'}
+                        </div>
+                    `;
+                }
                 el.style.cursor = 'pointer';
 
                 // Click handler opens the PlaceDetailPanel (which has Navigate button)

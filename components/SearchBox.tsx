@@ -3,6 +3,7 @@ import { Place } from '../types';
 import { searchHistoryService, RecentSearchItem } from '../services/searchHistoryService';
 import { searchPlacesText } from '../services/placesService';
 import { predictiveRoutingService, PredictedDestination } from '../services/predictiveRoutingService';
+import BrandIcon from './BrandIcon';
 
 interface SearchBoxProps {
   onSearch: (query: string) => void;
@@ -382,7 +383,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                     })}
                     className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer group"
                   >
-                    <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">{predictions[0].icon}</span>
+                    <BrandIcon placeName={predictions[0].name} defaultIcon={predictions[0].icon} size="md" className="group-hover:scale-110" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <h4 className="text-xs sm:text-sm font-black text-white truncate group-hover:text-purple-200 transition-colors">
@@ -519,9 +520,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                             : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200'}`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <span className="text-xl shrink-0 p-1.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
-                            {place.icon || '📍'}
-                          </span>
+                          <BrandIcon placeName={place.name} defaultIcon={place.icon || '📍'} size="md" />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
@@ -592,11 +591,13 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                           ? 'bg-white/5 hover:bg-white/10 border-white/5 hover:border-indigo-500/30'
                           : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200'}`}
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                            {item.name || item.query}
-                          </h4>
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <BrandIcon placeName={item.name || item.query} defaultIcon={item.icon || '📍'} size="sm" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                              {item.name || item.query}
+                            </h4>
                           {item.frequencyCount && item.frequencyCount > 1 && (
                             <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0">
                               🔥 {item.frequencyCount}x
