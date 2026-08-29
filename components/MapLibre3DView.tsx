@@ -39,6 +39,8 @@ export const getCircleCoords = (center: Location, radiusKm: number, points: numb
 
 interface MapLibre3DViewProps {
     members: FamilyMember[];
+    userLocation?: Location | null;
+    currentUserId?: string;
     theme: 'light' | 'dark';
     mapSkin?: MapSkinId;
     selectedMemberId?: string | null;
@@ -65,10 +67,14 @@ interface MapLibre3DViewProps {
     isMobile?: boolean;
     buildingScale?: 'realistic' | 'enhanced' | 'monumental';
     landmarkGlow?: boolean;
+    isCameraFree?: boolean;
+    onCameraFreeChange?: (isFree: boolean) => void;
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     members,
+    userLocation,
+    currentUserId,
     theme,
     mapSkin = 'default',
     selectedMemberId,
@@ -94,7 +100,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     mapStyle = 'standard',
     isMobile = false,
     buildingScale = 'enhanced',
-    landmarkGlow = true
+    landmarkGlow = true,
+    isCameraFree = false,
+    onCameraFreeChange
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
@@ -241,6 +249,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 bearing: mapInstance.getBearing()
             };
         });
+
+        // User interaction tracking (Drag, Touch, Wheel) to enable free-look mode during navigation
+        const handleUserPan = () => {
+            onUserInteraction?.();
+            if (isNavigating) {
+                onCameraFreeChange?.(true);
+            }
+        };
+        mapInstance.on('dragstart', handleUserPan);
+        mapInstance.on('touchstart', handleUserPan);
+        mapInstance.on('wheel', handleUserPan);
 
         // --- WebGL Context Loss Handlers ---
         const canvas = mapInstance.getCanvas();
@@ -1151,77 +1170,93 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }, [members, isMapReady, isNavigating, routeCoords, currentStepIndex]);
 
     // ==========================================
-    // DYNAMIC NAVIGATION CAMERA TRACKING SYSTEM
+    // DYNAMIC NAVIGATION CAMERA TRACKING SYSTEM (3RD PERSON CHASE CAM)
     // ==========================================
-    // When navigation is active: follow user, rotate bearing to match travel direction,
-    // tilt to 55°, zoom to 17. Suppressed temporarily when user drags/zooms.
+    // When navigation is active: lock 3rd person chase camera behind the driver (60° tilt,
+    // following travel heading with forward road padding). Paused when user explores the route ahead.
     useEffect(() => {
         if (!map.current || !isMapReady) return;
 
-        const you = members.find(m => m.id === 'demo-you' || m.id === members[0]?.id);
-        if (!you) return;
+        // Resolve driver location
+        const driver = members.find(m => (currentUserId && m.id === currentUserId) || m.id === 'demo-you' || m.id === members[0]?.id);
+        const driverLoc: Location | undefined = (userLocation && userLocation.lat !== 0 && userLocation.lng !== 0)
+            ? userLocation
+            : driver?.location;
 
-        // --- NAVIGATION EXIT: Smooth reset to flat north-up ---
+        if (!driverLoc || (driverLoc.lat === 0 && driverLoc.lng === 0)) return;
+
+        // --- NAVIGATION EXIT: Smooth reset to flat/tilted 2D/3D map ---
         if (wasNavigatingRef.current && !isNavigating) {
             wasNavigatingRef.current = false;
             prevBearingRef.current = 0;
             map.current.easeTo({
                 pitch: is3DMode ? 60 : 0,
-                bearing: 0,
-                zoom: 15,
-                center: [you.location.lng, you.location.lat],
-                duration: 1200,
-                easing: (t: number) => t * (2 - t) // ease-out quadratic
+                bearing: is3DMode ? -17.6 : 0,
+                zoom: 16,
+                center: [driverLoc.lng, driverLoc.lat],
+                padding: { top: 0, bottom: 0, left: 0, right: 0 },
+                duration: 1000
             });
             return;
         }
 
         // --- ACTIVE NAVIGATION CAMERA ---
-        if (isNavigating && routeCoords.length >= 2) {
+        if (isNavigating) {
             wasNavigatingRef.current = true;
 
-            // Skip auto-camera if user recently interacted (5s cooldown)
-            const timeSinceInteraction = Date.now() - userInteractedRef.current;
-            if (timeSinceInteraction < 5000) return;
-
-            // Compute travel bearing from nearest route segment
-            let travelBearing = prevBearingRef.current;
-            let minDist = Infinity;
-            for (let i = 0; i < routeCoords.length - 1; i++) {
-                const snap = getPointOnSegmentNearestTo(you.location, routeCoords[i], routeCoords[i + 1]);
-                const d = getDistanceMeters(you.location, snap);
-                if (d < minDist) {
-                    minDist = d;
-                    travelBearing = getBearing(routeCoords[i], routeCoords[i + 1]);
-                }
+            // If user has dragged/panned or zoomed the map ahead, DO NOT fight user touch input
+            if (isCameraFree) {
+                return;
             }
 
-            // Smooth bearing interpolation to avoid jumpy rotation
-            // Handle the 0°/360° wrap-around correctly
+            // Compute travel bearing from driver device heading or route polyline
+            let travelBearing = prevBearingRef.current;
+            if (driver?.heading !== undefined && driver.heading >= 0 && (driver.speed || 0) > 1.5) {
+                travelBearing = driver.heading;
+            } else if (routeCoords.length >= 2) {
+                // Find nearest route segment
+                let minDist = Infinity;
+                let nearestIdx = Math.max(0, Math.min(currentStepIndex, routeCoords.length - 2));
+                for (let i = 0; i < routeCoords.length - 1; i++) {
+                    const snap = getPointOnSegmentNearestTo(driverLoc, routeCoords[i], routeCoords[i + 1]);
+                    const d = getDistanceMeters(driverLoc, snap);
+                    if (d < minDist) {
+                        minDist = d;
+                        nearestIdx = i;
+                    }
+                }
+                travelBearing = getBearing(routeCoords[nearestIdx], routeCoords[Math.min(nearestIdx + 1, routeCoords.length - 1)]);
+            }
+
+            // Smooth bearing interpolation (shortest path across 360 boundary)
             let delta = travelBearing - prevBearingRef.current;
             if (delta > 180) delta -= 360;
             if (delta < -180) delta += 360;
-            const smoothedBearing = prevBearingRef.current + delta * 0.3; // 30% interpolation per frame
+            const smoothedBearing = prevBearingRef.current + delta * 0.45;
             prevBearingRef.current = ((smoothedBearing % 360) + 360) % 360;
 
-            // MapLibre bearing: the map rotates so that this bearing points "up"
-            // We negate it because MapLibre's bearing is the rotation of north from viewport-up
-            const mapBearing = -prevBearingRef.current;
-
+            // 3rd Person Perspective Chase View:
+            // - Pitch: 60° (high 3D tilt looking down the road)
+            // - Bearing: forward along vehicle heading (MapLibre rotates map so heading faces UP)
+            // - Zoom: 17.8 (detailed driving scale)
+            // - Padding: shifts vehicle marker down to bottom ~35% of screen so 65% is road ahead
             map.current.easeTo({
-                center: [you.location.lng, you.location.lat],
-                bearing: mapBearing,
-                pitch: 55,
-                zoom: 17,
-                duration: 800,
-                easing: (t: number) => t * (2 - t) // smooth ease-out
+                center: [driverLoc.lng, driverLoc.lat],
+                bearing: prevBearingRef.current,
+                pitch: 60,
+                zoom: isMobile ? 17.5 : 18.0,
+                padding: {
+                    top: isMobile ? 120 : 90,
+                    bottom: isMobile ? 240 : 180,
+                    left: 0,
+                    right: 0
+                },
+                duration: 700,
+                easing: (t: number) => t
             });
             return;
         }
-
-        // --- DEFAULT CAMERA (not navigating) ---
-        // No-op here; static cameras handled by other effects
-    }, [members, isNavigating, isMapReady, routeCoords, is3DMode]);
+    }, [members, userLocation, currentUserId, isNavigating, isMapReady, routeCoords, is3DMode, isCameraFree, currentStepIndex, isMobile]);
 
     // Camera control — initial center and member selection
     useEffect(() => {

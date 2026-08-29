@@ -204,6 +204,12 @@ const App: React.FC = () => {
   const logActivityRef = useRef<((type: AppNotification['type'], title: string, message: string, icon: string, memberId?: string) => void) | null>(null);
   const prevMembersRef = useRef<Record<string, { sosActive: boolean; battery: number; status: string }>>({});
 
+  // Free-look camera state during navigation
+  const [isCameraFree, setIsCameraFree] = useState(false);
+  const handleRecenter = useCallback(() => {
+    setIsCameraFree(false);
+  }, []);
+
   // Define logActivity helper
   const logActivity = useCallback((
     type: AppNotification['type'],
@@ -811,6 +817,8 @@ const App: React.FC = () => {
             {/* UNIFIED MAP: Single MapLibre3DView handles both 2D and 3D modes */}
             <MapLibre3DView
               members={members}
+              userLocation={userLocation}
+              currentUserId={user?.uid || ''}
               theme={theme}
               mapSkin={userSettings.mapSkin}
               buildingScale={userSettings.buildingScale}
@@ -836,6 +844,8 @@ const App: React.FC = () => {
               onBoundsChange={setMapBounds}
               mapStyle={userSettings.mapStyle}
               isMobile={isMobile}
+              isCameraFree={isCameraFree}
+              onCameraFreeChange={setIsCameraFree}
             />
           </div>
 
@@ -936,6 +946,8 @@ const App: React.FC = () => {
                 members={members}
                 userLocation={userLocation}
                 currentUserId={user?.uid || ''}
+                isCameraFree={isCameraFree}
+                onRecenter={handleRecenter}
               />
             </OverlayManager>
           ) : (

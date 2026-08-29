@@ -25,6 +25,8 @@ interface DriveModeHUDProps {
   members?: FamilyMember[];
   userLocation?: Location | null;
   currentUserId?: string;
+  isCameraFree?: boolean;
+  onRecenter?: () => void;
 }
 
 const renderLaneIcon = (direction: string, isValid: boolean) => {
@@ -95,7 +97,9 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   onDismissTollAlert,
   members = [],
   userLocation,
-  currentUserId = ''
+  currentUserId = '',
+  isCameraFree = false,
+  onRecenter
 }) => {
   const [showDetails, setShowDetails] = useState(!isMobile);
   const [advisoryDismissed, setAdvisoryDismissed] = useState(false);
@@ -605,6 +609,19 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             </div>
           </div>
 
+          {/* Desktop Floating Recenter Button */}
+          {isCameraFree && (
+            <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in zoom-in duration-200">
+              <button
+                onClick={onRecenter}
+                className="flex items-center gap-2.5 px-6 py-3 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-full shadow-[0_12px_30px_rgba(99,102,241,0.65)] border-2 border-white/40 font-black text-xs uppercase tracking-wider backdrop-blur-xl active:scale-95 transition-all cursor-pointer"
+              >
+                <span className="text-base animate-pulse">🎯</span>
+                <span>Recenter Map</span>
+              </button>
+            </div>
+          )}
+
           {/* Right Action Controls: Voice Mute + Cancel */}
           <div className="absolute right-6 bottom-6 z-20 pointer-events-auto flex items-center gap-3 animate-in slide-in-from-right duration-500">
             {/* Voice Mute / Unmute Toggle */}
@@ -638,6 +655,18 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
       ) : (
         /* MOBILE: Compact Bottom Sheet Layout */
         <div className="w-full pointer-events-auto pb-3 px-3">
+          {/* Mobile Floating Recenter Button */}
+          {isCameraFree && (
+            <div className="flex justify-center mb-3 animate-in fade-in zoom-in duration-200">
+              <button
+                onClick={onRecenter}
+                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-full shadow-[0_10px_25px_rgba(99,102,241,0.65)] border border-white/40 font-black text-xs uppercase tracking-wider backdrop-blur-xl active:scale-95 transition-all cursor-pointer"
+              >
+                <span className="text-sm animate-pulse">🎯</span>
+                <span>Recenter</span>
+              </button>
+            </div>
+          )}
           <div className="max-w-xl mx-auto flex items-end justify-between gap-3">
             {/* Left: Speed + Speed Limit + ETA */}
             <div className="flex items-end gap-2 flex-1">
