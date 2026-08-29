@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { offlineMapService, DownloadArea, computeRadiusBounds } from '../services/offlineMapService';
 
 interface OfflineMapManagerProps {
@@ -15,11 +15,29 @@ interface OfflineMapManagerProps {
 
 const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, userLocation, theme, onClose }) => {
     const [isDownloading, setIsDownloading] = useState(false);
+    const [downloadingName, setDownloadingName] = useState<string>('');
+    const [downloadingDesc, setDownloadingDesc] = useState<string>('');
     const [progress, setProgress] = useState({ cached: 0, total: 0 });
     const [downloadedAreas, setDownloadedAreas] = useState<DownloadArea[]>([]);
-    const [estimatedTiles, setEstimatedTiles] = useState(0);
     const [isServiceReady, setIsServiceReady] = useState(false);
-    const [areaName, setAreaName] = useState('My Local Region');
+    const [areaName, setAreaName] = useState('Visible Map View');
+
+    // 80km region bounds computed from user location
+    const local80kmBounds = useMemo(() => {
+        if (!userLocation) return null;
+        return computeRadiusBounds(userLocation, 80);
+    }, [userLocation]);
+
+    // Estimated tile counts
+    const estimated80kmTiles = useMemo(() => {
+        if (!local80kmBounds) return 0;
+        return offlineMapService.estimateTileCount(local80kmBounds, 10, 13);
+    }, [local80kmBounds]);
+
+    const estimatedScreenTiles = useMemo(() => {
+        if (!currentBounds) return 0;
+        return offlineMapService.estimateTileCount(currentBounds, 10, 13);
+    }, [currentBounds]);
 
     useEffect(() => {
         offlineMapService.init().then((ready) => {
@@ -30,19 +48,17 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
         });
     }, []);
 
-    useEffect(() => {
-        const boundsToEstimate = currentBounds || (userLocation ? computeRadiusBounds(userLocation, 80) : null);
-        if (boundsToEstimate) {
-            const count = offlineMapService.estimateTileCount(boundsToEstimate, 10, 14);
-            setEstimatedTiles(count);
-        }
-    }, [currentBounds, userLocation]);
+    const handleDownloadBounds = async (
+        bounds: { north: number; south: number; east: number; west: number },
+        name: string,
+        description: string
+    ) => {
+        if (!isServiceReady || isDownloading) return;
 
-    const handleDownloadBounds = async (bounds: { north: number; south: number; east: number; west: number }, name: string) => {
-        if (!isServiceReady) return;
-
-        const count = offlineMapService.estimateTileCount(bounds, 10, 14);
+        const count = offlineMapService.estimateTileCount(bounds, 10, 13);
         setIsDownloading(true);
+        setDownloadingName(name);
+        setDownloadingDesc(description);
         setProgress({ cached: 0, total: count });
 
         try {
@@ -50,27 +66,42 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                 name,
                 bounds,
                 10,
-                14,
-                (cached, total) => setProgress({ cached, total })
+                13,
+                (cached, total) => setProgress({ cached, total }),
+                description
             );
             setDownloadedAreas(offlineMapService.getDownloadedAreas());
-        } catch (error) {
-            console.error('Download failed:', error);
+        } catch (error: any) {
+            if (error?.name === 'AbortError' || error?.message?.includes('cancelled')) {
+                console.log('[OfflineMapManager] Download cancelled by user');
+            } else {
+                console.error('[OfflineMapManager] Download failed:', error);
+            }
         } finally {
             setIsDownloading(false);
+            setDownloadingName('');
+            setDownloadingDesc('');
         }
+    };
+
+    const handleCancelDownload = () => {
+        offlineMapService.cancelDownload();
+        setIsDownloading(false);
+        setDownloadingName('');
+        setDownloadingDesc('');
     };
 
     const handleDownloadCurrentView = () => {
         if (currentBounds) {
-            handleDownloadBounds(currentBounds, areaName.trim() || 'Visible Screen Area');
+            const desc = `Visible Screen View (${currentBounds.north.toFixed(2)}°N to ${currentBounds.south.toFixed(2)}°N)`;
+            handleDownloadBounds(currentBounds, areaName.trim() || 'Visible Screen View', desc);
         }
     };
 
     const handleDownload80kmRegion = () => {
-        if (userLocation) {
-            const regionBounds = computeRadiusBounds(userLocation, 80);
-            handleDownloadBounds(regionBounds, 'Home / 80km Region');
+        if (local80kmBounds && userLocation) {
+            const desc = `50-mile (80km) radius around GPS (${userLocation.lat.toFixed(3)}°N, ${userLocation.lng.toFixed(3)}°W)`;
+            handleDownloadBounds(local80kmBounds, 'Home / 80km Safety Region', desc);
         }
     };
 
@@ -99,7 +130,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                     <div>
                         <h2 className="font-black text-lg tracking-tight">Offline Navigation Maps</h2>
                         <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-                            Pre-download vector & satellite tiles for 100% offline GPS
+                            Pre-download vector & street tiles for 100% offline GPS
                         </p>
                     </div>
                 </div>
@@ -115,13 +146,61 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
             {/* Content */}
             <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
                 {!isServiceReady ? (
-                    <div className={`p-4 rounded-2xl text-center ${theme === 'dark' ? 'bg-red-500/20 text-red-400' : 'bg-red-50 text-red-600'}`}>
-                        <p className="font-bold text-sm">Service Worker Initializing...</p>
+                    <div className={`p-4 rounded-2xl text-center ${theme === 'dark' ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                        <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                        <p className="font-bold text-sm">Initializing Offline Cache Engine...</p>
                         <p className="text-xs opacity-75 mt-1">Connecting to local CacheStorage pipeline...</p>
                     </div>
                 ) : (
                     <>
-                        {/* Quick 80km Region Download */}
+                        {/* ACTIVE DOWNLOAD IN PROGRESS BANNER */}
+                        {isDownloading && (
+                            <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-900/60 via-purple-900/60 to-indigo-900/60 border-2 border-indigo-500/50 shadow-2xl space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span className="text-xl animate-bounce">📥</span>
+                                        <div className="min-w-0">
+                                            <h3 className="font-black text-xs uppercase tracking-wider text-indigo-300 truncate">
+                                                Downloading: {downloadingName}
+                                            </h3>
+                                            {downloadingDesc && (
+                                                <p className="text-[10px] text-slate-300 truncate mt-0.5">
+                                                    {downloadingDesc}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-indigo-500 text-white shrink-0 shadow">
+                                        {progressPercent}%
+                                    </span>
+                                </div>
+
+                                {/* Animated Progress Bar */}
+                                <div className="space-y-1.5">
+                                    <div className="h-3 rounded-full overflow-hidden bg-black/50 border border-white/10 p-0.5">
+                                        <div
+                                            className="h-full rounded-full bg-gradient-to-r from-amber-400 via-indigo-400 to-purple-400 transition-all duration-300 shadow-[0_0_12px_rgba(99,102,241,0.8)]"
+                                            style={{ width: `${Math.max(progressPercent, 4)}%` }}
+                                        />
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-300 px-1">
+                                        <span>Tiles: {progress.cached.toLocaleString()} / {progress.total.toLocaleString()}</span>
+                                        <span>~{Math.round((progress.cached * 25) / 1024)} MB cached</span>
+                                    </div>
+                                </div>
+
+                                {/* CANCEL DOWNLOAD BUTTON */}
+                                <button
+                                    onClick={handleCancelDownload}
+                                    className="w-full py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 active:scale-95 text-red-300 hover:text-white border border-red-500/40 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg"
+                                >
+                                    <span>🛑</span>
+                                    <span>Cancel Download</span>
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Quick 80km Region Download Card */}
                         {userLocation && (
                             <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-indigo-500/15 border border-amber-500/30 space-y-3">
                                 <div className="flex items-center justify-between">
@@ -132,33 +211,49 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                         </h3>
                                     </div>
                                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300">
-                                        ~50-80 MB
+                                        ~{Math.round((estimated80kmTiles * 25) / 1024)} MB ({estimated80kmTiles.toLocaleString()} tiles)
                                     </span>
                                 </div>
-                                <p className={`text-xs ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                                    Caches full street geometry, highway exits, and turn-by-turn vectors within 80km of your current location.
-                                </p>
+
+                                <div className={`text-xs space-y-1.5 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                                    <p>
+                                        📍 <strong>Coverage:</strong> 80 km (50 miles) radius around GPS ({userLocation.lat.toFixed(3)}°N, {userLocation.lng.toFixed(3)}°W)
+                                    </p>
+                                    <p className="text-[11px] opacity-80">
+                                        🛣️ Includes full local street geometry, highway exits, and offline vector routing.
+                                    </p>
+                                </div>
+
                                 <button
                                     onClick={handleDownload80kmRegion}
                                     disabled={isDownloading}
-                                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50"
+                                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
-                                    📥 Download 80km Local Corridor
+                                    <span>📥</span>
+                                    <span>Download 80km Local Corridor</span>
                                 </button>
                             </div>
                         )}
 
-                        {/* Download Custom Area */}
+                        {/* Download Visible Screen Area Card */}
                         <div className={`p-4 rounded-2xl border ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
-                            <h3 className="font-bold text-xs uppercase tracking-wider text-indigo-400 mb-2">
-                                Download Visible Screen Area
-                            </h3>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="font-bold text-xs uppercase tracking-wider text-indigo-400">
+                                    Download Visible Screen Area
+                                </h3>
+                                {currentBounds && (
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300">
+                                        ~{Math.max(1, Math.round((estimatedScreenTiles * 25) / 1024))} MB ({estimatedScreenTiles.toLocaleString()} tiles)
+                                    </span>
+                                )}
+                            </div>
 
                             <input
                                 type="text"
                                 value={areaName}
                                 onChange={(e) => setAreaName(e.target.value)}
-                                placeholder="Area name (e.g. Vacation Trip / Raleigh to NY)..."
+                                disabled={isDownloading}
+                                placeholder="Area label (e.g. Downtown / Raleigh to NY)..."
                                 className={`w-full px-4 py-2 rounded-xl mb-3 text-xs font-semibold border outline-none ${
                                     theme === 'dark'
                                         ? 'bg-slate-800 border-white/10 text-white placeholder-slate-500'
@@ -166,33 +261,26 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                 }`}
                             />
 
-                            {currentBounds && (
-                                <p className={`text-[11px] font-semibold mb-3 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-                                    📊 Estimated: <span className="font-bold text-amber-400">{estimatedTiles.toLocaleString()}</span> tiles (~{Math.round(estimatedTiles * 15 / 1024)} MB)
-                                </p>
-                            )}
-
-                            {isDownloading ? (
-                                <div className="space-y-2">
-                                    <div className={`h-3 rounded-full overflow-hidden ${theme === 'dark' ? 'bg-slate-700' : 'bg-slate-200'}`}>
-                                        <div
-                                            className="h-full bg-gradient-to-r from-amber-400 via-orange-500 to-indigo-500 transition-all duration-300 animate-pulse"
-                                            style={{ width: `${progressPercent}%` }}
-                                        />
-                                    </div>
-                                    <p className={`text-[11px] font-bold text-center ${theme === 'dark' ? 'text-amber-300' : 'text-amber-600'}`}>
-                                        Caching tiles: {progress.cached.toLocaleString()} / {progress.total.toLocaleString()} ({progressPercent}%)
+                            {currentBounds ? (
+                                <div className={`text-[11px] mb-3 space-y-1 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                                    <p>
+                                        📐 <strong>Bounds:</strong> {currentBounds.north.toFixed(2)}°N to {currentBounds.south.toFixed(2)}°N, {currentBounds.west.toFixed(2)}°W to {currentBounds.east.toFixed(2)}°E
                                     </p>
                                 </div>
                             ) : (
-                                <button
-                                    onClick={handleDownloadCurrentView}
-                                    disabled={!currentBounds}
-                                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md disabled:opacity-50"
-                                >
-                                    📥 Download Screen View
-                                </button>
+                                <p className="text-[11px] text-slate-400 mb-3">
+                                    Move the map to frame your desired region before downloading.
+                                </p>
                             )}
+
+                            <button
+                                onClick={handleDownloadCurrentView}
+                                disabled={!currentBounds || isDownloading}
+                                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                                <span>📥</span>
+                                <span>Download Visible Viewport</span>
+                            </button>
                         </div>
 
                         {/* Downloaded Areas List */}
@@ -204,7 +292,8 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                     </h3>
                                     <button
                                         onClick={handleClearCache}
-                                        className="text-[11px] font-bold px-2 py-0.5 rounded-lg text-rose-400 hover:bg-rose-500/20 transition-all"
+                                        disabled={isDownloading}
+                                        className="text-[11px] font-bold px-2 py-0.5 rounded-lg text-rose-400 hover:bg-rose-500/20 transition-all disabled:opacity-50"
                                     >
                                         Clear All
                                     </button>
@@ -223,11 +312,16 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                                     <span className="text-emerald-400 font-bold text-xs">✓</span>
                                                     <p className="font-bold text-xs truncate">{area.name}</p>
                                                 </div>
-                                                <p className={`text-[10px] ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'} mt-0.5`}>
+                                                {area.description && (
+                                                    <p className={`text-[10px] ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'} truncate mt-0.5`}>
+                                                        {area.description}
+                                                    </p>
+                                                )}
+                                                <p className={`text-[9px] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'} mt-0.5`}>
                                                     {area.tilesCount.toLocaleString()} tiles • {new Date(area.downloadedAt).toLocaleDateString()}
                                                 </p>
                                             </div>
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 shrink-0 ml-2">
                                                 Ready
                                             </span>
                                         </div>

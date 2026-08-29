@@ -5,6 +5,7 @@ const TILE_CACHE_NAME = 'myway-tiles-v1';
 export interface DownloadArea {
     id: string;
     name: string;
+    description?: string;
     bounds: {
         north: number;
         south: number;
@@ -31,6 +32,7 @@ export function computeRadiusBounds(center: { lat: number; lng: number }, radius
 class OfflineMapService {
     private downloadedAreas: DownloadArea[] = [];
     private isInitialized = false;
+    private activeAbortController: AbortController | null = null;
 
     async init(): Promise<boolean> {
         if (this.isInitialized) return true;
@@ -72,7 +74,7 @@ class OfflineMapService {
     public getTileUrls(
         bounds: { north: number; south: number; east: number; west: number },
         zoomMin: number = 10,
-        zoomMax: number = 14,
+        zoomMax: number = 13,
         style: 'light_all' | 'dark_all' = 'dark_all'
     ): string[] {
         const urls: string[] = [
@@ -95,9 +97,6 @@ class OfflineMapService {
                 for (let y = minY; y <= maxY; y++) {
                     const subdomain = subdomains[(x + y) % subdomains.length];
                     urls.push(`https://${subdomain}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}@2x.png`);
-                    if (style === 'dark_all') {
-                        urls.push(`https://${subdomain}.basemaps.cartocdn.com/light_all/${z}/${x}/${y}@2x.png`);
-                    }
                 }
             }
         }
@@ -110,9 +109,9 @@ class OfflineMapService {
     estimateTileCount(
         bounds: { north: number; south: number; east: number; west: number },
         zoomMin: number = 10,
-        zoomMax: number = 14
+        zoomMax: number = 13
     ): number {
-        let count = 0;
+        let count = 3; // style JSONs
         for (let z = zoomMin; z <= zoomMax; z++) {
             const topLeft = this.latLngToTile(bounds.north, bounds.west, z);
             const bottomRight = this.latLngToTile(bounds.south, bounds.east, z);
@@ -123,15 +122,28 @@ class OfflineMapService {
         return count;
     }
 
-    // Download tiles for a given area with direct high-performance CacheStorage batching
+    // Cancel active download
+    cancelDownload(): void {
+        if (this.activeAbortController) {
+            this.activeAbortController.abort();
+            this.activeAbortController = null;
+        }
+    }
+
+    // Download tiles for a given area with direct high-performance CacheStorage batching & cancellation
     async downloadArea(
         name: string,
         bounds: { north: number; south: number; east: number; west: number },
         zoomMin: number = 10,
-        zoomMax: number = 14,
-        onProgress?: (cached: number, total: number) => void
+        zoomMax: number = 13,
+        onProgress?: (cached: number, total: number) => void,
+        description?: string
     ): Promise<DownloadArea> {
         await this.init();
+
+        // Create new AbortController for this download session
+        this.activeAbortController = new AbortController();
+        const mainSignal = this.activeAbortController.signal;
 
         const tileUrls = this.getTileUrls(bounds, zoomMin, zoomMax);
         const total = tileUrls.length;
@@ -149,21 +161,30 @@ class OfflineMapService {
             }
         }
 
-        // Parallel chunk downloader (batches of 8 concurrent requests)
-        const BATCH_SIZE = 8;
+        // Parallel chunk downloader (batches of 12 concurrent requests)
+        const BATCH_SIZE = 12;
         for (let i = 0; i < tileUrls.length; i += BATCH_SIZE) {
+            if (mainSignal.aborted) {
+                throw new DOMException('Download cancelled by user', 'AbortError');
+            }
+
             const batch = tileUrls.slice(i, i + BATCH_SIZE);
             await Promise.allSettled(
                 batch.map(async (url) => {
+                    if (mainSignal.aborted) return;
                     try {
                         const controller = new AbortController();
                         const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+                        const onMainAbort = () => controller.abort();
+                        mainSignal.addEventListener('abort', onMainAbort, { once: true });
 
                         const response = await fetch(url, {
                             signal: controller.signal,
                             mode: 'cors'
                         });
                         clearTimeout(timeoutId);
+                        mainSignal.removeEventListener('abort', onMainAbort);
 
                         if (response && (response.ok || response.type === 'opaque') && cache) {
                             await cache.put(url, response);
@@ -171,16 +192,25 @@ class OfflineMapService {
                     } catch (fetchErr) {
                         // Tolerate single tile failures gracefully
                     } finally {
-                        cached++;
-                        onProgress?.(cached, total);
+                        if (!mainSignal.aborted) {
+                            cached++;
+                            onProgress?.(cached, total);
+                        }
                     }
                 })
             );
         }
 
+        if (mainSignal.aborted) {
+            throw new DOMException('Download cancelled by user', 'AbortError');
+        }
+
+        this.activeAbortController = null;
+
         const area: DownloadArea = {
             id: `area-${Date.now()}`,
             name: name || 'Offline Region',
+            description,
             bounds,
             zoom: { min: zoomMin, max: zoomMax },
             tilesCount: cached,
@@ -198,6 +228,7 @@ class OfflineMapService {
     }
 
     async clearCache(): Promise<void> {
+        this.cancelDownload();
         if (typeof window !== 'undefined' && 'caches' in window) {
             try {
                 await window.caches.delete(TILE_CACHE_NAME);
