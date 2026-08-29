@@ -402,17 +402,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             'fill-extrusion-opacity': opacityExpr
                         }
                     }, labelLayerId);
-                }
-            }
-
-            // AUDIT #6: Improve Map Label Readability
-            // Add halo to all symbol layers (city names, etc)
+            // AUDIT #6: Improve Map Label Readability with Harmonious Halos
+            const isWarmLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
             layers.forEach((layer: any) => {
                 if (layer.type === 'symbol') {
                     try {
-                        map.current!.setPaintProperty(layer.id, 'text-halo-color', theme === 'dark' ? 'rgba(15, 23, 42, 0.8)' : 'rgba(255, 255, 255, 0.8)');
+                        map.current!.setPaintProperty(
+                            layer.id, 
+                            'text-halo-color', 
+                            isWarmLightSkin ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.85)'
+                        );
                         map.current!.setPaintProperty(layer.id, 'text-halo-width', 2);
                         map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
+
+                        // Ensure street and highway names use soft modern slate instead of harsh dark pills
+                        if (isWarmLightSkin && (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway'))) {
+                            map.current!.setPaintProperty(layer.id, 'text-color', '#475569');
+                        }
                     } catch (e) {
                         // Some layers might not support these paint properties
                     }
@@ -545,6 +551,26 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
+
+            // Dynamically update symbol layer halos and colors
+            const layers = map.current.getStyle()?.layers || [];
+            layers.forEach((layer: any) => {
+                if (layer.type === 'symbol') {
+                    try {
+                        map.current!.setPaintProperty(
+                            layer.id, 
+                            'text-halo-color', 
+                            isWarmLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.85)'
+                        );
+                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
+
+                        if (isWarmLight && (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway'))) {
+                            map.current!.setPaintProperty(layer.id, 'text-color', '#475569');
+                        }
+                    } catch {}
+                }
+            });
         } catch (e) {
             console.warn('[MapLibre] Dynamic building style update:', e);
         }
