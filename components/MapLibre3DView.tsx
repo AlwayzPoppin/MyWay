@@ -6,6 +6,7 @@ import { MapSkinId, getMapSkin, applySkinOverrides, SATELLITE_STYLE, TERRAIN_STY
 import { getDistanceMeters, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { getBrandMeta } from '../services/brandLogoService';
+import { getGTAPlaceBlipHtml, getGTADestinationPinHtml } from '../services/gtaIconsService';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
 const circleCoordsCache = new Map<string, [number, number][]>();
@@ -744,29 +745,36 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         // Add new marker if route is active
         if (activeRoute?.destinationLoc) {
             const el = document.createElement('div');
-            el.style.cssText = `
-                width: 36px; height: 36px;
-                background: linear-gradient(135deg, #ef4444, #dc2626);
-                border-radius: 50% 50% 50% 0;
-                transform: rotate(-45deg);
-                border: 3px solid white;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-                display: flex; align-items: center; justify-content: center;
-            `;
-            const inner = document.createElement('div');
-            inner.style.cssText = `
-                width: 10px; height: 10px;
-                background: white;
-                border-radius: 50%;
-                transform: rotate(45deg);
-            `;
-            el.appendChild(inner);
+            if (mapSkin === 'gta_radar') {
+                el.innerHTML = getGTADestinationPinHtml();
+                destinationMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' })
+                    .setLngLat([activeRoute.destinationLoc.lng, activeRoute.destinationLoc.lat])
+                    .addTo(map.current!);
+            } else {
+                el.style.cssText = `
+                    width: 36px; height: 36px;
+                    background: linear-gradient(135deg, #ef4444, #dc2626);
+                    border-radius: 50% 50% 50% 0;
+                    transform: rotate(-45deg);
+                    border: 3px solid white;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+                    display: flex; align-items: center; justify-content: center;
+                `;
+                const inner = document.createElement('div');
+                inner.style.cssText = `
+                    width: 10px; height: 10px;
+                    background: white;
+                    border-radius: 50%;
+                    transform: rotate(45deg);
+                `;
+                el.appendChild(inner);
 
-            destinationMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'bottom' })
-                .setLngLat([activeRoute.destinationLoc.lng, activeRoute.destinationLoc.lat])
-                .addTo(map.current!);
+                destinationMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+                    .setLngLat([activeRoute.destinationLoc.lng, activeRoute.destinationLoc.lat])
+                    .addTo(map.current!);
+            }
         }
-    }, [activeRoute, isMapReady]);
+    }, [activeRoute, isMapReady, mapSkin]);
 
     // Auto-frame route when previewing or starting route
     useEffect(() => {
@@ -801,53 +809,67 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const placesRef = useRef(places);
     placesRef.current = places;
 
+    // Track previous mapSkin to reset places and members markers on skin change
+    const prevMapSkinRef = useRef(mapSkin);
+
     // Update Places Markers
     useEffect(() => {
         if (!map.current) return;
+
+        // If skin changed, clear all place markers so they re-render with correct theme icons
+        if (prevMapSkinRef.current !== mapSkin) {
+            placesMarkersRef.current.forEach(m => m.remove());
+            placesMarkersRef.current.clear();
+            prevMapSkinRef.current = mapSkin;
+        }
 
         places.forEach(place => {
             if (!placesMarkersRef.current.has(place.id)) {
                 const el = document.createElement('div');
                 el.className = 'maplibre-place-marker group transition-transform hover:scale-110';
                 
-                const brand = getBrandMeta(place.name);
-                if (brand) {
-                    el.innerHTML = `
-                        <div style="
-                            width: 38px;
-                            height: 38px;
-                            border-radius: 12px;
-                            background: ${brand.bg};
-                            border: 2px solid ${brand.border};
-                            box-shadow: 0 6px 16px rgba(0,0,0,0.5), 0 0 12px ${brand.border}55;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            padding: 5px;
-                            cursor: pointer;
-                        ">
-                            ${brand.svg}
-                        </div>
-                    `;
+                if (mapSkin === 'gta_radar') {
+                    el.innerHTML = getGTAPlaceBlipHtml(place.type, place.name);
                 } else {
-                    el.innerHTML = `
-                        <div style="
-                            width: 36px;
-                            height: 36px;
-                            border-radius: 12px;
-                            background: rgba(15, 23, 42, 0.9);
-                            backdrop-filter: blur(8px);
-                            border: 2px solid rgba(255, 255, 255, 0.2);
-                            box-shadow: 0 6px 16px rgba(0,0,0,0.5);
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            font-size: 20px;
-                            cursor: pointer;
-                        ">
-                            ${place.icon || '📍'}
-                        </div>
-                    `;
+                    const brand = getBrandMeta(place.name);
+                    if (brand) {
+                        el.innerHTML = `
+                            <div style="
+                                width: 38px;
+                                height: 38px;
+                                border-radius: 12px;
+                                background: ${brand.bg};
+                                border: 2px solid ${brand.border};
+                                box-shadow: 0 6px 16px rgba(0,0,0,0.5), 0 0 12px ${brand.border}55;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                padding: 5px;
+                                cursor: pointer;
+                            ">
+                                ${brand.svg}
+                            </div>
+                        `;
+                    } else {
+                        el.innerHTML = `
+                            <div style="
+                                width: 36px;
+                                height: 36px;
+                                border-radius: 12px;
+                                background: rgba(15, 23, 42, 0.9);
+                                backdrop-filter: blur(8px);
+                                border: 2px solid rgba(255, 255, 255, 0.2);
+                                box-shadow: 0 6px 16px rgba(0,0,0,0.5);
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                font-size: 20px;
+                                cursor: pointer;
+                            ">
+                                ${place.icon || '📍'}
+                            </div>
+                        `;
+                    }
                 }
                 el.style.cursor = 'pointer';
 
@@ -873,7 +895,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 placesMarkersRef.current.delete(id);
             }
         });
-    }, [places, onSelectPlace]);
+    }, [places, onSelectPlace, mapSkin]);
 
     // Update Places Geofence Circles
     useEffect(() => {
@@ -1067,9 +1089,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         });
     }, [privacyZones, styleVersion]);
 
+    const prevMemberSkinRef = useRef(mapSkin);
+
     // Update member markers and accuracy circles
     useEffect(() => {
         if (!map.current || !isMapReady) return;
+
+        // If skin changed, clear member markers so they re-render with correct theme borders/arrows
+        if (prevMemberSkinRef.current !== mapSkin) {
+            markersRef.current.forEach(m => m.remove());
+            markersRef.current.clear();
+            prevMemberSkinRef.current = mapSkin;
+        }
 
         const SNAPPING_THRESHOLD_METERS = 40; // Max distance to snap to road
 
@@ -1209,21 +1240,24 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const isStale = ageMinutes >= 5;
                 const ageBadge = isStale ? (ageMinutes >= 60 ? `${Math.floor(ageMinutes / 60)}h ago` : `${ageMinutes}m ago`) : '';
 
-                const borderColor = isBlurred 
-                    ? '#a855f7' 
-                    : member.privacyMode === 'frozen' 
-                        ? '#38bdf8' 
-                        : isStale 
-                            ? '#9ca3af' 
-                            : member.status === 'Driving' 
-                                ? '#6366f1' 
-                                : '#22c55e';
+                const isGTARadar = mapSkin === 'gta_radar';
+                const borderColor = isGTARadar
+                    ? '#facc15'
+                    : isBlurred 
+                        ? '#a855f7' 
+                        : member.privacyMode === 'frozen' 
+                            ? '#38bdf8' 
+                            : isStale 
+                                ? '#9ca3af' 
+                                : member.status === 'Driving' 
+                                    ? '#6366f1' 
+                                    : '#22c55e';
 
                 el.style.cssText = `
                   width: 52px; height: 52px;
                   border-radius: 50%;
                   border: 3px solid ${borderColor};
-                  box-shadow: 0 4px 12px ${isBlurred ? 'rgba(168, 85, 247, 0.4)' : 'rgba(0,0,0,0.4)'};
+                  box-shadow: 0 4px 12px ${isGTARadar ? 'rgba(250, 204, 21, 0.4)' : isBlurred ? 'rgba(168, 85, 247, 0.4)' : 'rgba(0,0,0,0.4)'};
                   cursor: pointer;
                   ${isStale ? 'filter: grayscale(70%); opacity: 0.7;' : ''}
                   position: relative;
@@ -1247,10 +1281,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                 const directionArrow = document.createElement('div');
                 directionArrow.className = 'marker-direction-arrow';
+                const arrowColor = isGTARadar ? '#facc15' : '#6366f1';
                 directionArrow.style.cssText = `
-                    position: absolute; top: -12px; left: 50%; margin-left: -8px;
+                    position: absolute; top: -14px; left: 50%; margin-left: -8px;
                     width: 16px; height: 16px; border-left: 8px solid transparent; 
-                    border-right: 8px solid transparent; border-bottom: 12px solid #6366f1;
+                    border-right: 8px solid transparent; border-bottom: 14px solid ${arrowColor};
+                    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
                     transition: all 0.3s ease; opacity: ${isNavigating ? '1' : '0'}; transform-origin: center 18px;
                     transform: rotate(${displayBearing}deg);
                 `;
@@ -1259,7 +1295,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 if (member.currentTrip) {
                     const etaBadge = document.createElement('div');
                     etaBadge.className = 'marker-eta-badge';
-                    etaBadge.style.cssText = `position: absolute; top: -24px; left: 50%; transform: translateX(-50%); background: rgba(99, 102, 241, 0.9); backdrop-filter: blur(8px); color: white; font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.3); box-shadow: 0 4px 10px rgba(0,0,0,0.3); white-space: nowrap; pointer-events: none; display: flex; align-items: center; gap: 3px;`;
+                    etaBadge.style.cssText = `position: absolute; top: -24px; left: 50%; transform: translateX(-50%); background: ${isGTARadar ? 'rgba(234, 179, 8, 0.95)' : 'rgba(99, 102, 241, 0.9)'}; backdrop-filter: blur(8px); color: ${isGTARadar ? '#000000' : 'white'}; font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.3); box-shadow: 0 4px 10px rgba(0,0,0,0.3); white-space: nowrap; pointer-events: none; display: flex; align-items: center; gap: 3px;`;
                     etaBadge.innerHTML = `<span>🚗</span><span>${member.currentTrip.totalTime}</span>`;
                     el.appendChild(etaBadge);
                 }
@@ -1303,7 +1339,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 if (map.current?.getSource(circleSourceId)) map.current.removeSource(circleSourceId);
             }
         });
-    }, [members, isMapReady, isNavigating, routeCoords, currentStepIndex]);
+    }, [members, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin]);
 
     // ==========================================
     // DYNAMIC NAVIGATION CAMERA TRACKING SYSTEM (3RD PERSON CHASE CAM)
