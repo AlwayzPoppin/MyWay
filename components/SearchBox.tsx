@@ -43,6 +43,17 @@ function getDistanceMiles(userLoc: { lat: number; lng: number } | null | undefin
   return `${Math.round(miles)} mi`;
 }
 
+function getNumericMiles(userLoc: { lat: number; lng: number } | null | undefined, placeLoc: { lat: number; lng: number } | null | undefined): number {
+  if (!userLoc || !placeLoc || !userLoc.lat || !userLoc.lng || !placeLoc.lat || !placeLoc.lng) return 999999;
+  const R = 3958.8; // Earth radius in miles
+  const dLat = (placeLoc.lat - userLoc.lat) * Math.PI / 180;
+  const dLng = (placeLoc.lng - userLoc.lng) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(userLoc.lat * Math.PI / 180) * Math.cos(placeLoc.lat * Math.PI / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 const SearchBox: React.FC<SearchBoxProps> = ({
   onSearch,
   onNavigate,
@@ -149,7 +160,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           ))
         ];
 
-        // Sort: saved places first, then strictly by distance from driver (closest stores first)
+        // Sort: saved places first, then strictly by real proximity (closest stores first)
         combined.sort((a, b) => {
           const aIsSaved = matchingSaved.some(s => s.id === a.id);
           const bIsSaved = matchingSaved.some(s => s.id === b.id);
@@ -157,8 +168,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           if (!aIsSaved && bIsSaved) return 1;
 
           if (loc && a.location && b.location) {
-            const distA = (a.location.lat - loc.lat) ** 2 + (a.location.lng - loc.lng) ** 2;
-            const distB = (b.location.lat - loc.lat) ** 2 + (b.location.lng - loc.lng) ** 2;
+            const distA = getNumericMiles(loc, a.location);
+            const distB = getNumericMiles(loc, b.location);
             return distA - distB;
           }
           return 0;

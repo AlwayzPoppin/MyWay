@@ -177,6 +177,94 @@ const searchViaProxy = async (
     return results;
 };
 
+// Helper to parse cuisine types, food keywords, and brand names
+const getCuisineAndCategoryPatterns = (rawQuery: string) => {
+    const q = rawQuery.toLowerCase().trim();
+    // Strip common non-discriminative words
+    const stripped = q.replace(/\b(food|foods|restaurant|restaurants|place|places|near me|nearby|takeout|take out|delivery|shop|store)\b/gi, '').trim();
+    const core = stripped || q;
+
+    if (q.includes('chinese') || q.includes('dim sum')) {
+        return {
+            cuisinePattern: 'chinese|asian',
+            namePattern: 'chinese|china|wok|hunan|szechuan|mandarin|panda|peking|dragon|asian|oriental|great wall',
+            searchCore: 'chinese restaurant'
+        };
+    }
+    if (q.includes('mexican') || q.includes('taco') || q.includes('burrito')) {
+        return {
+            cuisinePattern: 'mexican|tex-mex|tacos',
+            namePattern: 'mexican|taco|burrito|cantina|taqueria|chipotle|el cazador|san jose',
+            searchCore: 'mexican restaurant'
+        };
+    }
+    if (q.includes('pizza') || q.includes('italian') || q.includes('pasta')) {
+        return {
+            cuisinePattern: 'pizza|italian',
+            namePattern: 'pizza|pizzeria|italian|pasta|marcos|domino|papa john|pizza hut|olive garden',
+            searchCore: 'pizza'
+        };
+    }
+    if (q.includes('japanese') || q.includes('sushi') || q.includes('ramen') || q.includes('hibachi')) {
+        return {
+            cuisinePattern: 'japanese|sushi|ramen',
+            namePattern: 'sushi|japanese|ramen|hibachi|tokyo|kyoto|teriyaki',
+            searchCore: 'japanese sushi'
+        };
+    }
+    if (q.includes('thai')) {
+        return {
+            cuisinePattern: 'thai',
+            namePattern: 'thai|pad thai|bangkok|siam',
+            searchCore: 'thai restaurant'
+        };
+    }
+    if (q.includes('indian') || q.includes('curry')) {
+        return {
+            cuisinePattern: 'indian',
+            namePattern: 'indian|curry|tandoor|masala|bombay|taj',
+            searchCore: 'indian restaurant'
+        };
+    }
+    if (q.includes('burger') || q.includes('fast food')) {
+        return {
+            cuisinePattern: 'burger|fast_food',
+            namePattern: 'burger|mcdonald|wendy|burger king|hardee|five guys|cook out|culver|sonic',
+            searchCore: 'burger fast food'
+        };
+    }
+    if (q.includes('coffee') || q.includes('cafe')) {
+        return {
+            cuisinePattern: 'coffee_shop|coffee',
+            namePattern: 'starbucks|dunkin|coffee|cafe|espresso',
+            searchCore: 'coffee shop'
+        };
+    }
+    if (q.includes('seafood')) {
+        return {
+            cuisinePattern: 'seafood',
+            namePattern: 'seafood|fish|crab|shrimp|oyster',
+            searchCore: 'seafood restaurant'
+        };
+    }
+    if (q.includes('bbq') || q.includes('barbecue')) {
+        return {
+            cuisinePattern: 'bbq|barbecue',
+            namePattern: 'bbq|barbecue|smokehouse|ribs',
+            searchCore: 'bbq restaurant'
+        };
+    }
+
+    const words = core.split(/\s+/).filter(w => w.length >= 2);
+    const regex = words.length > 0 ? words.map(w => w.replace(/['s]/g, '')).join('.*') : core.replace(/['s]/g, '');
+
+    return {
+        cuisinePattern: regex,
+        namePattern: regex,
+        searchCore: core
+    };
+};
+
 // Search via OSM (Photon for lightning-fast POIs/autocomplete, Nominatim for addresses, Overpass for categories & local businesses)
 const searchViaOSM = async (
     location: { lat: number; lng: number },
@@ -189,16 +277,18 @@ const searchViaOSM = async (
         if (results && results.length > 0) return results;
     }
 
-    // 2. Specific text search (e.g. "golden china", "168 glen", "123 Main St", "MCDONALDS")
+    // 2. Specific text search (e.g. "chinese food", "golden china", "123 Main St", "MCDONALDS")
     if (query && query.trim().length > 0) {
-        // Query Photon, Nominatim, and Overpass (for local neighborhood restaurants & businesses) concurrently
-        const [photonResults, nominatimResults, overpassNameResults] = await Promise.all([
+        const patterns = getCuisineAndCategoryPatterns(query);
+        // Query Photon, Nominatim, and Overpass concurrently
+        const [photonDirect, photonCore, overpassResults, nominatimResults] = await Promise.all([
             searchViaPhoton(location, query).catch(() => [] as Place[]),
-            searchViaNominatim(location, query).catch(() => [] as Place[]),
-            searchViaOverpass(location, query.trim(), true).catch(() => [] as Place[])
+            patterns.searchCore !== query ? searchViaPhoton(location, patterns.searchCore).catch(() => [] as Place[]) : Promise.resolve([] as Place[]),
+            searchViaOverpass(location, query.trim(), true).catch(() => [] as Place[]),
+            searchViaNominatim(location, query).catch(() => [] as Place[])
         ]);
 
-        const combined = [...overpassNameResults, ...photonResults, ...nominatimResults];
+        const combined = [...overpassResults, ...photonDirect, ...photonCore, ...nominatimResults];
         if (combined.length > 0) {
             return combined;
         }
@@ -258,6 +348,8 @@ const searchViaPhoton = async (
             const nLower = (props.name || '').toLowerCase();
             if (nLower.includes('taco') || nLower.includes('burrito') || nLower.includes('mexican')) icon = '🌮';
             else if (nLower.includes('pizza')) icon = '🍕';
+            else if (nLower.includes('chinese') || nLower.includes('wok') || nLower.includes('asian') || nLower.includes('dragon') || nLower.includes('panda')) icon = '🥡';
+            else if (nLower.includes('sushi') || nLower.includes('ramen') || nLower.includes('japanese')) icon = '🍣';
             else if (nLower.includes('mcdonald') || nLower.includes('burger') || nLower.includes('wendy') || nLower.includes('jack in the box') || nLower.includes('sonic') || nLower.includes('cook out') || nLower.includes('cookout')) icon = '🍔';
             else if (nLower.includes('bojangles') || nLower.includes('chick-fil-a') || nLower.includes('kfc') || nLower.includes('popeyes') || nLower.includes('chicken')) icon = '🍗';
             else if (nLower.includes('coffee') || nLower.includes('starbucks') || nLower.includes('dunkin')) icon = '☕';
@@ -289,7 +381,7 @@ const searchViaPhoton = async (
     }
 };
 
-// Overpass API fallback — returns up to 15 nearby places using radius searches or name matching
+// Overpass API fallback — returns up to 25 nearby places using radius searches or name matching
 const searchViaOverpass = async (
     location: { lat: number; lng: number },
     typeOrQuery: string,
@@ -300,14 +392,12 @@ const searchViaOverpass = async (
 
         let amenityQuery = '';
         if (isNameQuery) {
-            const cleanQuery = typeOrQuery.toLowerCase().trim();
-            const words = cleanQuery.split(/\s+/).filter(w => w.length >= 2);
-            const regexParts = words.length > 0 ? words.map(w => w.replace(/['s]/g, '')).join('.*') : cleanQuery.replace(/['s]/g, '');
+            const patterns = getCuisineAndCategoryPatterns(typeOrQuery);
             amenityQuery = `(
-                nw["name"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
-                nw["brand"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
-                nw["cuisine"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
-                nw["shop"~"${regexParts}",i](around:25000, {{lat}}, {{lng}});
+                nw["cuisine"~"${patterns.cuisinePattern}",i](around:25000, {{lat}}, {{lng}});
+                nw["name"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
+                nw["brand"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
+                nw["shop"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
             );`;
         } else if (typeOrQuery === 'gas_station') {
             amenityQuery = 'nw["amenity"="fuel"](around:5000, {{lat}}, {{lng}});';
