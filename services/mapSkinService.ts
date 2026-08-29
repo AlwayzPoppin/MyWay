@@ -5,7 +5,7 @@
  * These are vector tile style URLs compatible with MapLibre GL.
  */
 
-export type MapSkinId = 'default' | 'cyberpunk' | 'sunset' | 'midnight' | 'arctic' | 'forest';
+export type MapSkinId = 'default' | 'warm_cream' | 'muted_slate';
 
 export interface MapSkin {
     id: MapSkinId;
@@ -69,51 +69,27 @@ export const TERRAIN_STYLE = {
 export const MAP_SKINS: MapSkin[] = [
     {
         id: 'default',
+        name: 'Auto / Dynamic',
+        description: 'Warm Cream by day, Muted Slate by night',
+        styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        preview: '🌓',
+        isPremium: false
+    },
+    {
+        id: 'warm_cream',
+        name: 'Warm Cream',
+        description: 'Bright warm daylight with cream & off-white ivory tones',
+        styleUrl: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+        preview: '☀️',
+        isPremium: false
+    },
+    {
+        id: 'muted_slate',
         name: 'Muted Slate',
-        description: 'Sophisticated matte slate & graphite dark aesthetic',
+        description: 'Sleek matte graphite & deep charcoal dark theme',
         styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
         preview: '🌑',
         isPremium: false
-    },
-    {
-        id: 'midnight',
-        name: 'Midnight Onyx',
-        description: 'Deep dark mode with stealth contours',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-        preview: '🌙',
-        isPremium: false
-    },
-    {
-        id: 'cyberpunk',
-        name: 'Cyberpunk',
-        description: 'Neon-soaked futuristic city vibes',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
-        preview: '🌆',
-        isPremium: true
-    },
-    {
-        id: 'sunset',
-        name: 'Sunset',
-        description: 'Warm golden hour aesthetic',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-        preview: '🌅',
-        isPremium: true
-    },
-    {
-        id: 'arctic',
-        name: 'Arctic',
-        description: 'Cool blue tones, icy clarity',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/positron-nolabels-gl-style/style.json',
-        preview: '❄️',
-        isPremium: true
-    },
-    {
-        id: 'forest',
-        name: 'Forest',
-        description: 'Natural greens and earth tones',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-nolabels-gl-style/style.json',
-        preview: '🌲',
-        isPremium: true
     }
 ];
 
@@ -166,22 +142,26 @@ export const applySkinOverrides = (
             'highway': { 'line-color': '#fed7aa' },
             'building': { 'fill-color': '#eae3d5', 'fill-extrusion-color': '#dfd6c4' }
         },
-        midnight: {
-            'building': { 'fill-extrusion-color': '#161920', 'fill-extrusion-opacity': 0.95 },
-            'water': { 'fill-color': '#0f141d' }
+        warm_cream: {
+            'background': { 'background-color': '#fcf9f2' },
+            'water': { 'fill-color': '#c2e0f5' },
+            'park': { 'fill-color': '#daebd0', 'fill-opacity': 0.85 },
+            'landuse': { 'fill-color': '#f5eee1' },
+            'road': { 'line-color': '#ffffff' },
+            'tunnel': { 'line-color': '#e8dfcd' },
+            'bridge': { 'line-color': '#f7f1e6' },
+            'highway': { 'line-color': '#fed7aa' },
+            'building': { 'fill-color': '#eae3d5', 'fill-extrusion-color': '#dfd6c4' }
         },
-        cyberpunk: {
-            'building': { 'fill-extrusion-color': '#0f0f23', 'fill-extrusion-opacity': 0.95 },
-            'water': { 'fill-color': '#0a192f' },
-        },
-        sunset: {
-            'building': { 'fill-extrusion-color': '#2d1b0e', 'fill-extrusion-opacity': 0.95 },
-        },
-        arctic: {
-            'building': { 'fill-extrusion-color': '#e0f2fe', 'fill-extrusion-opacity': 0.95 },
-        },
-        forest: {
-            'building': { 'fill-extrusion-color': '#1a2e1a', 'fill-extrusion-opacity': 0.95 },
+        muted_slate: {
+            'background': { 'background-color': '#111418' },
+            'water': { 'fill-color': '#131922' },
+            'park': { 'fill-color': '#161e18', 'fill-opacity': 0.8 },
+            'landuse': { 'fill-color': '#14181f' },
+            'road': { 'line-color': '#2a303c' },
+            'tunnel': { 'line-color': '#1e232c' },
+            'bridge': { 'line-color': '#333b49' },
+            'building': { 'fill-color': '#1c2128', 'fill-extrusion-color': '#202630' }
         }
     };
 

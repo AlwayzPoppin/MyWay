@@ -183,7 +183,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const wasNavigatingRef = useRef<boolean>(false); // Track nav exit for camera reset
 
     // Get the skin style URL
-    // If skin is default, respect the app theme (Warm Bright Light vs Muted Slate Dark)
+    // Respects Warm Cream (Light) vs Muted Slate (Dark) vs Auto Dynamic
     const styleUrl = useMemo(() => {
         const skin = getMapSkin(mapSkin as MapSkinId);
         let url: any = skin.styleUrl;
@@ -196,6 +196,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             url = theme === 'dark'
                 ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
                 : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+        } else if (mapSkin === 'warm_cream') {
+            url = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+        } else if (mapSkin === 'muted_slate') {
+            url = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
         }
         return url;
     }, [mapSkin, mapStyle, theme]);
@@ -335,23 +339,25 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const baseHeight = Math.round(14 * heightMultiplier);
                 const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
 
-                // 3D Architectural Lighting & Ambient Landmark Glow (Muted Modern Aesthetic)
+                const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+
+                // 3D Architectural Lighting & Ambient Landmark Glow
                 try {
                     map.current.setLight({
                         anchor: 'viewport',
-                        color: theme === 'dark' ? '#f1f5f9' : '#ffffff',
-                        intensity: theme === 'dark' ? 0.28 : 0.45,
-                        position: [1.15, 75, 45]
+                        color: isWarmLight ? '#fffbf0' : '#f1f5f9',
+                        intensity: isWarmLight ? 0.55 : 0.28,
+                        position: [1.15, isWarmLight ? 60 : 75, isWarmLight ? 40 : 45]
                     });
                 } catch (e) {
                     console.warn('[MapLibre] setLight:', e);
                 }
 
-                // Sophisticated muted graphite palette for 3D buildings
+                // Sophisticated palette for 3D buildings (Warm Cream Sandstone vs Muted Graphite)
                 const extrusionColor = [
                     'interpolate', ['linear'], ['zoom'],
-                    14, theme === 'dark' ? '#1c2128' : '#e2e8f0',
-                    16, theme === 'dark' ? '#242b35' : '#cbd5e1'
+                    14, isWarmLight ? '#eae3d5' : '#1c2128',
+                    16, isWarmLight ? '#dfd6c4' : '#242b35'
                 ];
 
                 const opacityExpr: any = [
