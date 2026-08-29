@@ -493,28 +493,34 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     // Live update 3D building heights, ambient landmark glow, and architectural lighting
     useEffect(() => {
-        if (!map.current || !map.current.getLayer('buildings-3d')) return;
+        if (!map.current) return;
+
+        // Apply skin-specific vector color overrides
+        if (mapStyle === 'standard') {
+            applySkinOverrides(map.current, mapSkin as MapSkinId, theme);
+        }
+
+        if (!map.current.getLayer('buildings-3d')) return;
 
         const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
         const baseHeight = Math.round(14 * heightMultiplier);
         const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
 
+        const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+
         try {
             map.current.setLight({
                 anchor: 'viewport',
-                color: landmarkGlow
-                    ? (theme === 'dark' ? '#93c5fd' : '#ffffff')
-                    : (theme === 'dark' ? '#64748b' : '#f1f5f9'),
-                intensity: landmarkGlow
-                    ? (theme === 'dark' ? 0.55 : 0.7)
-                    : (theme === 'dark' ? 0.35 : 0.5),
-                position: [1.5, 90, 55]
+                color: isWarmLight ? '#fff9eb' : '#f1f5f9',
+                intensity: isWarmLight ? 0.65 : 0.28,
+                position: [1.2, isWarmLight ? 55 : 75, isWarmLight ? 35 : 45]
             });
 
+            // Warm Cream Sandstone vs Muted Graphite for 3D buildings
             const extrusionColor = [
                 'interpolate', ['linear'], ['zoom'],
-                14, theme === 'dark' ? (landmarkGlow ? '#202e48' : '#1e293b') : '#e2e8f0',
-                16, theme === 'dark' ? (landmarkGlow ? '#2b3f66' : '#27354f') : '#cbd5e1'
+                14, isWarmLight ? '#e6decb' : '#1c2128',
+                16, isWarmLight ? '#dfd6c0' : '#242b35'
             ];
 
             const heightExpr: any = [
@@ -534,7 +540,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         } catch (e) {
             console.warn('[MapLibre] Dynamic building style update:', e);
         }
-    }, [buildingScale, landmarkGlow, theme]);
+    }, [buildingScale, landmarkGlow, theme, mapSkin, mapStyle, styleVersion]);
 
     // UNIFIED MAP: Toggle 2D/3D mode by adjusting pitch and bearing
     // When not navigating, use the static 3D toggle; navigation camera is handled below.

@@ -143,15 +143,15 @@ export const applySkinOverrides = (
             'building': { 'fill-color': '#eae3d5', 'fill-extrusion-color': '#dfd6c4' }
         },
         warm_cream: {
-            'background': { 'background-color': '#fcf9f2' },
-            'water': { 'fill-color': '#c2e0f5' },
-            'park': { 'fill-color': '#daebd0', 'fill-opacity': 0.85 },
-            'landuse': { 'fill-color': '#f5eee1' },
+            'background': { 'background-color': '#f5efe0' },
+            'landuse': { 'fill-color': '#ede4ce' },
+            'water': { 'fill-color': '#bde0fe' },
+            'park': { 'fill-color': '#d2e4c4', 'fill-opacity': 0.85 },
             'road': { 'line-color': '#ffffff' },
-            'tunnel': { 'line-color': '#e8dfcd' },
-            'bridge': { 'line-color': '#f7f1e6' },
-            'highway': { 'line-color': '#fed7aa' },
-            'building': { 'fill-color': '#eae3d5', 'fill-extrusion-color': '#dfd6c4' }
+            'tunnel': { 'line-color': '#e2d6be' },
+            'bridge': { 'line-color': '#f8f4ec' },
+            'highway': { 'line-color': '#fcd34d' },
+            'building': { 'fill-color': '#e6decb', 'fill-extrusion-color': '#ded5bf' }
         },
         muted_slate: {
             'background': { 'background-color': '#111418' },
