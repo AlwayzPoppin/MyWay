@@ -196,8 +196,15 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
 
   return (
     <div className="absolute inset-0 z-[100] flex flex-col pointer-events-none">
-      {/* Top Navigation Bar - Glassmorphism */}
-      <div className={`w-full pointer-events-auto ${isMobile ? 'pt-3 px-3' : 'pt-12 px-6'}`}>
+      {/* Top Navigation Bar - Glassmorphism with Mobile Notch / Status Bar Safe-Area Padding */}
+      <div 
+        className={`w-full pointer-events-auto transition-all duration-300 ${isMobile ? 'px-3' : 'pt-12 px-6'}`}
+        style={{
+          paddingTop: isMobile 
+            ? 'max(calc(env(safe-area-inset-top, 0px) + 12px), 48px)' 
+            : undefined
+        }}
+      >
         <div className={`max-w-xl mx-auto bg-black/40 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center overflow-hidden relative ${
           isMobile ? 'rounded-2xl p-3 gap-3' : 'rounded-[2.5rem] p-6 gap-6'
         }`}>
@@ -393,9 +400,12 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
       {/* Advisory Alert */}
       {advisory && !advisoryDismissed && (
         isMobile ? (
-          <div className="absolute top-20 right-3 z-10 pointer-events-auto">
+          <div 
+            className="absolute left-3.5 z-10 pointer-events-auto"
+            style={{ top: 'max(calc(env(safe-area-inset-top, 0px) + 180px), 195px)' }}
+          >
             {advisoryExpanded ? (
-              <div className={`p-3 rounded-xl border backdrop-blur-xl animate-in slide-in-from-right duration-300 shadow-xl max-w-[250px]
+              <div className={`p-3 rounded-xl border backdrop-blur-xl animate-in slide-in-from-left duration-300 shadow-xl max-w-[250px]
                 ${advisory.severity === 'high' ? 'bg-red-500/30 border-red-500/40' :
                   advisory.severity === 'medium' ? 'bg-amber-500/30 border-amber-500/40' :
                     'bg-indigo-500/30 border-indigo-500/40'}
@@ -415,9 +425,9 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               <button
                 onClick={() => setAdvisoryExpanded(true)}
                 className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg border backdrop-blur-xl transition-all active:scale-90
-                  ${advisory.severity === 'high' ? 'bg-red-500/40 border-red-500/50' :
-                    advisory.severity === 'medium' ? 'bg-amber-500/40 border-amber-500/50' :
-                      'bg-indigo-500/40 border-indigo-500/50'}
+                ${advisory.severity === 'high' ? 'bg-red-500/40 border-red-500/50' :
+                  advisory.severity === 'medium' ? 'bg-amber-500/40 border-amber-500/50' :
+                    'bg-indigo-500/40 border-indigo-500/50'}
                 `}
               >
                 <span className="text-sm">
@@ -427,7 +437,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             )}
           </div>
         ) : (
-          <div className="absolute top-28 right-6 z-10 pointer-events-auto">
+          <div className="absolute top-44 left-6 z-10 pointer-events-auto">
             <div className={`p-4 rounded-2xl border backdrop-blur-xl animate-in slide-in-from-right duration-500 shadow-xl max-w-xs
               ${advisory.severity === 'high' ? 'bg-red-500/30 border-red-500/40' :
                 advisory.severity === 'medium' ? 'bg-amber-500/30 border-amber-500/40' :

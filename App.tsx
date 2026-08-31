@@ -1246,10 +1246,21 @@ const App: React.FC = () => {
           {/* Action Hub — Unified vertical pill */}
           {!activeModal && !isBottomSheetExpanded && (
             <OverlayManager>
-              <div className={`absolute flex flex-col items-end z-[60] pointer-events-auto ${isMobile ? 'top-14 right-4' : 'bottom-40 right-6'}`}>
+              <div 
+                className={`absolute flex flex-col items-end z-[110] pointer-events-auto transition-all duration-300 ${
+                  isDriveMode 
+                    ? (isMobile ? 'right-3.5' : 'right-6')
+                    : (isMobile ? 'right-4' : 'bottom-40 right-6')
+                }`}
+                style={{
+                  top: isDriveMode
+                    ? (isMobile ? 'max(calc(env(safe-area-inset-top, 0px) + 180px), 195px)' : '160px')
+                    : (isMobile ? 'max(calc(env(safe-area-inset-top, 0px) + 72px), 80px)' : undefined)
+                }}
+              >
 
                 {/* Unified Action Cluster */}
-                <div className="flex flex-col gap-2 p-1.5 bg-black/40 backdrop-blur-md rounded-[1.5rem] border border-white/10 shadow-2xl relative">
+                <div className="flex flex-col gap-2 p-1.5 bg-black/60 backdrop-blur-xl rounded-[1.5rem] border border-white/15 shadow-2xl relative">
 
                   {/* 3D Mode / Map Style — tap toggles 3D, long-press opens style picker */}
                   <div className="relative">
