@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { offlineMapService, DownloadArea, computeRadiusBounds } from '../services/offlineMapService';
+import { offlineMapService, DownloadArea, DownloadProgress, computeRadiusBounds } from '../services/offlineMapService';
 
 interface OfflineMapManagerProps {
     currentBounds: {
@@ -17,10 +17,17 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadingName, setDownloadingName] = useState<string>('');
     const [downloadingDesc, setDownloadingDesc] = useState<string>('');
-    const [progress, setProgress] = useState({ cached: 0, total: 0 });
+    const [progress, setProgress] = useState<DownloadProgress>({
+        cached: 0,
+        total: 0,
+        deltaUnchanged: 0,
+        deltaUpdated: 0,
+        bytesSavedKb: 0
+    });
     const [downloadedAreas, setDownloadedAreas] = useState<DownloadArea[]>([]);
     const [isServiceReady, setIsServiceReady] = useState(false);
     const [areaName, setAreaName] = useState('Visible Map View');
+    const [syncToast, setSyncToast] = useState<string | null>(null);
 
     // 80km region bounds computed from user location
     const local80kmBounds = useMemo(() => {
@@ -59,23 +66,65 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
         setIsDownloading(true);
         setDownloadingName(name);
         setDownloadingDesc(description);
-        setProgress({ cached: 0, total: count });
+        setProgress({
+            cached: 0,
+            total: count,
+            deltaUnchanged: 0,
+            deltaUpdated: 0,
+            bytesSavedKb: 0
+        });
 
         try {
-            await offlineMapService.downloadArea(
+            const area = await offlineMapService.downloadArea(
                 name,
                 bounds,
                 10,
                 13,
-                (cached, total) => setProgress({ cached, total }),
+                (p) => setProgress(p),
                 description
             );
             setDownloadedAreas(offlineMapService.getDownloadedAreas());
+            if (progress.deltaUnchanged > 0) {
+                setSyncToast(`⚡ Delta sync saved ${(progress.bytesSavedKb / 1024).toFixed(1)} MB (${progress.deltaUnchanged} unchanged tiles).`);
+                setTimeout(() => setSyncToast(null), 5000);
+            }
         } catch (error: any) {
             if (error?.name === 'AbortError' || error?.message?.includes('cancelled')) {
                 console.log('[OfflineMapManager] Download cancelled by user');
             } else {
                 console.error('[OfflineMapManager] Download failed:', error);
+            }
+        } finally {
+            setIsDownloading(false);
+            setDownloadingName('');
+            setDownloadingDesc('');
+        }
+    };
+
+    const handleSyncArea = async (area: DownloadArea) => {
+        if (!isServiceReady || isDownloading) return;
+
+        setIsDownloading(true);
+        setDownloadingName(area.name);
+        setDownloadingDesc(`Delta Updating: ${area.name}`);
+        setProgress({
+            cached: 0,
+            total: area.tilesCount,
+            deltaUnchanged: 0,
+            deltaUpdated: 0,
+            bytesSavedKb: 0
+        });
+
+        try {
+            await offlineMapService.syncArea(area.id, (p) => setProgress(p));
+            setDownloadedAreas(offlineMapService.getDownloadedAreas());
+            setSyncToast(`✅ "${area.name}" updated! Saved ${(progress.bytesSavedKb / 1024).toFixed(1)} MB via delta ETag verification.`);
+            setTimeout(() => setSyncToast(null), 5000);
+        } catch (error: any) {
+            if (error?.name === 'AbortError' || error?.message?.includes('cancelled')) {
+                console.log('[OfflineMapManager] Sync cancelled');
+            } else {
+                console.error('[OfflineMapManager] Sync failed:', error);
             }
         } finally {
             setIsDownloading(false);
@@ -137,7 +186,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                     <div>
                         <h2 className="font-black text-lg tracking-tight">Offline Navigation Maps</h2>
                         <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-                            Pre-download vector & street tiles for 100% offline GPS
+                            Delta ETag updates • 100% offline GPS & vector routing
                         </p>
                     </div>
                 </div>
@@ -152,6 +201,13 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
 
             {/* Content */}
             <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
+                {syncToast && (
+                    <div className="p-3 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center gap-2 animate-in fade-in slide-in-from-top-2 shadow-lg">
+                        <span>✨</span>
+                        <span className="flex-1">{syncToast}</span>
+                    </div>
+                )}
+
                 {!isServiceReady ? (
                     <div className={`p-4 rounded-2xl text-center ${theme === 'dark' ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
                         <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
@@ -168,7 +224,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                         <span className="text-xl animate-bounce">📥</span>
                                         <div className="min-w-0">
                                             <h3 className="font-black text-xs uppercase tracking-wider text-indigo-300 truncate">
-                                                Downloading: {downloadingName}
+                                                {downloadingName}
                                             </h3>
                                             {downloadingDesc && (
                                                 <p className="text-[10px] text-slate-300 truncate mt-0.5">
@@ -192,8 +248,22 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                     </div>
                                     <div className="flex items-center justify-between text-[11px] font-bold text-slate-300 px-1">
                                         <span>Tiles: {progress.cached.toLocaleString()} / {progress.total.toLocaleString()}</span>
-                                        <span>~{Math.round((progress.cached * 25) / 1024)} MB cached</span>
+                                        <span>
+                                            {progress.bytesSavedKb > 0 ? (
+                                                <span className="text-emerald-400">⚡ {(progress.bytesSavedKb / 1024).toFixed(1)} MB saved</span>
+                                            ) : (
+                                                `~${Math.round((progress.cached * 25) / 1024)} MB`
+                                            )}
+                                        </span>
                                     </div>
+
+                                    {/* Delta Stats Pill */}
+                                    {(progress.deltaUnchanged > 0 || progress.deltaUpdated > 0) && (
+                                        <div className="text-[10px] font-semibold px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-slate-300 flex items-center justify-between">
+                                            <span>⚡ ETag Unchanged: <strong className="text-emerald-300">{progress.deltaUnchanged.toLocaleString()}</strong></span>
+                                            <span>Fresh Updates: <strong className="text-indigo-300">{progress.deltaUpdated.toLocaleString()}</strong></span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* CANCEL DOWNLOAD BUTTON */}
@@ -202,7 +272,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                     className="w-full py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 active:scale-95 text-red-300 hover:text-white border border-red-500/40 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg"
                                 >
                                     <span>🛑</span>
-                                    <span>Cancel Download</span>
+                                    <span>Cancel</span>
                                 </button>
                             </div>
                         )}
@@ -227,7 +297,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                         📍 <strong>Coverage:</strong> 80 km (50 miles) radius around GPS ({userLocation.lat.toFixed(3)}°N, {userLocation.lng.toFixed(3)}°W)
                                     </p>
                                     <p className="text-[11px] opacity-80">
-                                        🛣️ Includes full local street geometry, highway exits, and offline vector routing.
+                                        🛣️ Delta updates only fetch modified tiles using HTTP ETags, saving cellular bandwidth.
                                     </p>
                                 </div>
 
@@ -237,7 +307,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                     className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     <span>📥</span>
-                                    <span>Download 80km Local Corridor</span>
+                                    <span>Download / Delta Sync 80km Corridor</span>
                                 </button>
                             </div>
                         )}
@@ -325,17 +395,24 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                                     </p>
                                                 )}
                                                 <p className={`text-[9px] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'} mt-0.5`}>
-                                                    {area.tilesCount.toLocaleString()} tiles • {new Date(area.downloadedAt).toLocaleDateString()}
+                                                    {area.tilesCount.toLocaleString()} tiles • Updated {new Date(area.downloadedAt).toLocaleDateString()}
                                                 </p>
                                             </div>
                                             <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                                                    Ready
-                                                </span>
+                                                <button
+                                                    onClick={() => handleSyncArea(area)}
+                                                    disabled={isDownloading}
+                                                    title="Delta Sync (Check for modified tiles)"
+                                                    className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 transition-all flex items-center gap-1 active:scale-95 disabled:opacity-50"
+                                                >
+                                                    <span>🔄</span>
+                                                    <span>Sync</span>
+                                                </button>
                                                 <button
                                                     onClick={() => handleDeleteArea(area.id, area.name)}
+                                                    disabled={isDownloading}
                                                     title="Delete this offline region"
-                                                    className="p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-all text-xs"
+                                                    className="p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-all text-xs disabled:opacity-50"
                                                 >
                                                     🗑️
                                                 </button>
@@ -350,7 +427,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                         <div className={`p-3 rounded-xl text-center text-xs font-bold ${
                             theme === 'dark' ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         }`}>
-                            📶 Cached vector & raster tiles load with 0ms latency when offline.
+                            📶 Delta ETag caching active: only modified tiles consume network bandwidth.
                         </div>
                     </>
                 )}

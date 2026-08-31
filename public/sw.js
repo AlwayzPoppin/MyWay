@@ -100,7 +100,22 @@ self.addEventListener('fetch', (event) => {
 
 async function fetchAndCacheTile(cache, request) {
     try {
-        const networkResponse = await fetch(request);
+        const cachedResponse = await cache.match(request);
+        const reqHeaders = new Headers(request.headers || {});
+        if (cachedResponse) {
+            const etag = cachedResponse.headers.get('ETag') || cachedResponse.headers.get('etag');
+            const lastMod = cachedResponse.headers.get('Last-Modified') || cachedResponse.headers.get('last-modified');
+            if (etag) reqHeaders.set('If-None-Match', etag);
+            if (lastMod) reqHeaders.set('If-Modified-Since', lastMod);
+        }
+
+        const networkResponse = await fetch(request, { headers: reqHeaders });
+        
+        // 304 Not Modified: Cached tile is already current!
+        if (networkResponse.status === 304 && cachedResponse) {
+            return cachedResponse;
+        }
+
         const headers = new Headers(networkResponse.headers);
         headers.set('X-Cached-At', Date.now().toString());
         const timedResponse = new Response(await networkResponse.clone().blob(), {

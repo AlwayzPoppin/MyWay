@@ -2,6 +2,14 @@
 
 const TILE_CACHE_NAME = 'myway-tiles-v1';
 
+export interface DownloadProgress {
+    cached: number;
+    total: number;
+    deltaUnchanged: number; // Verified current via ETag 304 or existing Cache match
+    deltaUpdated: number;   // Freshly downloaded / updated via 200 OK
+    bytesSavedKb: number;   // Estimated bandwidth saved via 304 Not Modified
+}
+
 export interface DownloadArea {
     id: string;
     name: string;
@@ -162,13 +170,13 @@ class OfflineMapService {
         }
     }
 
-    // Download tiles for a given area with direct high-performance CacheStorage batching & cancellation
+    // Delta / Differential Area Tile Downloader with HTTP ETag & If-Modified-Since validation
     async downloadArea(
         name: string,
         bounds: { north: number; south: number; east: number; west: number },
         zoomMin: number = 10,
         zoomMax: number = 13,
-        onProgress?: (cached: number, total: number) => void,
+        onProgress?: (progress: DownloadProgress) => void,
         description?: string
     ): Promise<DownloadArea> {
         await this.init();
@@ -180,9 +188,24 @@ class OfflineMapService {
         const tileUrls = this.getTileUrls(bounds, zoomMin, zoomMax);
         const total = tileUrls.length;
         let cached = 0;
+        let deltaUnchanged = 0;
+        let deltaUpdated = 0;
+        let bytesSavedKb = 0;
+
+        const reportProgress = () => {
+            if (!mainSignal.aborted) {
+                onProgress?.({
+                    cached,
+                    total,
+                    deltaUnchanged,
+                    deltaUpdated,
+                    bytesSavedKb
+                });
+            }
+        };
 
         // Immediately notify initial progress
-        onProgress?.(0, total);
+        reportProgress();
 
         let cache: Cache | null = null;
         if (typeof window !== 'undefined' && 'caches' in window) {
@@ -193,8 +216,7 @@ class OfflineMapService {
             }
         }
 
-        // Track all tiles successfully written to CacheStorage during this download session
-        // to enable full transaction rollback if the download is cancelled/aborted
+        // Track newly written tiles in this session for rollback if cancelled
         const writtenUrls = new Set<string>();
 
         const rollbackWrittenTiles = async () => {
@@ -204,16 +226,14 @@ class OfflineMapService {
             const rollbackPromises = Array.from(writtenUrls).map(async (url) => {
                 try {
                     await cache!.delete(url);
-                } catch (delErr) {
-                    // Tolerate individual cache delete failures during rollback
-                }
+                } catch (delErr) {}
             });
             await Promise.allSettled(rollbackPromises);
             writtenUrls.clear();
             console.log(`[OfflineMapService] ✅ Rollback complete: ${count} orphaned tiles purged from CacheStorage.`);
         };
 
-        // Parallel chunk downloader (batches of 12 concurrent requests)
+        // Parallel chunk downloader with HTTP Conditional Requests (ETag / If-Modified-Since)
         const BATCH_SIZE = 12;
         try {
             for (let i = 0; i < tileUrls.length; i += BATCH_SIZE) {
@@ -233,28 +253,62 @@ class OfflineMapService {
                             const onMainAbort = () => controller.abort();
                             mainSignal.addEventListener('abort', onMainAbort, { once: true });
 
+                            // Check CacheStorage for existing tile to extract ETag & Last-Modified
+                            let cachedResponse: Response | undefined;
+                            if (cache) {
+                                try {
+                                    cachedResponse = await cache.match(url);
+                                } catch {}
+                            }
+
+                            const headers: Record<string, string> = {};
+                            if (cachedResponse) {
+                                const etag = cachedResponse.headers.get('ETag') || cachedResponse.headers.get('etag');
+                                const lastMod = cachedResponse.headers.get('Last-Modified') || cachedResponse.headers.get('last-modified');
+                                if (etag) {
+                                    headers['If-None-Match'] = etag;
+                                }
+                                if (lastMod) {
+                                    headers['If-Modified-Since'] = lastMod;
+                                }
+                            }
+
                             const response = await fetch(url, {
                                 signal: controller.signal,
-                                mode: 'cors'
+                                mode: 'cors',
+                                headers
                             });
                             clearTimeout(timeoutId);
                             mainSignal.removeEventListener('abort', onMainAbort);
 
-                            if (response && (response.ok || response.type === 'opaque') && cache) {
-                                if (mainSignal.aborted) return;
-                                await cache.put(url, response);
-                                if (mainSignal.aborted) {
-                                    try { await cache.delete(url); } catch {}
-                                    return;
+                            if (response) {
+                                if (response.status === 304) {
+                                    // 304 Not Modified: Delta match! Existing cached tile is current
+                                    deltaUnchanged++;
+                                    bytesSavedKb += 28; // ~28KB saved per tile
+                                } else if ((response.ok || response.type === 'opaque') && cache) {
+                                    if (mainSignal.aborted) return;
+                                    await cache.put(url, response);
+                                    if (mainSignal.aborted) {
+                                        try { await cache.delete(url); } catch {}
+                                        return;
+                                    }
+                                    writtenUrls.add(url);
+                                    deltaUpdated++;
                                 }
-                                writtenUrls.add(url);
                             }
                         } catch (fetchErr) {
-                            // Tolerate single tile failures gracefully
+                            // If network failed but tile exists in offline cache, count as ready
+                            if (cache) {
+                                try {
+                                    const hasCached = await cache.match(url);
+                                    if (hasCached) deltaUnchanged++;
+                                } catch {}
+                            }
                         } finally {
                             if (!mainSignal.aborted) {
                                 cached++;
-                                onProgress?.(cached, total);
+                                reportProgress();
                             }
                         }
                     })
@@ -275,8 +329,10 @@ class OfflineMapService {
 
         this.activeAbortController = null;
 
+        // Upsert area record (avoid duplicates on re-downloading existing named region)
+        const existingIdx = this.downloadedAreas.findIndex(a => a.name.toLowerCase() === name.toLowerCase());
         const area: DownloadArea = {
-            id: `area-${Date.now()}`,
+            id: existingIdx >= 0 ? this.downloadedAreas[existingIdx].id : `area-${Date.now()}`,
             name: name || 'Offline Region',
             description,
             bounds,
@@ -285,10 +341,33 @@ class OfflineMapService {
             downloadedAt: new Date()
         };
 
-        this.downloadedAreas.push(area);
+        if (existingIdx >= 0) {
+            this.downloadedAreas[existingIdx] = area;
+        } else {
+            this.downloadedAreas.push(area);
+        }
         this.saveAreas();
 
         return area;
+    }
+
+    // Single-click Delta Synchronization for an existing saved region
+    async syncArea(
+        id: string,
+        onProgress?: (progress: DownloadProgress) => void
+    ): Promise<DownloadArea> {
+        await this.init();
+        const area = this.downloadedAreas.find(a => a.id === id);
+        if (!area) throw new Error(`Offline region "${id}" not found`);
+
+        return this.downloadArea(
+            area.name,
+            area.bounds,
+            area.zoom.min,
+            area.zoom.max,
+            onProgress,
+            area.description
+        );
     }
 
     async deleteArea(id: string): Promise<boolean> {
