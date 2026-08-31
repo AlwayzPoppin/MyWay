@@ -610,17 +610,21 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
                 </div>
 
                 {/* MUTCD Speed Limit Sign */}
-                <div className={`bg-white rounded-2xl border-2 border-black flex flex-col items-center justify-center w-16 h-24 p-1.5 shadow-2xl transition-all duration-300 ${
+                <div className={`rounded-2xl border-2 flex flex-col items-center justify-center w-16 h-24 p-1.5 transition-all duration-300 ${
                   isSevereSpeeding
-                    ? 'ring-4 ring-red-500/70 shadow-[0_0_25px_rgba(239,68,68,0.7)] animate-pulse'
+                    ? 'bg-red-50 border-red-600 ring-4 ring-red-500/80 shadow-[0_0_25px_rgba(239,68,68,0.75)] animate-pulse'
                     : isSpeeding
-                    ? 'ring-2 ring-amber-500/60 shadow-[0_0_15px_rgba(245,158,11,0.5)]'
-                    : 'shadow-xl'
+                    ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400 shadow-[0_0_18px_rgba(245,158,11,0.65)]'
+                    : 'bg-white border-black shadow-xl'
                 }`}>
-                  <span className="font-black text-black uppercase tracking-tighter text-[9px] leading-tight">SPEED</span>
-                  <span className="font-black text-black uppercase tracking-tighter text-[9px] leading-tight">LIMIT</span>
+                  <span className={`font-black uppercase tracking-tighter text-[9px] leading-tight ${
+                    isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+                  }`}>SPEED</span>
+                  <span className={`font-black uppercase tracking-tighter text-[9px] leading-tight ${
+                    isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+                  }`}>LIMIT</span>
                   <span className={`font-black text-3xl tracking-tight leading-none mt-1 ${
-                    isSevereSpeeding ? 'text-red-600' : 'text-black'
+                    isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600 font-black' : 'text-black'
                   }`}>
                     {currentSpeedLimit}
                   </span>
@@ -829,17 +833,21 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               </div>
 
               {/* Mini Speed Limit Sign */}
-              <div className={`bg-white rounded-xl border border-black flex flex-col items-center justify-center w-10 h-16 p-1 shrink-0 ${
+              <div className={`rounded-xl border flex flex-col items-center justify-center w-10 h-16 p-1 shrink-0 transition-all duration-300 ${
                 isSevereSpeeding
-                  ? 'ring-2 ring-red-500 shadow-[0_0_12px_rgba(239,68,68,0.7)] animate-pulse'
+                  ? 'bg-red-50 border-red-600 ring-2 ring-red-500 shadow-[0_0_14px_rgba(239,68,68,0.75)] animate-pulse'
                   : isSpeeding
-                  ? 'ring-1 ring-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                  : 'shadow-md'
+                  ? 'bg-amber-50 border-amber-500 ring-1.5 ring-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.6)]'
+                  : 'bg-white border-black shadow-md'
               }`}>
-                <span className="font-black text-black uppercase tracking-tighter text-[6px] leading-tight">SPEED</span>
-                <span className="font-black text-black uppercase tracking-tighter text-[6px] leading-tight">LIMIT</span>
+                <span className={`font-black uppercase tracking-tighter text-[6px] leading-tight ${
+                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+                }`}>SPEED</span>
+                <span className={`font-black uppercase tracking-tighter text-[6px] leading-tight ${
+                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+                }`}>LIMIT</span>
                 <span className={`font-black text-base tracking-tight leading-none mt-0.5 ${
-                  isSevereSpeeding ? 'text-red-600' : 'text-black'
+                  isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600 font-black' : 'text-black'
                 }`}>
                   {currentSpeedLimit}
                 </span>
