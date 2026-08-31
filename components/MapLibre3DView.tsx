@@ -512,8 +512,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             zoom: initialZoom,
             pitch: initialPitch,
             bearing: initialBearing,
+            attributionControl: false
         });
         map.current = mapInstance;
+
+        // Clean, compact attribution icon (never stretches across center road view)
+        mapInstance.addControl(new maplibregl.AttributionControl({
+            compact: true
+        }), 'bottom-right');
 
         // Track live camera position for seamless reboot recovery
         mapInstance.on('move', () => {

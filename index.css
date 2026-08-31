@@ -1,9 +1,8 @@
 @import "tailwindcss";
 
-/* Map Attribution Polish */
 /* Map Attribution Polish & Positioning */
 .maplibregl-ctrl-bottom-right {
-    bottom: 100px !important;
+    bottom: 16px !important;
     right: 12px !important;
     background: transparent !important;
     border: none !important;
@@ -17,12 +16,13 @@
     align-items: flex-end !important;
     gap: 8px !important;
     pointer-events: none;
+    z-index: 5 !important;
 }
 
 @media (max-width: 768px) {
     .maplibregl-ctrl-bottom-right {
-        bottom: 144px !important; /* bottom-36 (36 * 4px = 144px) */
-        right: 16px !important; /* right-4 (4 * 4px = 16px) */
+        bottom: 16px !important;
+        right: 12px !important;
         left: auto !important;
         width: auto !important;
     }
