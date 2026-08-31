@@ -95,6 +95,7 @@ interface MapLibre3DViewProps {
     landmarkGlow?: boolean;
     isCameraFree?: boolean;
     onCameraFreeChange?: (isFree: boolean) => void;
+    isLowDataMode?: boolean;
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
@@ -128,7 +129,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     buildingScale = 'enhanced',
     landmarkGlow = true,
     isCameraFree = false,
-    onCameraFreeChange
+    onCameraFreeChange,
+    isLowDataMode = false
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
@@ -208,8 +210,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const wasNavigatingRef = useRef<boolean>(false); // Track nav exit for camera reset
 
     // Get the skin style URL
-    // Respects Warm Cream (Light) vs Muted Slate (Dark) vs Auto Dynamic
+    // Respects Low Data Mode (minimal 2D vector) vs Warm Cream (Light) vs Muted Slate (Dark) vs Auto Dynamic
     const styleUrl = useMemo(() => {
+        if (isLowDataMode) {
+            // Low Data Mode: Minimal vector 2D basemap, avoids heavy raster tiles and complex layers
+            return theme === 'dark'
+                ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+                : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+        }
+
         const skin = getMapSkin(mapSkin as MapSkinId);
         let url: any = skin.styleUrl;
  
@@ -227,7 +236,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             url = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
         }
         return url;
-    }, [mapSkin, mapStyle, theme]);
+    }, [mapSkin, mapStyle, theme, isLowDataMode]);
 
     // Prepare route polyline coordinates for map rendering
     const routeCoords = useMemo<Location[]>(() => {
@@ -354,7 +363,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             if (!map.current) return;
 
             // Apply skin-specific color overrides
-            if (mapStyle === 'standard') {
+            if (mapStyle === 'standard' && !isLowDataMode) {
                 applySkinOverrides(map.current, mapSkin as MapSkinId, theme);
             }
 
@@ -362,6 +371,20 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const buildingLayer = layers.find(
                 (layer: any) => layer.id.includes('building') && layer.type === 'fill'
             );
+
+            // Low Data Mode: Suppress heavy 3D building extrusions, tessellation, and complex lighting to conserve bandwidth & CPU
+            if (isLowDataMode) {
+                if (map.current.getLayer('buildings-3d')) {
+                    map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
+                }
+                if (buildingLayer) {
+                    map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'visible');
+                }
+                try {
+                    map.current.setLight({ intensity: 0 });
+                } catch {}
+                return;
+            }
 
             if (buildingLayer) {
                 const source = (buildingLayer as any).source;
@@ -425,6 +448,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 ];
 
                 if (map.current.getLayer('buildings-3d')) {
+                    map.current.setLayoutProperty('buildings-3d', 'visibility', 'visible');
                     map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
                     map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
                     map.current.setPaintProperty('buildings-3d', 'fill-extrusion-base', baseExpr);
@@ -567,7 +591,35 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     useEffect(() => {
         if (!map.current) return;
 
-        if (!map.current.getLayer('buildings-3d')) return;
+        const layers = map.current.getStyle()?.layers || [];
+        const buildingLayer = layers.find(
+            (layer: any) => layer.id.includes('building') && layer.type === 'fill'
+        );
+
+        // Low Data Mode: Suppress 3D extrusions & complex lighting
+        if (isLowDataMode) {
+            if (map.current.getLayer('buildings-3d')) {
+                map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
+            }
+            if (buildingLayer) {
+                map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'visible');
+            }
+            try {
+                map.current.setLight({ intensity: 0 });
+            } catch {}
+            return;
+        }
+
+        if (buildingLayer) {
+            map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'none');
+        }
+
+        if (!map.current.getLayer('buildings-3d')) {
+            apply3DBuildingLayer();
+            return;
+        }
+
+        map.current.setLayoutProperty('buildings-3d', 'visibility', 'visible');
 
         const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
         const baseHeight = Math.round(14 * heightMultiplier);
@@ -664,7 +716,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         } catch (e) {
             console.warn('[MapLibre] Dynamic building style update:', e);
         }
-    }, [buildingScale, landmarkGlow, theme, mapSkin, mapStyle, styleVersion]);
+    }, [buildingScale, landmarkGlow, theme, mapSkin, mapStyle, styleVersion, isLowDataMode]);
 
     // UNIFIED MAP: Toggle 2D/3D mode by adjusting pitch and bearing
     // When not navigating, use the static 3D toggle; navigation camera is handled below.

@@ -4,6 +4,7 @@ import { MapSkinId, MAP_SKINS } from '../services/mapSkinService';
 import StorageManager from './StorageManager';
 import { PrivacyMode, Vehicle } from '../types';
 import { vehicleFuelService, VEHICLE_PRESETS } from '../services/vehicleFuelService';
+import { useUI } from '../contexts/UIContext';
 
 export interface UserSettings {
     theme: 'light' | 'dark' | 'auto';
@@ -58,6 +59,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onOpenKeyRecovery,
     onUpdateProfile
 }) => {
+    const { isLowDataMode, setIsLowDataMode } = useUI();
     const [localSettings, setLocalSettings] = useState(settings);
  
     // Profile Edit State
@@ -810,6 +812,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 >
                     <div className="space-y-3">
                         <StorageManager theme={theme} />
+                        <SettingRow label="Low Data Mode" description="Disable 3D extrusions & raster imagery to conserve mobile bandwidth">
+                            <ToggleSwitch
+                                enabled={isLowDataMode}
+                                onChange={(v) => setIsLowDataMode(v)}
+                            />
+                        </SettingRow>
                         <SettingRow label="Offline Maps" description="Manage downloaded regions">
                             <button
                                 onClick={onOpenOfflineMaps}

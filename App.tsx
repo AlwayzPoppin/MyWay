@@ -143,6 +143,7 @@ const App: React.FC = () => {
     isMobile,
     isDriveMode, setDriveMode,
     is3DMode, set3DMode,
+    isLowDataMode, setIsLowDataMode,
     notification, showNotification
   } = useUI();
 
@@ -859,6 +860,7 @@ const App: React.FC = () => {
               isMobile={isMobile}
               isCameraFree={isCameraFree}
               onCameraFreeChange={setIsCameraFree}
+              isLowDataMode={isLowDataMode}
             />
           </div>
 
