@@ -1301,7 +1301,7 @@ const App: React.FC = () => {
                 }`}
                 style={{
                   top: isDriveMode
-                    ? (isMobile ? 'max(calc(env(safe-area-inset-top, 0px) + 180px), 195px)' : '160px')
+                    ? (isMobile ? 'max(calc(env(safe-area-inset-top, 0px) + 295px), 310px)' : '280px')
                     : (isMobile ? 'max(calc(env(safe-area-inset-top, 0px) + 72px), 80px)' : undefined)
                 }}
               >
