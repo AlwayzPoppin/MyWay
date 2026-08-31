@@ -1468,14 +1468,21 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         if (!map.current || !isMapReady) return;
 
         const SNAPPING_THRESHOLD_METERS = 40;
-        const validMembers = (members || []).filter(m => m && m.location && typeof m.location.lat === 'number' && typeof m.location.lng === 'number' && !(m.location.lat === 0 && m.location.lng === 0));
+        const validMembers = (members || []).filter(m => 
+            m && 
+            m.location && 
+            typeof m.location.lat === 'number' && 
+            typeof m.location.lng === 'number' && 
+            !(m.location.lat === 0 && m.location.lng === 0) &&
+            (currentUserId ? (m.id !== 'demo-you' && m.id !== 'local-user' && m.id !== 'current_user') : true)
+        );
 
-        // Ensure user location puck is always rendered even before circle sync finishes
+        // Ensure user location puck is rendered if no self record exists yet
         const allMembersToRender = [...validMembers];
         const hasSelf = allMembersToRender.some(m => m.id === currentUserId || m.id === 'current_user' || m.id === 'local-user' || m.id === 'demo-you');
         if (!hasSelf && userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && !(userLocation.lat === 0 && userLocation.lng === 0)) {
             allMembersToRender.unshift({
-                id: currentUserId || 'current_user',
+                id: currentUserId || 'local-user',
                 name: 'You',
                 avatar: getDefaultAvatarDataUri('You'),
                 location: userLocation,

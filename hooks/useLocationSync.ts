@@ -72,8 +72,7 @@ export const useLocationSync = (
 
         if (userLocation) {
             setMembers(prev => {
-                if (prev.find(m => m.id === user.uid)) return prev;
-
+                const cleaned = prev.filter(m => m.id !== 'demo-you' && m.id !== 'local-user' && m.id !== 'current_user' && m.id !== user.uid);
                 const newSelf: FamilyMember = {
                     id: user.uid,
                     name: profile?.displayName || user.displayName || 'You',
@@ -92,7 +91,7 @@ export const useLocationSync = (
                     pathHistory: [],
                     driveEvents: []
                 };
-                return [newSelf, ...prev.filter(m => m.id !== 'demo-you')];
+                return [newSelf, ...cleaned];
             });
             setHasInjectedSelf(true);
         }
@@ -289,7 +288,12 @@ export const useLocationSync = (
                 setUserLocation(currentCoords);
 
                 setMembers(prev => {
-                    const existing = prev.find(m => m.id === targetId);
+                    const cleaned = prev.filter(m => 
+                        m.id !== 'demo-you' && 
+                        m.id !== 'current_user' && 
+                        (user?.uid ? m.id !== 'local-user' : true)
+                    );
+                    const existing = cleaned.find(m => m.id === targetId);
                     const currentBattery = batteryService.getBatteryLevel();
 
                     if (!existing) {
@@ -312,12 +316,14 @@ export const useLocationSync = (
                             pathHistory: [],
                             driveEvents: []
                         };
-                        return [newSelf, ...prev.filter(m => m.id !== targetId && m.id !== 'demo-you')];
+                        return [newSelf, ...cleaned.filter(m => m.id !== targetId)];
                     }
 
-                    return prev.map(m =>
+                    return cleaned.map(m =>
                         m.id === targetId ? {
                             ...m,
+                            name: profile?.displayName || user?.displayName || m.name,
+                            avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL || m.avatar, profile?.displayName || user?.displayName || m.name),
                             location: currentCoords,
                             battery: currentBattery,
                             accuracy: location.accuracy,
@@ -474,13 +480,66 @@ export const useLocationSync = (
     useEffect(() => {
         if (!currentCircleId || !user) return;
 
-        const unsubscribe = subscribeToFamilyLocations(currentCircleId, (locations) => {
-            const processUpdates = async () => {
-                const current = membersRef.current;
-                const updatedMembers = await Promise.all(current.map(async (member) => {
-                    if (member.id === user.uid) return member; // Don't overwrite self with stale echo
+        const unsubscribe = subscribeToFamilyLocations(currentCircleId, async (locations) => {
+                const current = membersRef.current.filter(m => 
+                    m.id !== 'demo-you' && 
+                    m.id !== 'current_user' && 
+                    (user?.uid ? m.id !== 'local-user' : true)
+                );
 
-                    const loc = locations[member.id];
+                // Collect unique member IDs from both current state and Firebase locations
+                const allMemberIds = Array.from(new Set([
+                    ...current.map(m => m.id),
+                    ...Object.keys(locations || {})
+                ])).filter(id => 
+                    id !== 'demo-you' && 
+                    id !== 'current_user' && 
+                    (user?.uid ? id !== 'local-user' : true)
+                );
+
+                const updatedMembers = await Promise.all(allMemberIds.map(async (id) => {
+                    const existing = current.find(m => m.id === id);
+                    if (id === user.uid) {
+                        return existing || {
+                            id: user.uid,
+                            name: profile?.displayName || user.displayName || 'You',
+                            avatar: getSafeAvatarUrl(profile?.photoURL || user.photoURL, profile?.displayName || user.displayName || user.uid),
+                            location: userLocation || { lat: 0, lng: 0 },
+                            status: 'Stationary',
+                            battery: batteryService.getBatteryLevel(),
+                            membershipTier: profile?.membershipTier || 'free',
+                            lastUpdated: new Date().toISOString(),
+                            accuracy: 15,
+                            isGhostMode: false,
+                            speed: 0,
+                            heading: 0,
+                            role: 'Primary',
+                            safetyScore: 100,
+                            pathHistory: [],
+                            driveEvents: []
+                        };
+                    }
+
+                    const member: FamilyMember = existing || {
+                        id,
+                        name: 'Circle Member',
+                        avatar: getDefaultAvatarDataUri(id),
+                        location: { lat: 0, lng: 0 },
+                        status: 'Stationary',
+                        battery: 100,
+                        membershipTier: 'free',
+                        lastUpdated: new Date().toISOString(),
+                        accuracy: 15,
+                        isGhostMode: false,
+                        speed: 0,
+                        heading: 0,
+                        role: 'Member',
+                        safetyScore: 100,
+                        pathHistory: [],
+                        driveEvents: []
+                    };
+
+                    const loc = locations[id];
                     if (!loc) return member;
 
                     let lat = loc.lat;
@@ -572,9 +631,6 @@ export const useLocationSync = (
                 }));
 
                 setMembers(updatedMembers);
-            };
-
-            processUpdates();
         });
         return () => unsubscribe();
     }, [currentCircleId, user, geofences]);
