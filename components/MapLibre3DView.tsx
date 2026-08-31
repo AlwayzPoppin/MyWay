@@ -95,7 +95,7 @@ interface MapLibre3DViewProps {
     onBoundsChange?: (bounds: { north: number; south: number; east: number; west: number }) => void;
     mapStyle?: 'standard' | 'satellite' | 'terrain';
     isMobile?: boolean;
-    buildingScale?: 'realistic' | 'enhanced' | 'monumental';
+    buildingScale?: 'flat' | 'realistic' | 'enhanced' | 'monumental';
     landmarkGlow?: boolean;
     isCameraFree?: boolean;
     onCameraFreeChange?: (isFree: boolean) => void;
@@ -309,7 +309,32 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             (layer: any) => layer.id.includes('building') && layer.type === 'fill'
         );
 
-        // Hide all 2D flat building and shadow layers so only the clean 3D extrusion renders
+        // Flat Mode or Low Data Mode: Suppress 3D building extrusions and restore 2D flat building footprints
+        if (buildingScale === 'flat' || isLowDataMode) {
+            if (map.current.getLayer('buildings-3d')) {
+                map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
+            }
+            layers.forEach((layer: any) => {
+                if (
+                    layer.id !== 'buildings-3d' &&
+                    (layer.id.includes('building') || layer.id.includes('structure') || layer.id.includes('roof')) &&
+                    (layer.type === 'fill' || layer.type === 'line')
+                ) {
+                    try {
+                        map.current!.setLayoutProperty(layer.id, 'visibility', 'visible');
+                    } catch {}
+                }
+            });
+            if (buildingLayer) {
+                map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'visible');
+            }
+            try {
+                map.current.setLight({ intensity: 0 });
+            } catch {}
+            return;
+        }
+
+        // Hide all 2D flat building and shadow layers so only the clean 3D volumetric extrusion renders
         layers.forEach((layer: any) => {
             if (
                 layer.id !== 'buildings-3d' &&
@@ -321,20 +346,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 } catch {}
             }
         });
-
-        // Low Data Mode: Suppress heavy 3D building extrusions, tessellation, and complex lighting to conserve bandwidth & CPU
-        if (isLowDataMode) {
-            if (map.current.getLayer('buildings-3d')) {
-                map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
-            }
-            if (buildingLayer) {
-                map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'visible');
-            }
-            try {
-                map.current.setLight({ intensity: 0 });
-            } catch {}
-            return;
-        }
 
         const sources = map.current.getStyle()?.sources || {};
         const source = (buildingLayer as any)?.source || (map.current.getSource('carto') ? 'carto' : map.current.getSource('openmaptiles') ? 'openmaptiles' : Object.keys(sources)[0]);

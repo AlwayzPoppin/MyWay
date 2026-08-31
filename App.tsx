@@ -198,7 +198,7 @@ const App: React.FC = () => {
     mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
     units: 'imperial' as 'imperial' | 'metric',
     mapSkin: ((localStorage.getItem('myway_map_skin') as any) || 'default') as 'default' | 'cyberpunk' | 'sunset' | 'midnight' | 'arctic' | 'forest',
-    buildingScale: ((localStorage.getItem('myway_building_scale') as any) || 'enhanced') as 'realistic' | 'enhanced' | 'monumental',
+    buildingScale: ((localStorage.getItem('myway_building_scale') as any) || 'enhanced') as 'flat' | 'realistic' | 'enhanced' | 'monumental',
     landmarkGlow: localStorage.getItem('myway_landmark_glow') !== 'false',
     avoidTolls: localStorage.getItem('myway_avoid_tolls') === 'true',
     avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
