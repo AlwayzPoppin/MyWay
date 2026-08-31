@@ -193,48 +193,84 @@ class OfflineMapService {
             }
         }
 
+        // Track all tiles successfully written to CacheStorage during this download session
+        // to enable full transaction rollback if the download is cancelled/aborted
+        const writtenUrls = new Set<string>();
+
+        const rollbackWrittenTiles = async () => {
+            if (!cache || writtenUrls.size === 0) return;
+            const count = writtenUrls.size;
+            console.log(`[OfflineMapService] 🔄 Rolling back ${count} orphaned tiles from aborted download session...`);
+            const rollbackPromises = Array.from(writtenUrls).map(async (url) => {
+                try {
+                    await cache!.delete(url);
+                } catch (delErr) {
+                    // Tolerate individual cache delete failures during rollback
+                }
+            });
+            await Promise.allSettled(rollbackPromises);
+            writtenUrls.clear();
+            console.log(`[OfflineMapService] ✅ Rollback complete: ${count} orphaned tiles purged from CacheStorage.`);
+        };
+
         // Parallel chunk downloader (batches of 12 concurrent requests)
         const BATCH_SIZE = 12;
-        for (let i = 0; i < tileUrls.length; i += BATCH_SIZE) {
-            if (mainSignal.aborted) {
-                throw new DOMException('Download cancelled by user', 'AbortError');
+        try {
+            for (let i = 0; i < tileUrls.length; i += BATCH_SIZE) {
+                if (mainSignal.aborted) {
+                    await rollbackWrittenTiles();
+                    throw new DOMException('Download cancelled by user', 'AbortError');
+                }
+
+                const batch = tileUrls.slice(i, i + BATCH_SIZE);
+                await Promise.allSettled(
+                    batch.map(async (url) => {
+                        if (mainSignal.aborted) return;
+                        try {
+                            const controller = new AbortController();
+                            const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+                            const onMainAbort = () => controller.abort();
+                            mainSignal.addEventListener('abort', onMainAbort, { once: true });
+
+                            const response = await fetch(url, {
+                                signal: controller.signal,
+                                mode: 'cors'
+                            });
+                            clearTimeout(timeoutId);
+                            mainSignal.removeEventListener('abort', onMainAbort);
+
+                            if (response && (response.ok || response.type === 'opaque') && cache) {
+                                if (mainSignal.aborted) return;
+                                await cache.put(url, response);
+                                if (mainSignal.aborted) {
+                                    try { await cache.delete(url); } catch {}
+                                    return;
+                                }
+                                writtenUrls.add(url);
+                            }
+                        } catch (fetchErr) {
+                            // Tolerate single tile failures gracefully
+                        } finally {
+                            if (!mainSignal.aborted) {
+                                cached++;
+                                onProgress?.(cached, total);
+                            }
+                        }
+                    })
+                );
             }
 
-            const batch = tileUrls.slice(i, i + BATCH_SIZE);
-            await Promise.allSettled(
-                batch.map(async (url) => {
-                    if (mainSignal.aborted) return;
-                    try {
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-                        const onMainAbort = () => controller.abort();
-                        mainSignal.addEventListener('abort', onMainAbort, { once: true });
-
-                        const response = await fetch(url, {
-                            signal: controller.signal,
-                            mode: 'cors'
-                        });
-                        clearTimeout(timeoutId);
-                        mainSignal.removeEventListener('abort', onMainAbort);
-
-                        if (response && (response.ok || response.type === 'opaque') && cache) {
-                            await cache.put(url, response);
-                        }
-                    } catch (fetchErr) {
-                        // Tolerate single tile failures gracefully
-                    } finally {
-                        if (!mainSignal.aborted) {
-                            cached++;
-                            onProgress?.(cached, total);
-                        }
-                    }
-                })
-            );
-        }
-
-        if (mainSignal.aborted) {
-            throw new DOMException('Download cancelled by user', 'AbortError');
+            if (mainSignal.aborted) {
+                await rollbackWrittenTiles();
+                throw new DOMException('Download cancelled by user', 'AbortError');
+            }
+        } catch (err: any) {
+            if (mainSignal.aborted || err?.name === 'AbortError') {
+                await rollbackWrittenTiles();
+            }
+            this.activeAbortController = null;
+            throw err;
         }
 
         this.activeAbortController = null;
@@ -253,6 +289,28 @@ class OfflineMapService {
         this.saveAreas();
 
         return area;
+    }
+
+    async deleteArea(id: string): Promise<boolean> {
+        await this.init();
+        const areaIndex = this.downloadedAreas.findIndex(a => a.id === id);
+        if (areaIndex === -1) return false;
+        const area = this.downloadedAreas[areaIndex];
+        
+        // Calculate tile URLs for this area and remove them from cache
+        const tileUrls = this.getTileUrls(area.bounds, area.zoom.min, area.zoom.max);
+        if (typeof window !== 'undefined' && 'caches' in window) {
+            try {
+                const cache = await window.caches.open(TILE_CACHE_NAME);
+                await Promise.allSettled(tileUrls.map(url => cache.delete(url)));
+            } catch (e) {
+                console.warn('[OfflineMapService] Error removing tiles for deleted area:', e);
+            }
+        }
+
+        this.downloadedAreas.splice(areaIndex, 1);
+        this.saveAreas();
+        return true;
     }
 
     getDownloadedAreas(): DownloadArea[] {

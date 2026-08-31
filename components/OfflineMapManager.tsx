@@ -105,6 +105,13 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
         }
     };
 
+    const handleDeleteArea = async (id: string, name: string) => {
+        if (confirm(`Delete offline map region "${name}"?`)) {
+            await offlineMapService.deleteArea(id);
+            setDownloadedAreas(offlineMapService.getDownloadedAreas());
+        }
+    };
+
     const handleClearCache = async () => {
         if (confirm('Clear all downloaded offline map tiles?')) {
             await offlineMapService.clearCache();
@@ -321,9 +328,18 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                                     {area.tilesCount.toLocaleString()} tiles • {new Date(area.downloadedAt).toLocaleDateString()}
                                                 </p>
                                             </div>
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 shrink-0 ml-2">
-                                                Ready
-                                            </span>
+                                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                                                    Ready
+                                                </span>
+                                                <button
+                                                    onClick={() => handleDeleteArea(area.id, area.name)}
+                                                    title="Delete this offline region"
+                                                    className="p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-all text-xs"
+                                                >
+                                                    🗑️
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
