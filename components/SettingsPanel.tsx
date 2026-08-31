@@ -19,6 +19,7 @@ export interface UserSettings {
     mapSkin: MapSkinId;
     buildingScale?: 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental';
     landmarkGlow?: boolean;
+    showTrafficControls?: boolean;
     avoidTolls?: boolean;
     avoidHighways?: boolean;
     privacyMode?: PrivacyMode;
@@ -496,6 +497,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             <ToggleSwitch
                                 enabled={localSettings.landmarkGlow !== false}
                                 onChange={(v) => updateSetting('landmarkGlow', v)}
+                            />
+                        </SettingRow>
+
+                        {/* Traffic Controls & Railroad Crossings */}
+                        <SettingRow
+                            label="Traffic Controls & Rail Crossings"
+                            description="Show stop signs, traffic signals, speed cameras, and train crossings on map & HUD"
+                        >
+                            <ToggleSwitch
+                                enabled={localSettings.showTrafficControls !== false}
+                                onChange={(v) => updateSetting('showTrafficControls', v)}
                             />
                         </SettingRow>
 

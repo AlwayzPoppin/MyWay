@@ -100,6 +100,7 @@ interface MapLibre3DViewProps {
     isCameraFree?: boolean;
     onCameraFreeChange?: (isFree: boolean) => void;
     isLowDataMode?: boolean;
+    showTrafficControls?: boolean;
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
@@ -134,7 +135,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     landmarkGlow = true,
     isCameraFree = false,
     onCameraFreeChange,
-    isLowDataMode = false
+    isLowDataMode = false,
+    showTrafficControls = true
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
@@ -143,6 +145,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const [mapEpoch, setMapEpoch] = React.useState(0); // Incremented to trigger WebGL context loss recovery reboot
     const renderedGeofenceIdsRef = useRef<Set<string>>(new Set());
     const routeRafRef = useRef<number | null>(null);
+    const trafficControlMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const membersMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const placesMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const currentStyleUrlRef = useRef<string | null>(null);
@@ -525,6 +528,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 } catch (e) {
                     // Some layers might not support these paint properties
                 }
+            }
+
+            // 4. Enhanced Railroad & Train Track Styling
+            if (layer.id.includes('rail') || layer.id.includes('railway') || layer.id.includes('train')) {
+                try {
+                    map.current!.setLayoutProperty(layer.id, 'visibility', 'visible');
+                    if (layer.type === 'line') {
+                        map.current!.setPaintProperty(layer.id, 'line-color', isWarmLightSkin ? '#475569' : '#94a3b8');
+                        map.current!.setPaintProperty(layer.id, 'line-opacity', 0.9);
+                        map.current!.setPaintProperty(layer.id, 'line-width', [
+                            'interpolate', ['linear'], ['zoom'],
+                            10, 1.5,
+                            14, 3.5,
+                            17, 6
+                        ]);
+                    }
+                } catch (e) {}
             }
         });
     }, [mapStyle, isLowDataMode, mapSkin, theme, buildingScale]);
@@ -1051,6 +1071,99 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         }
     }, [activeRoute?.destinationName, activeRoute?.totalDistance, isNavigating, isMapReady, isMobile]);
+
+    // ==========================================
+    // TRAFFIC CONTROLS & RAILROAD CROSSINGS (STOP SIGNS, RED LIGHTS, TRAIN TRACKS)
+    // ==========================================
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+
+        // Clear markers if disabled or no active route
+        if (showTrafficControls === false || !activeRoute) {
+            trafficControlMarkersRef.current.forEach(m => m.remove());
+            trafficControlMarkersRef.current.clear();
+            return;
+        }
+
+        const controls = activeRoute.trafficControls && activeRoute.trafficControls.length > 0
+            ? activeRoute.trafficControls
+            : [];
+
+        const currentIds = new Set(controls.map(c => c.id));
+
+        // Remove stale markers
+        for (const [id, marker] of trafficControlMarkersRef.current.entries()) {
+            if (!currentIds.has(id)) {
+                marker.remove();
+                trafficControlMarkersRef.current.delete(id);
+            }
+        }
+
+        // Render each traffic control
+        controls.forEach(ctrl => {
+            if (!ctrl.location || typeof ctrl.location.lat !== 'number' || typeof ctrl.location.lng !== 'number') return;
+
+            let marker = trafficControlMarkersRef.current.get(ctrl.id);
+            if (!marker) {
+                const el = document.createElement('div');
+                el.className = 'myway-traffic-control-marker select-none';
+                el.style.cursor = 'pointer';
+                el.style.display = 'flex';
+                el.style.flexDirection = 'column';
+                el.style.alignItems = 'center';
+                el.style.filter = 'drop-shadow(0 6px 14px rgba(0,0,0,0.6))';
+                el.style.transform = 'translate3d(0,0,0)';
+
+                if (ctrl.type === 'stop_sign') {
+                    el.innerHTML = `
+                        <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
+                            <div style="background: #dc2626; border: 2.5px solid #ffffff; width: 32px; height: 32px; clip-path: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%); display: flex; align-items: center; justify-content: center; font-size: 8.5px; font-weight: 900; color: #ffffff; letter-spacing: -0.5px; box-shadow: 0 0 14px rgba(220,38,38,0.7); animation: pulse 2.5s infinite;">
+                                STOP
+                            </div>
+                            <div style="width: 2.5px; height: 10px; background: #ffffff; opacity: 0.85;"></div>
+                        </div>
+                    `;
+                } else if (ctrl.type === 'traffic_light') {
+                    el.innerHTML = `
+                        <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
+                            <div style="background: #0f172a; border: 2px solid #334155; border-radius: 8px; padding: 3px 4px; display: flex; flex-direction: column; gap: 2.5px; align-items: center; box-shadow: 0 0 14px rgba(234,179,8,0.4);">
+                                <div style="width: 7px; height: 7px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 6px #ef4444;"></div>
+                                <div style="width: 7px; height: 7px; border-radius: 50%; background: #eab308; opacity: 0.4;"></div>
+                                <div style="width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e;"></div>
+                            </div>
+                            <div style="width: 2px; height: 10px; background: #64748b;"></div>
+                        </div>
+                    `;
+                } else if (ctrl.type === 'railroad_crossing') {
+                    el.innerHTML = `
+                        <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
+                            <div style="background: #f59e0b; border: 2.5px solid #000000; border-radius: 6px; transform: rotate(45deg); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 16px rgba(245,158,11,0.7);">
+                                <div style="transform: rotate(-45deg); font-weight: 900; font-size: 13px; line-height: 1;">
+                                    🚂
+                                </div>
+                            </div>
+                            <div style="margin-top: 5px; background: rgba(0,0,0,0.85); border: 1.5px solid #f59e0b; border-radius: 4px; padding: 1px 4px; font-size: 7.5px; font-weight: 900; color: #fbbf24; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px;">
+                                Rail Crossing
+                            </div>
+                        </div>
+                    `;
+                } else if (ctrl.type === 'speed_camera') {
+                    el.innerHTML = `
+                        <div style="background: #4f46e5; border: 2px solid #ffffff; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; box-shadow: 0 0 12px rgba(99,102,241,0.6);">
+                            📷
+                        </div>
+                    `;
+                }
+
+                marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+                    .setLngLat([ctrl.location.lng, ctrl.location.lat])
+                    .addTo(map.current!);
+                trafficControlMarkersRef.current.set(ctrl.id, marker);
+            } else {
+                marker.setLngLat([ctrl.location.lng, ctrl.location.lat]);
+            }
+        });
+    }, [activeRoute?.trafficControls, activeRoute?.steps, showTrafficControls, isMapReady, isNavigating]);
 
     const placesRef = useRef(places);
     placesRef.current = places;

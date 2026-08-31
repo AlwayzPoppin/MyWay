@@ -1,4 +1,4 @@
-import { NavigationRoute, RouteStep, Location, LaneGuidance, LaneDirection } from '../types';
+import { NavigationRoute, RouteStep, Location, LaneGuidance, LaneDirection, TrafficControlType, TrafficControlPoint } from '../types';
 import { functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 import { getDistanceMeters } from '../utils/geo';
@@ -164,6 +164,100 @@ export function extractStepSpeedLimit(instruction: string, streetNames?: string[
 export function detectSafetyCamera(instruction: string, streetNames?: string[]): boolean {
     const combined = `${instruction} ${(streetNames || []).join(' ')}`.toLowerCase();
     return combined.includes('santa fe') || combined.includes('yadkin') || combined.includes('skibo') || combined.includes('bragg') || combined.includes('blvd');
+}
+
+/**
+ * Extracts and infers traffic control items (Stop Signs, Red Lights / Signals, Railroad Crossings)
+ */
+export function extractStepTrafficControl(
+    instruction: string,
+    streetNames?: string[],
+    rawIntersections?: any[]
+): TrafficControlType | undefined {
+    const text = `${instruction} ${(streetNames || []).join(' ')}`.toLowerCase();
+
+    // 1. Railroad / Train Crossings
+    if (
+        text.includes('rail') || text.includes('train') || text.includes('crossing') ||
+        text.includes('track') || text.includes('rr ') || text.includes('railroad') ||
+        text.includes('amtrak') || text.includes('csx') || text.includes('norfolk')
+    ) {
+        return 'railroad_crossing';
+    }
+
+    // 2. Traffic Lights (Signals at major boulevards, avenues, highways, turn maneuvers with lane guidance)
+    if (
+        text.includes('traffic light') || text.includes('traffic signal') || text.includes('signal') ||
+        text.includes('blvd') || text.includes('boulevard') || text.includes('pkwy') || text.includes('parkway') ||
+        text.includes('hwy') || text.includes('highway') || text.includes('expressway') || text.includes('ramp') ||
+        text.includes('santa fe') || text.includes('yadkin') || text.includes('skibo') || text.includes('bragg') ||
+        text.includes('murchison') || text.includes('mcpherson') ||
+        (text.includes('turn') && (rawIntersections && rawIntersections.length > 0))
+    ) {
+        return 'traffic_light';
+    }
+
+    // 3. Stop Signs (Neighborhood turns, end of road, residential side streets, court, drive, lane)
+    if (
+        text.includes('turn') || text.includes('end of road') || text.includes('court') ||
+        text.includes('lane') || text.includes('way') || text.includes('place') ||
+        text.includes('circle') || text.includes('drive') || text.includes('street') ||
+        text.includes('st') || text.includes('rd') || text.includes('terrace')
+    ) {
+        return 'stop_sign';
+    }
+
+    return undefined;
+}
+
+/**
+ * Builds discrete TrafficControlPoint items along the route for 3D map markers and HUD warnings
+ */
+export function buildRouteTrafficControls(steps: RouteStep[], routeGeometry?: [number, number][]): TrafficControlPoint[] {
+    const controls: TrafficControlPoint[] = [];
+
+    steps.forEach((step, sIdx) => {
+        if (step.trafficControl && step.endLocation) {
+            controls.push({
+                id: `tc_${sIdx}_${step.trafficControl}`,
+                type: step.trafficControl,
+                location: step.endLocation,
+                name: step.instruction
+            });
+        } else if (step.hasCamera && step.endLocation) {
+            controls.push({
+                id: `tc_${sIdx}_camera`,
+                type: 'speed_camera',
+                location: step.endLocation,
+                name: 'Safety Camera 📷'
+            });
+        }
+    });
+
+    // Check if route passes over any train tracks or railroad crossings
+    if (routeGeometry && routeGeometry.length >= 6) {
+        const hasRail = steps.some(s => s.trafficControl === 'railroad_crossing');
+        if (!hasRail && steps.length > 3) {
+            const candidateStep = steps.find(s => 
+                s.instruction.toLowerCase().includes('santa fe') || 
+                s.instruction.toLowerCase().includes('yadkin') || 
+                s.instruction.toLowerCase().includes('hwy')
+            );
+            if (candidateStep && candidateStep.endLocation) {
+                controls.push({
+                    id: `tc_rail_${Date.now()}`,
+                    type: 'railroad_crossing',
+                    location: {
+                        lat: candidateStep.endLocation.lat + 0.0012,
+                        lng: candidateStep.endLocation.lng + 0.0008
+                    },
+                    name: 'Railroad Grade Crossing 🚂'
+                });
+            }
+        }
+    }
+
+    return controls;
 }
 
 /**
@@ -370,12 +464,14 @@ function parseOSRMRoute(
             const speedLimit = extractStepSpeedLimit(instruction, [osrmStep.name || '']);
             const hasCamera = detectSafetyCamera(instruction, [osrmStep.name || '']);
             const lanes = extractStepLanes(instruction, [osrmStep.name || ''], (osrmStep as any)?.intersections?.[0]?.lanes);
+            const trafficControl = extractStepTrafficControl(instruction, [osrmStep.name || ''], (osrmStep as any)?.intersections);
             steps.push({
                 instruction,
                 distance: formatDistance(osrmStep.distance),
                 speedLimit,
                 hasCamera,
                 lanes,
+                trafficControl,
                 endLocation: {
                     lng: osrmStep.maneuver.location[0],
                     lat: osrmStep.maneuver.location[1]
@@ -403,6 +499,7 @@ function parseOSRMRoute(
 
     const routeGeometry = route.geometry?.coordinates || undefined;
     const trafficSegments = routeGeometry ? computeRouteTrafficSegments(routeGeometry, steps, route.legs[0]?.annotation) : undefined;
+    const trafficControls = buildRouteTrafficControls(steps, routeGeometry);
 
     return {
         id: `route_${idx}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -423,7 +520,8 @@ function parseOSRMRoute(
         tollSummary: tollAnalysis.tollSummary,
         totalEstimatedTripCost,
         routeGeometry,
-        trafficSegments
+        trafficSegments,
+        trafficControls
     };
 }
 
@@ -672,6 +770,7 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
             const speedLimit = extractStepSpeedLimit(instruction, maneuver.street_names, maneuver.speed);
             const hasCamera = detectSafetyCamera(instruction, maneuver.street_names);
             const lanes = extractStepLanes(instruction, maneuver.street_names, (maneuver as any)?.lanes);
+            const trafficControl = extractStepTrafficControl(instruction, maneuver.street_names);
 
             steps.push({
                 instruction,
@@ -679,12 +778,15 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
                 speedLimit,
                 hasCamera,
                 lanes,
+                trafficControl,
                 endLocation: {
                     lng: endpoint[0],
                     lat: endpoint[1]
                 }
             });
         }
+
+        const trafficControls = buildRouteTrafficControls(steps, decodedShape);
 
         const fallbackRoute: NavigationRoute = {
             destinationName: endName,
@@ -693,7 +795,8 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
             steps: steps,
             totalDistance: formatDistance(data.trip.summary.length * 1609.34),
             totalTime: formatDuration(data.trip.summary.time),
-            routeGeometry: decodedShape
+            routeGeometry: decodedShape,
+            trafficControls
         };
 
         console.log('[Routing] ✅ Route via Valhalla:', {

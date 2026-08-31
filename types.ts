@@ -23,6 +23,16 @@ export interface TrafficSegment {
   annotationIndex?: number;
 }
 
+export type TrafficControlType = 'stop_sign' | 'traffic_light' | 'railroad_crossing' | 'speed_camera' | 'crosswalk';
+
+export interface TrafficControlPoint {
+  id: string;
+  type: TrafficControlType;
+  location: Location;
+  name?: string;
+  bearing?: number;
+}
+
 export interface RouteStep {
   instruction: string;
   distance: string;
@@ -34,6 +44,7 @@ export interface RouteStep {
   tollName?: string; // e.g. "NJ Turnpike", "Verrazzano-Narrows Bridge"
   estimatedToll?: number; // e.g. 19.50
   congestion?: CongestionLevel;
+  trafficControl?: TrafficControlType; // Stop sign, traffic light, railroad crossing, etc.
 }
 
 export interface IncidentReport {
@@ -69,6 +80,7 @@ export interface NavigationRoute {
   routeGeometry?: [number, number][]; // Full road-following polyline [[lng,lat], ...] from OSRM
   trafficSegments?: TrafficSegment[]; // Visual live traffic congestion polyline segments
   congestionLevel?: CongestionLevel; // Predominant route congestion
+  trafficControls?: TrafficControlPoint[]; // Stop signs, traffic lights, railroad crossings along route
 }
 
 export interface CircleTask {

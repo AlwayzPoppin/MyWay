@@ -200,6 +200,7 @@ const App: React.FC = () => {
     mapSkin: ((localStorage.getItem('myway_map_skin') as any) || 'default') as 'default' | 'cyberpunk' | 'sunset' | 'midnight' | 'arctic' | 'forest',
     buildingScale: ((localStorage.getItem('myway_building_scale') as any) || 'enhanced') as 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental',
     landmarkGlow: localStorage.getItem('myway_landmark_glow') !== 'false',
+    showTrafficControls: localStorage.getItem('myway_show_traffic_controls') !== 'false',
     avoidTolls: localStorage.getItem('myway_avoid_tolls') === 'true',
     avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
   });
@@ -870,6 +871,7 @@ const App: React.FC = () => {
               mapSkin={userSettings.mapSkin}
               buildingScale={userSettings.buildingScale}
               landmarkGlow={userSettings.landmarkGlow}
+              showTrafficControls={userSettings.showTrafficControls}
               selectedMemberId={selectedMemberId}
               center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined}
               zoom={mapZoom}
@@ -1409,6 +1411,9 @@ const App: React.FC = () => {
                     }
                     if (typeof newSettings.landmarkGlow === 'boolean') {
                       localStorage.setItem('myway_landmark_glow', String(newSettings.landmarkGlow));
+                    }
+                    if (typeof newSettings.showTrafficControls === 'boolean') {
+                      localStorage.setItem('myway_show_traffic_controls', String(newSettings.showTrafficControls));
                     }
                   }}
                   onClose={() => setActiveModal(null)}

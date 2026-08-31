@@ -232,10 +232,34 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className={`font-black tracking-tighter transition-colors duration-500 ${distColor} ${
                 isMobile ? 'text-3xl' : 'text-5xl'
               }`}>{currentStep.distance}</span>
+
+              {/* Upcoming Traffic Control Badge (Stop Sign, Traffic Light, Rail Crossing) */}
+              {currentStep.trafficControl && (
+                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full border shadow-md animate-in fade-in zoom-in-95 duration-300 ${
+                  currentStep.trafficControl === 'stop_sign'
+                    ? 'bg-red-500/25 border-red-500/50 text-red-200'
+                    : currentStep.trafficControl === 'traffic_light'
+                    ? 'bg-amber-500/25 border-amber-500/50 text-amber-200'
+                    : currentStep.trafficControl === 'railroad_crossing'
+                    ? 'bg-yellow-500/30 border-yellow-500/60 text-yellow-200'
+                    : 'bg-indigo-500/25 border-indigo-500/50 text-indigo-200'
+                }`}>
+                  <span className="text-xs">
+                    {currentStep.trafficControl === 'stop_sign' ? '🛑' :
+                     currentStep.trafficControl === 'traffic_light' ? '🚦' :
+                     currentStep.trafficControl === 'railroad_crossing' ? '🚂' : '📷'}
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-wider">
+                    {currentStep.trafficControl === 'stop_sign' ? 'Stop Sign' :
+                     currentStep.trafficControl === 'traffic_light' ? 'Traffic Light' :
+                     currentStep.trafficControl === 'railroad_crossing' ? 'Rail Crossing' : 'Camera'}
+                  </span>
+                </div>
+              )}
             </div>
             <p className={`font-bold text-slate-200 truncate ${isMobile ? 'text-sm' : 'text-2xl'}`}>{currentStep.instruction}</p>
 
