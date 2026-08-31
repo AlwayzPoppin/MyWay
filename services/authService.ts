@@ -449,6 +449,23 @@ export const updateMemberLocation = async (
     userId: string,
     location: MemberLocation
 ): Promise<void> => {
+    const payload: any = {
+        lat: location.lat,
+        lng: location.lng,
+        speed: location.speed ?? 0,
+        heading: location.heading ?? 0,
+        accuracy: location.accuracy || 10,
+        battery: location.battery || 100,
+        signalQuality: location.signalQuality || 'medium',
+        timestamp: location.timestamp || Date.now(),
+        status: location.status || 'Moving',
+        privacyMode: location.privacyMode || 'exact',
+        blurredRadiusMeters: location.blurredRadiusMeters || 0,
+    };
+    if (location.encryptedData !== undefined) {
+        payload.encryptedData = location.encryptedData;
+    }
+
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
         console.warn('📶 Offline: Queuing location update in IndexedDB buffer');
         await bufferLocation({
@@ -460,28 +477,15 @@ export const updateMemberLocation = async (
             speed: location.speed ?? null,
             heading: location.heading ?? null,
             battery: location.battery || 100,
-            signalQuality: location.signalQuality,
+            signalQuality: location.signalQuality || 'medium',
             timestamp: location.timestamp || Date.now(),
-            encryptedData: location.encryptedData
+            encryptedData: location.encryptedData ?? null
         });
         return;
     }
 
     try {
-        await set(ref(database, `locations/${circleId}/${userId}`), {
-            lat: location.lat,
-            lng: location.lng,
-            speed: location.speed || 0,
-            heading: location.heading || 0,
-            accuracy: location.accuracy || 10,
-            battery: location.battery || 100,
-            signalQuality: location.signalQuality,
-            timestamp: location.timestamp || Date.now(),
-            status: location.status || 'Moving',
-            privacyMode: location.privacyMode || 'exact',
-            blurredRadiusMeters: location.blurredRadiusMeters || 0,
-            encryptedData: location.encryptedData
-        });
+        await set(ref(database, `locations/${circleId}/${userId}`), payload);
     } catch (err) {
         console.error('Failed to update member location in Firebase, buffering locally:', err);
         await bufferLocation({
@@ -493,9 +497,9 @@ export const updateMemberLocation = async (
             speed: location.speed ?? null,
             heading: location.heading ?? null,
             battery: location.battery || 100,
-            signalQuality: location.signalQuality,
+            signalQuality: location.signalQuality || 'medium',
             timestamp: location.timestamp || Date.now(),
-            encryptedData: location.encryptedData
+            encryptedData: location.encryptedData ?? null
         });
     }
 };

@@ -248,7 +248,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // 3D BUILDINGS & ARCHITECTURAL SHADING ENGINE
     // ==========================================
     const apply3DBuildingLayer = useCallback(() => {
-        if (!map.current) return;
+        if (!map.current || !map.current.isStyleLoaded()) return;
 
         // Apply skin-specific color overrides
         if (mapStyle === 'standard' && !isLowDataMode) {
@@ -575,7 +575,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     // Live update 3D building heights, ambient landmark glow, and architectural lighting
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
         apply3DBuildingLayer();
     }, [apply3DBuildingLayer, isMapReady, styleVersion]);
 
@@ -599,7 +599,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     // Update Route Line
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const routeId = 'active-route-line';
         const completedId = 'completed-route-line';
@@ -651,7 +651,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         const routeGlowColor = mapSkin === 'gta_radar' ? '#f59e0b' : '#818cf8';
 
         const updateGeoJsonSources = () => {
-            if (!map.current) return;
+            if (!map.current || !map.current.isStyleLoaded()) return;
             // --- RENDER REMAINING (Main Line) ---
             if (map.current.getSource(routeId)) {
                 (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(staticRemainingRouteGeoJSON as any);
@@ -709,7 +709,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // UNIFIED WEBGL DESTINATION PIN LAYER
     // ==========================================
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'destination-pin-webgl-source';
         const destinationLoc = activeRoute?.destinationLoc;
@@ -841,7 +841,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // WEBGL SYMBOL & CIRCLE LAYER CLUSTERING FOR PLACES
     // ==========================================
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'places-cluster-source';
         const geojsonData: GeoJSON.FeatureCollection = {
@@ -1001,7 +1001,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // UNIFIED WEBGL GEOFENCE POLYGONS
     // ==========================================
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'places-geofences-source';
         const features = places.map(place => {
@@ -1060,7 +1060,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // UNIFIED WEBGL INCIDENTS LAYER
     // ==========================================
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'incidents-webgl-source';
         const geojsonData: GeoJSON.FeatureCollection = {
@@ -1133,7 +1133,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // UNIFIED WEBGL TRIP SAFETY EVENTS LAYER
     // ==========================================
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'trip-safety-events-source';
         const geojsonData: GeoJSON.FeatureCollection = {
@@ -1191,7 +1191,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     // Update Privacy Zones
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         privacyZones.forEach(zone => {
             const sourceId = `privacy-zone-${zone.id}`;
@@ -1231,7 +1231,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     membersRef.current = members;
 
     useEffect(() => {
-        if (!map.current || !isMapReady) return;
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const SNAPPING_THRESHOLD_METERS = 40;
         const validMembers = members.filter(m => !(m.location.lat === 0 && m.location.lng === 0));
