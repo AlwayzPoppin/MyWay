@@ -134,16 +134,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
-    const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const [isMapReady, setIsMapReady] = React.useState(false);
     const [styleVersion, setStyleVersion] = React.useState(0); // Track style reloads to re-render layers
     const [mapEpoch, setMapEpoch] = React.useState(0); // Incremented to trigger WebGL context loss recovery reboot
-    const placesMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
-    const incidentsMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
-    const destinationMarkerRef = useRef<maplibregl.Marker | null>(null);
     const renderedGeofenceIdsRef = useRef<Set<string>>(new Set());
     const routeRafRef = useRef<number | null>(null);
-    const safetyEventMarkersRef = useRef<maplibregl.Marker[]>([]);
 
     // Track last known camera position to restore seamless view upon WebGL recovery
     const lastCameraRef = useRef<{
@@ -169,18 +164,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                     console.warn('🔄 MapLibre3DView: Executing WebGL recovery reboot...');
-
-                    // Clear all existing marker DOM elements
-                    markersRef.current.forEach(m => m.remove());
-                    markersRef.current.clear();
-                    placesMarkersRef.current.forEach(m => m.remove());
-                    placesMarkersRef.current.clear();
-                    incidentsMarkersRef.current.forEach(m => m.remove());
-                    incidentsMarkersRef.current.clear();
-                    if (destinationMarkerRef.current) {
-                        destinationMarkerRef.current.remove();
-                        destinationMarkerRef.current = null;
-                    }
                     renderedGeofenceIdsRef.current.clear();
 
                     if (map.current) {
@@ -844,49 +827,101 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     }, [routeCoords, isMapReady, styleVersion, isNavigating, theme, currentStepIndex, splitIndex]); 
 
-    // Destination Pin Marker
+    // ==========================================
+    // UNIFIED WEBGL DESTINATION PIN LAYER
+    // ==========================================
     useEffect(() => {
         if (!map.current || !isMapReady) return;
 
-        // Remove old marker
-        if (destinationMarkerRef.current) {
-            destinationMarkerRef.current.remove();
-            destinationMarkerRef.current = null;
-        }
+        const sourceId = 'destination-pin-webgl-source';
+        const destinationLoc = activeRoute?.destinationLoc;
 
-        // Add new marker if route is active
-        if (activeRoute?.destinationLoc) {
-            const el = document.createElement('div');
-            if (mapSkin === 'gta_radar') {
-                el.innerHTML = getGTADestinationPinHtml();
-                destinationMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' })
-                    .setLngLat([activeRoute.destinationLoc.lng, activeRoute.destinationLoc.lat])
-                    .addTo(map.current!);
-            } else {
-                el.style.cssText = `
-                    width: 36px; height: 36px;
-                    background: linear-gradient(135deg, #ef4444, #dc2626);
-                    border-radius: 50% 50% 50% 0;
-                    transform: rotate(-45deg);
-                    border: 3px solid white;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-                    display: flex; align-items: center; justify-content: center;
-                `;
-                const inner = document.createElement('div');
-                inner.style.cssText = `
-                    width: 10px; height: 10px;
-                    background: white;
-                    border-radius: 50%;
-                    transform: rotate(45deg);
-                `;
-                el.appendChild(inner);
+        const geojsonData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: destinationLoc ? [{
+                type: 'Feature',
+                properties: {
+                    name: activeRoute.destinationName || 'Destination',
+                    isGTARadar: mapSkin === 'gta_radar'
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: [destinationLoc.lng, destinationLoc.lat]
+                }
+            }] : []
+        };
 
-                destinationMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'bottom' })
-                    .setLngLat([activeRoute.destinationLoc.lng, activeRoute.destinationLoc.lat])
-                    .addTo(map.current!);
-            }
+        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+        if (source) {
+            source.setData(geojsonData);
+        } else {
+            map.current.addSource(sourceId, {
+                type: 'geojson',
+                data: geojsonData
+            });
+
+            // Outer Pulse Glow Circle
+            map.current.addLayer({
+                id: 'destination-pulse-glow',
+                type: 'circle',
+                source: sourceId,
+                paint: {
+                    'circle-color': '#ef4444',
+                    'circle-radius': 18,
+                    'circle-opacity': 0.35,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff'
+                }
+            });
+
+            // Core Pin Circle
+            map.current.addLayer({
+                id: 'destination-core-circle',
+                type: 'circle',
+                source: sourceId,
+                paint: {
+                    'circle-color': '#dc2626',
+                    'circle-radius': 11,
+                    'circle-stroke-width': 2.5,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-opacity': 0.98
+                }
+            });
+
+            // Destination Icon
+            map.current.addLayer({
+                id: 'destination-pin-symbol',
+                type: 'symbol',
+                source: sourceId,
+                layout: {
+                    'text-field': '🏁',
+                    'text-size': 13,
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                }
+            });
+
+            // Destination Name Label
+            map.current.addLayer({
+                id: 'destination-name-label',
+                type: 'symbol',
+                source: sourceId,
+                layout: {
+                    'text-field': ['get', 'name'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': 11,
+                    'text-offset': [0, 1.8],
+                    'text-anchor': 'top',
+                    'text-optional': true
+                },
+                paint: {
+                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
+                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.9)',
+                    'text-halo-width': 2
+                }
+            });
         }
-    }, [activeRoute, isMapReady, mapSkin]);
+    }, [activeRoute?.destinationLoc, activeRoute?.destinationName, isMapReady, styleVersion, mapSkin, theme]);
 
     // Auto-frame route when previewing or starting route
     useEffect(() => {
@@ -1311,34 +1346,32 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         });
     }, [privacyZones, styleVersion]);
 
-    const prevMemberSkinRef = useRef(mapSkin);
+    // ==========================================
+    // UNIFIED WEBGL MEMBERS & ACCURACY LAYER
+    // ==========================================
+    const membersRef = useRef(members);
+    membersRef.current = members;
 
-    // Update member markers and accuracy circles
     useEffect(() => {
         if (!map.current || !isMapReady) return;
 
-        // If skin changed, clear member markers so they re-render with correct theme borders/arrows
-        if (prevMemberSkinRef.current !== mapSkin) {
-            markersRef.current.forEach(m => m.remove());
-            markersRef.current.clear();
-            prevMemberSkinRef.current = mapSkin;
-        }
-
-        const SNAPPING_THRESHOLD_METERS = 40; // Max distance to snap to road
-
+        const SNAPPING_THRESHOLD_METERS = 40;
         const validMembers = members.filter(m => !(m.location.lat === 0 && m.location.lng === 0));
         const dedupedMembers = Array.from(
             new Map<string, FamilyMember>(validMembers.map(m => [m.id, m])).values()
         );
 
+        // 1. Accuracy & Privacy Halos FeatureCollection
+        const haloFeatures: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+        // 2. Members FeatureCollection
+        const memberFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
+
         dedupedMembers.forEach(member => {
             let finalLocation = member.location;
-            let displayBearing = 0;
+            let displayBearing = member.bearing || 0;
 
-            // --- Audit #5: Snap-to-Road Logic ---
+            // Snap-to-Road during navigation
             if (isNavigating && routeCoords.length >= 2) {
-                // For simplicity, we snap ONLY members who are part of the active trip (usually 'You')
-                // but checking distance threshold makes it safe for all.
                 let minSegDist = Infinity;
                 let snappedPoint: Location | null = null;
                 let segBearing = 0;
@@ -1364,204 +1397,252 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }
 
-            const position: [number, number] = [finalLocation.lng, finalLocation.lat];
+            const updatedMs = new Date(member.lastUpdated).getTime();
+            const ageMinutes = Math.floor((Date.now() - updatedMs) / 60000);
+            const isStale = ageMinutes >= 5;
+            const ageBadge = isStale ? (ageMinutes >= 60 ? `${Math.floor(ageMinutes / 60)}h ago` : `${ageMinutes}m ago`) : '';
 
-            // --- Accuracy & Privacy Halo Circle ---
-            const circleSourceId = `accuracy-circle-${member.id}`;
-            const circleLineLayerId = `accuracy-circle-line-${member.id}`;
             const isBlurred = member.privacyMode === 'blurred' || member.isGhostMode;
+            const isFrozen = member.privacyMode === 'frozen';
+            const isGTARadar = mapSkin === 'gta_radar';
+            const isDriving = member.status === 'Driving';
+
+            const borderColor = isGTARadar
+                ? '#facc15'
+                : isBlurred 
+                    ? '#a855f7' 
+                    : isFrozen 
+                        ? '#38bdf8' 
+                        : isStale 
+                            ? '#9ca3af' 
+                            : isDriving 
+                                ? '#6366f1' 
+                                : '#22c55e';
+
+            // Accuracy/Privacy Halo
             const circleRadiusKm = isBlurred ? ((member.blurredRadiusMeters || 2400) / 1000) : (member.accuracy ? member.accuracy / 1000 : 0);
-
-            if (circleRadiusKm > 0 && !isNavigating) { // Hide circle during nav for clean UI
-                 const coords = getCircleCoords(finalLocation, circleRadiusKm, 36);
- 
-                 const circleData: GeoJSON.Feature = {
-                     type: 'Feature',
-                     properties: {},
-                     geometry: { type: 'Polygon', coordinates: [coords] }
-                 };
- 
-                 if (map.current!.getSource(circleSourceId)) {
-                     (map.current!.getSource(circleSourceId) as maplibregl.GeoJSONSource).setData(circleData);
-                 } else {
-                     map.current!.addSource(circleSourceId, { type: 'geojson', data: circleData });
-                     map.current!.addLayer({
-                         id: circleSourceId,
-                         type: 'fill',
-                         source: circleSourceId,
-                         paint: { 
-                             'fill-color': isBlurred ? '#a855f7' : '#6366f1', 
-                             'fill-opacity': isBlurred ? 0.16 : 0.1 
-                         }
-                     });
-                     if (isBlurred) {
-                         map.current!.addLayer({
-                             id: circleLineLayerId,
-                             type: 'line',
-                             source: circleSourceId,
-                             paint: {
-                                 'line-color': '#c084fc',
-                                 'line-width': 2,
-                                 'line-dasharray': [3, 2],
-                                 'line-opacity': 0.7
-                             }
-                         });
-                     }
-                 }
-            } else {
-                 if (map.current!.getLayer(circleLineLayerId)) map.current!.removeLayer(circleLineLayerId);
-                 if (map.current!.getLayer(circleSourceId)) map.current!.removeLayer(circleSourceId);
-                 if (map.current!.getSource(circleSourceId)) map.current!.removeSource(circleSourceId);
+            if (circleRadiusKm > 0 && !isNavigating) {
+                const coords = getCircleCoords(finalLocation, circleRadiusKm, 36);
+                haloFeatures.push({
+                    type: 'Feature',
+                    properties: {
+                        id: member.id,
+                        color: isBlurred ? '#a855f7' : '#6366f1',
+                        opacity: isBlurred ? 0.16 : 0.10
+                    },
+                    geometry: { type: 'Polygon', coordinates: [coords] }
+                });
             }
 
-            // --- Member Marker ---
-            if (markersRef.current.has(member.id)) {
-                const marker = markersRef.current.get(member.id);
-                marker?.setLngLat(position);
-                
-                // Rotate marker if driving
-                const el = marker?.getElement();
-                if (el) {
-                    const arrow = el.querySelector('.marker-direction-arrow') as HTMLElement;
-                    if (arrow) {
-                        arrow.style.transform = `rotate(${displayBearing}deg)`;
-                        arrow.style.opacity = isNavigating ? '1' : '0';
-                    }
+            const initials = (member.name || 'M').charAt(0).toUpperCase();
+            const etaBadge = member.currentTrip?.totalTime ? `🚗 ${member.currentTrip.totalTime}` : '';
+            const statusBadge = isStale ? ageBadge : isBlurred ? '🏙️ ~1.5 mi' : isFrozen ? '❄️ Frozen' : '';
 
-                    // Update avatar image if changed or broken
-                    const img = el.querySelector('img') as HTMLImageElement;
-                    const avatarSrc = getSafeAvatarUrl(member.avatar, member.name || member.id);
-                    const fallbackDataUri = getDefaultAvatarDataUri(member.name || member.id);
-                    if (img && img.src !== avatarSrc) {
-                        img.src = avatarSrc;
-                        img.onerror = () => { img.onerror = null; img.src = fallbackDataUri; };
-                    }
-
-                    // Update live ETA badge
-                    const existingEtaBadge = el.querySelector('.marker-eta-badge');
-                    if (member.currentTrip) {
-                        if (!existingEtaBadge) {
-                            const etaBadge = document.createElement('div');
-                            etaBadge.className = 'marker-eta-badge';
-                            etaBadge.style.cssText = `position: absolute; top: -24px; left: 50%; transform: translateX(-50%); background: rgba(99, 102, 241, 0.9); backdrop-filter: blur(8px); color: white; font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.3); box-shadow: 0 4px 10px rgba(0,0,0,0.3); white-space: nowrap; pointer-events: none; display: flex; align-items: center; gap: 3px;`;
-                            etaBadge.innerHTML = `<span>🚗</span><span>${member.currentTrip.totalTime}</span>`;
-                            el.appendChild(etaBadge);
-                        } else {
-                            existingEtaBadge.innerHTML = `<span>🚗</span><span>${member.currentTrip.totalTime}</span>`;
-                        }
-                    } else if (existingEtaBadge) {
-                        existingEtaBadge.remove();
-                    }
+            memberFeatures.push({
+                type: 'Feature',
+                id: member.id,
+                properties: {
+                    id: member.id,
+                    name: member.name || 'Member',
+                    initials,
+                    color: borderColor,
+                    isDriving,
+                    bearing: displayBearing,
+                    eta: etaBadge,
+                    badge: statusBadge
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: [finalLocation.lng, finalLocation.lat]
                 }
-            } else {
-                const el = document.createElement('div');
-                el.className = 'maplibre-member-marker';
-
-                const updatedMs = new Date(member.lastUpdated).getTime();
-                const ageMinutes = Math.floor((Date.now() - updatedMs) / 60000);
-                const isStale = ageMinutes >= 5;
-                const ageBadge = isStale ? (ageMinutes >= 60 ? `${Math.floor(ageMinutes / 60)}h ago` : `${ageMinutes}m ago`) : '';
-
-                const isGTARadar = mapSkin === 'gta_radar';
-                const borderColor = isGTARadar
-                    ? '#facc15'
-                    : isBlurred 
-                        ? '#a855f7' 
-                        : member.privacyMode === 'frozen' 
-                            ? '#38bdf8' 
-                            : isStale 
-                                ? '#9ca3af' 
-                                : member.status === 'Driving' 
-                                    ? '#6366f1' 
-                                    : '#22c55e';
-
-                el.style.cssText = `
-                  width: 52px; height: 52px;
-                  border-radius: 50%;
-                  border: 3px solid ${borderColor};
-                  box-shadow: 0 4px 12px ${isGTARadar ? 'rgba(250, 204, 21, 0.4)' : isBlurred ? 'rgba(168, 85, 247, 0.4)' : 'rgba(0,0,0,0.4)'};
-                  cursor: pointer;
-                  ${isStale ? 'filter: grayscale(70%); opacity: 0.7;' : ''}
-                  position: relative;
-                `;
-
-                const avatarSrc = getSafeAvatarUrl(member.avatar, member.name || member.id);
-                const fallbackDataUri = getDefaultAvatarDataUri(member.name || member.id);
-
-                const avatarWrapper = document.createElement('div');
-                avatarWrapper.style.cssText = 'width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: #1e293b; display: flex; align-items: center; justify-content: center;';
-
-                const avatarImg = document.createElement('img');
-                avatarImg.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%;';
-                avatarImg.src = avatarSrc;
-                avatarImg.onerror = () => {
-                    avatarImg.onerror = null;
-                    avatarImg.src = fallbackDataUri;
-                };
-                avatarWrapper.appendChild(avatarImg);
-                el.appendChild(avatarWrapper);
-
-                const directionArrow = document.createElement('div');
-                directionArrow.className = 'marker-direction-arrow';
-                const arrowColor = isGTARadar ? '#facc15' : '#6366f1';
-                directionArrow.style.cssText = `
-                    position: absolute; top: -14px; left: 50%; margin-left: -8px;
-                    width: 16px; height: 16px; border-left: 8px solid transparent; 
-                    border-right: 8px solid transparent; border-bottom: 14px solid ${arrowColor};
-                    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
-                    transition: all 0.3s ease; opacity: ${isNavigating ? '1' : '0'}; transform-origin: center 18px;
-                    transform: rotate(${displayBearing}deg);
-                `;
-                el.appendChild(directionArrow);
-
-                if (member.currentTrip) {
-                    const etaBadge = document.createElement('div');
-                    etaBadge.className = 'marker-eta-badge';
-                    etaBadge.style.cssText = `position: absolute; top: -24px; left: 50%; transform: translateX(-50%); background: ${isGTARadar ? 'rgba(234, 179, 8, 0.95)' : 'rgba(99, 102, 241, 0.9)'}; backdrop-filter: blur(8px); color: ${isGTARadar ? '#000000' : 'white'}; font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.3); box-shadow: 0 4px 10px rgba(0,0,0,0.3); white-space: nowrap; pointer-events: none; display: flex; align-items: center; gap: 3px;`;
-                    etaBadge.innerHTML = `<span>🚗</span><span>${member.currentTrip.totalTime}</span>`;
-                    el.appendChild(etaBadge);
-                }
-
-                if (isBlurred) {
-                    const blurBadge = document.createElement('div');
-                    blurBadge.style.cssText = `position: absolute; top: -18px; left: 50%; transform: translateX(-50%); background: rgba(168, 85, 247, 0.9); backdrop-filter: blur(6px); color: white; font-size: 9px; font-weight: 800; padding: 1px 6px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); white-space: nowrap; pointer-events: none;`;
-                    blurBadge.textContent = '🏙️ ~1.5 mi';
-                    el.appendChild(blurBadge);
-                } else if (member.privacyMode === 'frozen') {
-                    const frozenBadge = document.createElement('div');
-                    frozenBadge.style.cssText = `position: absolute; top: -18px; left: 50%; transform: translateX(-50%); background: rgba(56, 189, 248, 0.9); backdrop-filter: blur(6px); color: white; font-size: 9px; font-weight: 800; padding: 1px 6px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); white-space: nowrap; pointer-events: none;`;
-                    frozenBadge.textContent = '❄️ Frozen';
-                    el.appendChild(frozenBadge);
-                }
-
-                if (isStale) {
-                    const badge = document.createElement('div');
-                    badge.style.cssText = `position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%); background: #6b7280; color: white; font-size: 9px; font-weight: 600; padding: 1px 4px; border-radius: 6px; white-space: nowrap; pointer-events: none;`;
-                    badge.textContent = ageBadge;
-                    el.appendChild(badge);
-                }
-
-                el.addEventListener('click', () => onSelectMember?.(member.id));
-
-                const marker = new maplibregl.Marker({ element: el })
-                    .setLngLat(position)
-                    .addTo(map.current!);
-
-                markersRef.current.set(member.id, marker);
-            }
+            });
         });
 
-        // Cleanup
-        markersRef.current.forEach((marker, id) => {
-            if (!members.find(m => m.id === id)) {
-                marker.remove();
-                markersRef.current.delete(id);
-                const circleSourceId = `accuracy-circle-${id}`;
-                if (map.current?.getLayer(circleSourceId)) map.current.removeLayer(circleSourceId);
-                if (map.current?.getSource(circleSourceId)) map.current.removeSource(circleSourceId);
-            }
-        });
-    }, [members, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin]);
+        // --- UPDATE ACCURACY HALOS ---
+        const haloSourceId = 'members-accuracy-halos-source';
+        const haloGeoJson: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: haloFeatures };
+        const haloSource = map.current.getSource(haloSourceId) as maplibregl.GeoJSONSource;
+        if (haloSource) {
+            haloSource.setData(haloGeoJson);
+        } else {
+            map.current.addSource(haloSourceId, { type: 'geojson', data: haloGeoJson });
+            map.current.addLayer({
+                id: 'members-accuracy-fill',
+                type: 'fill',
+                source: haloSourceId,
+                paint: {
+                    'fill-color': ['get', 'color'],
+                    'fill-opacity': ['get', 'opacity']
+                }
+            });
+        }
+
+        // --- UPDATE MEMBERS WEBGL LAYERS ---
+        const membersSourceId = 'members-webgl-source';
+        const membersGeoJson: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: memberFeatures };
+        const membersSource = map.current.getSource(membersSourceId) as maplibregl.GeoJSONSource;
+        if (membersSource) {
+            membersSource.setData(membersGeoJson);
+        } else {
+            map.current.addSource(membersSourceId, { type: 'geojson', data: membersGeoJson });
+
+            // 1. Member Ambient Glow Ring
+            map.current.addLayer({
+                id: 'members-glow-ring',
+                type: 'circle',
+                source: membersSourceId,
+                paint: {
+                    'circle-color': ['get', 'color'],
+                    'circle-radius': [
+                        'interpolate', ['linear'], ['zoom'],
+                        10, 14,
+                        14, 18,
+                        17, 24
+                    ],
+                    'circle-opacity': 0.35,
+                    'circle-stroke-width': 1.5,
+                    'circle-stroke-color': '#ffffff'
+                }
+            });
+
+            // 2. Member Core Circle
+            map.current.addLayer({
+                id: 'members-core-circle',
+                type: 'circle',
+                source: membersSourceId,
+                paint: {
+                    'circle-color': ['get', 'color'],
+                    'circle-radius': [
+                        'interpolate', ['linear'], ['zoom'],
+                        10, 10,
+                        14, 14,
+                        17, 18
+                    ],
+                    'circle-stroke-width': 2.5,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-opacity': 0.98
+                }
+            });
+
+            // 3. Member Initials Symbol
+            map.current.addLayer({
+                id: 'members-initials-symbol',
+                type: 'symbol',
+                source: membersSourceId,
+                layout: {
+                    'text-field': ['get', 'initials'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': [
+                        'interpolate', ['linear'], ['zoom'],
+                        10, 9,
+                        14, 12,
+                        17, 14
+                    ],
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                },
+                paint: {
+                    'text-color': '#ffffff'
+                }
+            });
+
+            // 4. Direction Arrow (Visible when driving)
+            map.current.addLayer({
+                id: 'members-direction-arrow',
+                type: 'symbol',
+                source: membersSourceId,
+                filter: ['==', ['get', 'isDriving'], true],
+                layout: {
+                    'text-field': '▲',
+                    'text-size': 14,
+                    'text-rotate': ['get', 'bearing'],
+                    'text-offset': [0, -1.8],
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                },
+                paint: {
+                    'text-color': ['get', 'color'],
+                    'text-halo-color': '#000000',
+                    'text-halo-width': 1.5
+                }
+            });
+
+            // 5. Member Name Label
+            map.current.addLayer({
+                id: 'members-name-label',
+                type: 'symbol',
+                source: membersSourceId,
+                layout: {
+                    'text-field': ['get', 'name'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': 11,
+                    'text-offset': [0, 1.8],
+                    'text-anchor': 'top',
+                    'text-optional': true
+                },
+                paint: {
+                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
+                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.9)',
+                    'text-halo-width': 2
+                }
+            });
+
+            // 6. Live ETA Badge
+            map.current.addLayer({
+                id: 'members-eta-badge',
+                type: 'symbol',
+                source: membersSourceId,
+                filter: ['!=', ['get', 'eta'], ''],
+                layout: {
+                    'text-field': ['get', 'eta'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': 10,
+                    'text-offset': [0, -2.6],
+                    'text-allow-overlap': true
+                },
+                paint: {
+                    'text-color': '#ffffff',
+                    'text-halo-color': '#4f46e5',
+                    'text-halo-width': 2
+                }
+            });
+
+            // 7. Status / Privacy Badge
+            map.current.addLayer({
+                id: 'members-status-badge',
+                type: 'symbol',
+                source: membersSourceId,
+                filter: ['!=', ['get', 'badge'], ''],
+                layout: {
+                    'text-field': ['get', 'badge'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': 9,
+                    'text-offset': [0, 3.0],
+                    'text-optional': true
+                },
+                paint: {
+                    'text-color': '#94a3b8',
+                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+                    'text-halo-width': 1.5
+                }
+            });
+
+            // Interactive Click & Hover
+            map.current.on('click', 'members-core-circle', (e) => {
+                const feature = e.features?.[0];
+                if (feature?.properties?.id) {
+                    onSelectMember?.(feature.properties.id);
+                }
+            });
+
+            map.current.on('mouseenter', 'members-core-circle', () => {
+                if (map.current) map.current.getCanvas().style.cursor = 'pointer';
+            });
+            map.current.on('mouseleave', 'members-core-circle', () => {
+                if (map.current) map.current.getCanvas().style.cursor = '';
+            });
+        }
+    }, [members, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin, theme, onSelectMember]);
 
     // ==========================================
     // DYNAMIC NAVIGATION CAMERA TRACKING SYSTEM (3RD PERSON CHASE CAM)
