@@ -396,6 +396,53 @@ class OfflineMapService {
         return this.downloadedAreas;
     }
 
+    /**
+     * Checks if a target bounding box is fully contained within an existing downloaded area
+     * with matching or deeper zoom depth.
+     */
+    public isBoundsCovered(
+        bounds: { north: number; south: number; east: number; west: number },
+        zoomMin: number = 10,
+        zoomMax: number = 13
+    ): boolean {
+        const bNorth = Math.max(bounds.north, bounds.south);
+        const bSouth = Math.min(bounds.north, bounds.south);
+        const bEast = Math.max(bounds.east, bounds.west);
+        const bWest = Math.min(bounds.east, bounds.west);
+
+        return this.downloadedAreas.some(area => {
+            const aNorth = Math.max(area.bounds.north, area.bounds.south);
+            const aSouth = Math.min(area.bounds.north, area.bounds.south);
+            const aEast = Math.max(area.bounds.east, area.bounds.west);
+            const aWest = Math.min(area.bounds.east, area.bounds.west);
+
+            const isEnclosed =
+                aNorth >= (bNorth - 0.001) &&
+                aSouth <= (bSouth + 0.001) &&
+                aEast >= (bEast - 0.001) &&
+                aWest <= (bWest + 0.001);
+
+            const isZoomSufficient =
+                area.zoom.min <= zoomMin &&
+                area.zoom.max >= zoomMax;
+
+            return isEnclosed && isZoomSufficient;
+        });
+    }
+
+    /**
+     * Checks if a radius around a geographic coordinate is already fully covered by an offline region.
+     */
+    public isLocationCovered(
+        center: { lat: number; lng: number },
+        radiusKm: number = 5,
+        zoomMin: number = 13,
+        zoomMax: number = 15
+    ): boolean {
+        const targetBounds = computeRadiusBounds(center, radiusKm);
+        return this.isBoundsCovered(targetBounds, zoomMin, zoomMax);
+    }
+
     async clearCache(): Promise<void> {
         this.cancelDownload();
         if (typeof window !== 'undefined' && 'caches' in window) {

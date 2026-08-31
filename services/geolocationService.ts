@@ -5,6 +5,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { Geofence, GeofenceTransition, detectTransition } from './geofenceService';
 import { crashDetectionService } from './crashDetectionService';
 import { offlineMapService, computeRadiusBounds } from './offlineMapService';
+import { getDistanceMeters } from '../utils/geo';
 
 const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>('BackgroundGeolocation');
 
@@ -163,6 +164,11 @@ class GeolocationService {
     private backgroundGeofences: Geofence[] = [];
     private onGeofenceTransitionCallback: ((transition: GeofenceTransition) => void) | null = null;
     private lastTelemetryState: GeolocationState | null = null;
+
+    // Idempotent Predictive Dwelling Caching State
+    private lastDwellingCacheLocation: { lat: number; lng: number; timestamp: number } | null = null;
+    private readonly DWELLING_CACHE_DISTANCE_THRESHOLD_KM = 3.0; // Avoid redundant caching within 3km of prior dwelling spot
+    private readonly DWELLING_CACHE_COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours cooldown per dwelling spot
 
     /** Configure geofences for background evaluation and native push notifications */
     public setBackgroundGeofences(
@@ -469,14 +475,41 @@ class GeolocationService {
                         console.log('🔋 GPS Tier: Dwelling (Stationary >2 min) — Battery-Saver mode enabled');
 
                         // Predictive Dwelling Cache: Pre-cache immediate 5km radius (z13-z15) to secure outbound navigation
+                        // Guarded by Idempotent Spatial Containment & Distance/Cooldown Bounding
                         if (this.lastTelemetryState) {
-                            const currentBounds = computeRadiusBounds(
-                                { lat: this.lastTelemetryState.latitude, lng: this.lastTelemetryState.longitude },
-                                5
+                            const lat = this.lastTelemetryState.latitude;
+                            const lng = this.lastTelemetryState.longitude;
+                            const now = Date.now();
+
+                            // 1. Spatial Index Check: Is this coordinate already enclosed by a saved offline region?
+                            const isAlreadyCached = offlineMapService.isLocationCovered(
+                                { lat, lng },
+                                5,
+                                13,
+                                15
                             );
-                            offlineMapService.downloadArea('Auto-Cache', currentBounds, 13, 15)
-                                .then(() => console.log('📦 [OfflineMapService] Predictive dwelling auto-cache complete (5km radius, z13-z15)'))
-                                .catch(err => console.warn('[OfflineMapService] Predictive dwelling auto-cache skipped/failed:', err));
+
+                            // 2. Proximity & Cooldown Check: Did we already auto-cache this dwelling spot recently?
+                            let isRecentDwelling = false;
+                            if (this.lastDwellingCacheLocation) {
+                                const distMeters = getDistanceMeters(
+                                    { lat, lng },
+                                    { lat: this.lastDwellingCacheLocation.lat, lng: this.lastDwellingCacheLocation.lng }
+                                );
+                                const isNearby = distMeters < (this.DWELLING_CACHE_DISTANCE_THRESHOLD_KM * 1000);
+                                const isFresh = (now - this.lastDwellingCacheLocation.timestamp) < this.DWELLING_CACHE_COOLDOWN_MS;
+                                isRecentDwelling = isNearby && isFresh;
+                            }
+
+                            if (isAlreadyCached || isRecentDwelling) {
+                                console.log(`📦 [OfflineMapService] Predictive dwelling cache skipped: location (${lat.toFixed(3)}, ${lng.toFixed(3)}) already covered by spatial index / recent auto-cache`);
+                            } else {
+                                const currentBounds = computeRadiusBounds({ lat, lng }, 5);
+                                this.lastDwellingCacheLocation = { lat, lng, timestamp: now };
+                                offlineMapService.downloadArea('Auto-Cache (Dwelling)', currentBounds, 13, 15)
+                                    .then(() => console.log('📦 [OfflineMapService] Predictive dwelling auto-cache complete (5km radius, z13-z15)'))
+                                    .catch(err => console.warn('[OfflineMapService] Predictive dwelling auto-cache skipped/failed:', err));
+                            }
                         }
 
                         if (!Capacitor.isNativePlatform()) {
