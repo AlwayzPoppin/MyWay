@@ -1633,6 +1633,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         // --- ACTIVE NAVIGATION CAMERA ---
         if (isNavigating) {
+            const isInitialNavStart = !wasNavigatingRef.current;
             wasNavigatingRef.current = true;
 
             // If user has dragged/panned or zoomed the map ahead, DO NOT fight user touch input
@@ -1641,13 +1642,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
 
             // Compute travel bearing from driver device heading or route polyline
-            let travelBearing = prevBearingRef.current;
+            let travelBearing = 0;
             if (driver?.heading !== undefined && driver.heading >= 0 && (driver.speed || 0) > 1.5) {
                 travelBearing = driver.heading;
             } else if (routeCoords.length >= 2) {
-                // Find nearest route segment
+                // Find nearest route segment ahead of driver
                 let minDist = Infinity;
-                let nearestIdx = Math.max(0, Math.min(currentStepIndex, routeCoords.length - 2));
+                let nearestIdx = 0;
                 for (let i = 0; i < routeCoords.length - 1; i++) {
                     const snap = getPointOnSegmentNearestTo(driverLoc, routeCoords[i], routeCoords[i + 1]);
                     const d = getDistanceMeters(driverLoc, snap);
@@ -1657,14 +1658,21 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     }
                 }
                 travelBearing = getBearing(routeCoords[nearestIdx], routeCoords[Math.min(nearestIdx + 1, routeCoords.length - 1)]);
+            } else if (driver?.heading !== undefined && driver.heading >= 0) {
+                travelBearing = driver.heading;
             }
 
-            // Smooth bearing interpolation (shortest path across 360 boundary)
-            let delta = travelBearing - prevBearingRef.current;
-            if (delta > 180) delta -= 360;
-            if (delta < -180) delta += 360;
-            const smoothedBearing = prevBearingRef.current + delta * 0.45;
-            prevBearingRef.current = ((smoothedBearing % 360) + 360) % 360;
+            // On initial trip start: immediately align camera with the road bearing
+            if (isInitialNavStart || prevBearingRef.current === 0) {
+                prevBearingRef.current = travelBearing;
+            } else {
+                // Smooth bearing interpolation (shortest path across 360 boundary)
+                let delta = travelBearing - prevBearingRef.current;
+                if (delta > 180) delta -= 360;
+                if (delta < -180) delta += 360;
+                const smoothedBearing = prevBearingRef.current + delta * 0.6;
+                prevBearingRef.current = ((smoothedBearing % 360) + 360) % 360;
+            }
 
             // --- FLEET-AWARE DYNAMIC CONVOY FRAMING ---
             const activeConvoy = convoyService.getActiveConvoy();
@@ -1694,16 +1702,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     if (membersEnclosed > 1) {
                         isMultiVehicleConvoy = true;
                         map.current.fitBounds(convoyBounds, {
-                            pitch: 60,
+                            pitch: 58,
                             bearing: prevBearingRef.current,
                             maxZoom: isMobile ? 17.5 : 18.0,
                             padding: {
-                                top: isMobile ? 140 : 110,
+                                top: isMobile ? 140 : 130,
                                 bottom: isMobile ? 260 : 200,
-                                left: isMobile ? 50 : 80,
+                                left: isMobile ? 50 : 160,
                                 right: isMobile ? 50 : 80
                             },
-                            duration: 700,
+                            duration: isInitialNavStart ? 1200 : 700,
                             easing: (t: number) => t
                         });
                     }
@@ -1715,15 +1723,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 map.current.easeTo({
                     center: [driverLoc.lng, driverLoc.lat],
                     bearing: prevBearingRef.current,
-                    pitch: 60,
-                    zoom: isMobile ? 17.5 : 18.0,
+                    pitch: 58,
+                    zoom: isMobile ? 17.6 : 18.0,
                     padding: {
-                        top: isMobile ? 120 : 90,
-                        bottom: isMobile ? 240 : 180,
-                        left: 0,
+                        top: isMobile ? 140 : 130,
+                        bottom: isMobile ? 250 : 190,
+                        left: isMobile ? 0 : 160,
                         right: 0
                     },
-                    duration: 700,
+                    duration: isInitialNavStart ? 1200 : 700,
                     easing: (t: number) => t
                 });
             }
