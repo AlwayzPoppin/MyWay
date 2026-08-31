@@ -338,6 +338,13 @@ const App: React.FC = () => {
     return unsub;
   }, [user]);
 
+  // Subscribe to Multi-Device Circle Convoys & Fleet Reroutes over network
+  useEffect(() => {
+    if (!profile?.familyCircleId || !user?.uid) return;
+    const unsub = convoyService.subscribeCircleConvoy(profile.familyCircleId, user.uid);
+    return unsub;
+  }, [profile?.familyCircleId, user?.uid]);
+
 
 
   // Handle emergency resolution

@@ -11,6 +11,7 @@ import { audioService } from '../services/audioService';
 import { speechService, ManeuverProximity } from '../services/speechService';
 import { offlineMapService } from '../services/offlineMapService';
 import { searchHistoryService } from '../services/searchHistoryService';
+import { convoyService } from '../services/convoyService';
 
 export interface BetterRouteSuggestion {
     route: NavigationRoute;
@@ -469,6 +470,14 @@ export const useNavigation = (
                                     lastAnnouncedStepIndexRef.current = 0;
                                     lastAnnouncedProximityRef.current = 'initial';
                                 }
+
+                                // Hive-Mind Fleet Routing: If current user is Convoy Leader, broadcast reroute to caravan followers
+                                const activeConvoy = convoyService.getActiveConvoy();
+                                const currentUid = user?.uid || members[0]?.id || 'self';
+                                if (activeConvoy && activeConvoy.isActive && activeConvoy.leaderId === currentUid) {
+                                    convoyService.broadcastReroute(newRoute, profile?.familyCircleId);
+                                    showNotification(`📡 Fleet Reroute broadcasted to caravan followers`, 4000);
+                                }
                             }
                         })
                         .catch(err => {
@@ -600,6 +609,40 @@ export const useNavigation = (
             rerouteAttemptsRef.current = 0;
         }
     }, [isNavigating, navState.isOffRoute, activeRoute, handleStartNavigation, showNotification]);
+
+    // Hive-Mind Fleet Routing: Listen for Leader Reroutes when trailing in a Convoy
+    useEffect(() => {
+        const unsub = convoyService.onReroute((newRoute, event) => {
+            const activeConvoy = convoyService.getActiveConvoy();
+            const currentUid = user?.uid || members[0]?.id || 'self';
+
+            // Only apply automatic reroute if user is a follower in an active caravan
+            if (!activeConvoy || !activeConvoy.isActive || activeConvoy.leaderId === currentUid) {
+                return;
+            }
+
+            console.log('📡 [Convoy Follower] Auto-syncing route from Convoy Leader:', event.leaderId, newRoute);
+            setActiveRoute(newRoute);
+            setNavState({
+                currentStepIndex: 0,
+                distanceToNextStep: 0,
+                isOffRoute: false,
+                hasArrived: false,
+                splitIndex: 0
+            });
+
+            showNotification(`🔀 Convoy Leader rerouted: Syncing path via ${newRoute.summary || 'updated route'}`, 5000);
+            speechService.speak(`Leader changed route. Updating caravan path.`, { chime: 'turn' });
+
+            if (newRoute.steps && newRoute.steps[0]) {
+                speechService.announceManeuver(newRoute.steps[0].instruction, 50, 'initial');
+                lastAnnouncedStepIndexRef.current = 0;
+                lastAnnouncedProximityRef.current = 'initial';
+            }
+        });
+
+        return unsub;
+    }, [user, members, showNotification]);
 
     return {
         activeRoute,

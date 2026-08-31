@@ -4,9 +4,11 @@
  * leader/follower telemetry, and pit stop synchronizer for multi-vehicle family road trips.
  */
 
-import { Location, FamilyMember } from '../types';
+import { Location, FamilyMember, NavigationRoute } from '../types';
 import { getDistanceMiles } from '../utils/geo';
 import { speechService } from './speechService';
+import { ref, set, onValue, off } from 'firebase/database';
+import { database } from './firebase';
 
 export interface ConvoyMember {
     id: string;
@@ -32,6 +34,8 @@ export interface ConvoySession {
     memberIds: string[];
     isActive: boolean;
     startTime: number;
+    currentRoute?: NavigationRoute | null;
+    lastRerouteTimestamp?: number;
 }
 
 export interface ConvoyInvite {
@@ -40,13 +44,22 @@ export interface ConvoyInvite {
     timestamp: number;
 }
 
+export interface ConvoyRerouteEvent {
+    convoyId: string;
+    route: NavigationRoute;
+    leaderId: string;
+    timestamp: number;
+}
+
 const CONVOY_STORAGE_KEY = 'myway_active_convoy';
 const CONVOY_INVITE_EVENT = 'myway_convoy_invite_event';
+const CONVOY_REROUTE_EVENT = 'myway_convoy_reroute_event';
 
 class ConvoyService {
     private activeConvoy: ConvoySession | null = null;
     private listeners: ((convoy: ConvoySession | null) => void)[] = [];
     private inviteListeners: ((invite: ConvoyInvite | null) => void)[] = [];
+    private rerouteListeners: ((route: NavigationRoute, event: ConvoyRerouteEvent) => void)[] = [];
     private pendingInvite: ConvoyInvite | null = null;
     private lastSeparationAlertTime: number = 0;
 
@@ -90,6 +103,18 @@ class ConvoyService {
                 } catch (err) {
                     console.warn('[ConvoyService] Failed to parse invite event:', err);
                 }
+            } else if (e.key === CONVOY_REROUTE_EVENT && e.newValue) {
+                try {
+                    const event: ConvoyRerouteEvent = JSON.parse(e.newValue);
+                    if (this.activeConvoy && this.activeConvoy.id === event.convoyId) {
+                        this.activeConvoy.currentRoute = event.route;
+                        this.activeConvoy.lastRerouteTimestamp = event.timestamp;
+                        this.save();
+                    }
+                    this.notifyReroute(event.route, event);
+                } catch (err) {
+                    console.warn('[ConvoyService] Failed to parse reroute event:', err);
+                }
             }
         });
     }
@@ -100,6 +125,10 @@ class ConvoyService {
 
     private notifyInvite(): void {
         this.inviteListeners.forEach(cb => cb(this.pendingInvite));
+    }
+
+    private notifyReroute(route: NavigationRoute, event: ConvoyRerouteEvent): void {
+        this.rerouteListeners.forEach(cb => cb(route, event));
     }
 
     public subscribe(callback: (convoy: ConvoySession | null) => void): () => void {
@@ -115,6 +144,13 @@ class ConvoyService {
         callback(this.pendingInvite);
         return () => {
             this.inviteListeners = this.inviteListeners.filter(cb => cb !== callback);
+        };
+    }
+
+    public onReroute(callback: (route: NavigationRoute, event: ConvoyRerouteEvent) => void): () => void {
+        this.rerouteListeners.push(callback);
+        return () => {
+            this.rerouteListeners = this.rerouteListeners.filter(cb => cb !== callback);
         };
     }
 
@@ -225,6 +261,90 @@ class ConvoyService {
         }
         this.activeConvoy = null;
         this.save();
+    }
+
+    /**
+     * Broadcast an in-flight route recalculation or reroute from the Convoy Leader to all trailing followers
+     */
+    public broadcastReroute(newRoute: NavigationRoute, circleId?: string): void {
+        if (!this.activeConvoy) return;
+        this.activeConvoy.currentRoute = newRoute;
+        this.activeConvoy.lastRerouteTimestamp = Date.now();
+        this.save();
+
+        const event: ConvoyRerouteEvent = {
+            convoyId: this.activeConvoy.id,
+            route: newRoute,
+            leaderId: this.activeConvoy.leaderId,
+            timestamp: Date.now()
+        };
+
+        // 1. Notify active local listeners
+        this.notifyReroute(newRoute, event);
+
+        // 2. Broadcast via StorageEvent for browser tab pair synchrony
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem(CONVOY_REROUTE_EVENT, JSON.stringify(event));
+                setTimeout(() => localStorage.removeItem(CONVOY_REROUTE_EVENT), 5000);
+            } catch (e) {
+                console.warn('[ConvoyService] Failed to broadcast local reroute:', e);
+            }
+        }
+
+        // 3. Sync to Firebase Realtime Database for multi-device network fleet routing
+        if (circleId) {
+            try {
+                const convoyRef = ref(database, `convoys/${circleId}/${this.activeConvoy.id}`);
+                set(convoyRef, {
+                    ...this.activeConvoy,
+                    currentRoute: newRoute,
+                    lastRerouteTimestamp: Date.now()
+                }).catch(err => console.warn('[ConvoyService] Firebase convoy sync error:', err));
+            } catch (err) {
+                console.warn('[ConvoyService] Network broadcast error:', err);
+            }
+        }
+    }
+
+    /**
+     * Subscribe to circle active convoys and leader reroutes from Firebase Realtime Database
+     */
+    public subscribeCircleConvoy(circleId: string, currentUserId: string): () => void {
+        if (!circleId) return () => {};
+        try {
+            const circleConvoysRef = ref(database, `convoys/${circleId}`);
+            onValue(circleConvoysRef, (snapshot) => {
+                if (!snapshot.exists()) return;
+                const convoysData = snapshot.val();
+                if (!convoysData) return;
+
+                const sessions = Object.values(convoysData) as ConvoySession[];
+                const active = sessions.find(c => c && c.isActive && c.memberIds?.includes(currentUserId));
+                if (active) {
+                    const isLeader = active.leaderId === currentUserId;
+                    const prevRerouteTime = this.activeConvoy?.lastRerouteTimestamp || 0;
+
+                    // If route has been updated by the leader and current user is a follower
+                    if (!isLeader && active.currentRoute && active.lastRerouteTimestamp && active.lastRerouteTimestamp > prevRerouteTime) {
+                        this.activeConvoy = active;
+                        this.save();
+                        const event: ConvoyRerouteEvent = {
+                            convoyId: active.id,
+                            route: active.currentRoute,
+                            leaderId: active.leaderId,
+                            timestamp: active.lastRerouteTimestamp
+                        };
+                        this.notifyReroute(active.currentRoute, event);
+                    }
+                }
+            });
+
+            return () => off(circleConvoysRef);
+        } catch (err) {
+            console.warn('[ConvoyService] Error subscribing to circle convoy:', err);
+            return () => {};
+        }
     }
 
     /**
