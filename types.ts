@@ -130,11 +130,15 @@ export interface Place {
   name: string;
   location: Location;
   radius: number;
-  type: 'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result' | 'sponsored';
+  type: 'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result' | 'sponsored' | 'maintenance' | 'mechanic';
   icon: string;
   brandColor?: string;
   deal?: string;
   description?: string; // Full address string (e.g., "123 Main St, City, State, USA")
+  rating?: number;
+  detourMinutes?: number;
+  detourMiles?: number;
+  maintenanceCategory?: string; // e.g. "Oil Change", "Tire Rotation", "Brake Inspection"
 }
 
 export interface PrivacyZone {

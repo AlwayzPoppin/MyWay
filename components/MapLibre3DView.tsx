@@ -9,6 +9,8 @@ import { getBrandMeta } from '../services/brandLogoService';
 import { getGTAPlaceBlipHtml, getGTADestinationPinHtml } from '../services/gtaIconsService';
 import { convoyService } from '../services/convoyService';
 import { computeRouteTrafficSegments } from '../services/trafficService';
+import { maintenanceAlertService } from '../services/maintenanceAlertService';
+import { searchMaintenanceAlongRoute } from '../services/placesService';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
 const circleCoordsCache = new Map<string, [number, number][]>();
@@ -141,6 +143,36 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const [mapEpoch, setMapEpoch] = React.useState(0); // Incremented to trigger WebGL context loss recovery reboot
     const renderedGeofenceIdsRef = useRef<Set<string>>(new Set());
     const routeRafRef = useRef<number | null>(null);
+
+    // Predictive Autonomous Maintenance Corridor Places
+    const [maintenancePlaces, setMaintenancePlaces] = React.useState<Place[]>([]);
+
+    useEffect(() => {
+        if (!activeRoute || !activeRoute.routeGeometry || activeRoute.routeGeometry.length === 0) {
+            setMaintenancePlaces([]);
+            return;
+        }
+
+        const pending = maintenanceAlertService.getPendingMaintenanceDue();
+        if (!pending.isDue) {
+            setMaintenancePlaces([]);
+            return;
+        }
+
+        let isCancelled = false;
+        searchMaintenanceAlongRoute(activeRoute.routeGeometry, pending.categoryQuery, userLocation).then(results => {
+            if (!isCancelled) {
+                console.log(`🔧 [Maintenance] Found ${results.length} recommended mechanics along route for ${pending.item?.title || 'service'}`);
+                setMaintenancePlaces(results);
+            }
+        }).catch(err => {
+            console.warn('[MapLibre] Failed to fetch maintenance places:', err);
+        });
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [activeRoute?.destinationName, activeRoute?.totalDistance, userLocation?.lat, userLocation?.lng]);
 
     // Track last known camera position to restore seamless view upon WebGL recovery
     const lastCameraRef = useRef<{
@@ -1134,6 +1166,117 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             map.current.on('mouseleave', 'places-unclustered-circle', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
         }
     }, [places, onSelectPlace, isMapReady, styleVersion, theme]);
+
+    // ==========================================
+    // PREDICTIVE AUTONOMOUS MAINTENANCE CORRIDOR LAYER
+    // ==========================================
+    useEffect(() => {
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
+
+        const sourceId = 'ambient-maintenance-source';
+        const geojsonData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: maintenancePlaces.map(p => ({
+                type: 'Feature',
+                id: p.id,
+                properties: {
+                    id: p.id,
+                    name: p.name,
+                    label: `${p.name} (+${p.detourMinutes || 2}m)`,
+                    icon: p.icon || '🔧',
+                    deal: p.deal || 'Recommended Service',
+                    detour: `+${p.detourMinutes || 2} min detour`
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: [p.location.lng, p.location.lat]
+                }
+            }))
+        };
+
+        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+        if (source) {
+            source.setData(geojsonData);
+        } else {
+            map.current.addSource(sourceId, {
+                type: 'geojson',
+                data: geojsonData
+            });
+
+            // 1. Pulsing Ambient Amber Glow
+            map.current.addLayer({
+                id: 'ambient-maintenance-glow',
+                type: 'circle',
+                source: sourceId,
+                paint: {
+                    'circle-color': '#f59e0b',
+                    'circle-radius': 18,
+                    'circle-opacity': 0.35,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff'
+                }
+            });
+
+            // 2. Core Amber Badge
+            map.current.addLayer({
+                id: 'ambient-maintenance-badge',
+                type: 'circle',
+                source: sourceId,
+                paint: {
+                    'circle-color': '#d97706',
+                    'circle-radius': 12,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-opacity': 0.95
+                }
+            });
+
+            // 3. Mechanic Emoji Icon
+            map.current.addLayer({
+                id: 'ambient-maintenance-symbol',
+                type: 'symbol',
+                source: sourceId,
+                layout: {
+                    'text-field': ['get', 'icon'],
+                    'text-size': 13,
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                }
+            });
+
+            // 4. Detour & Name Label
+            map.current.addLayer({
+                id: 'ambient-maintenance-label',
+                type: 'symbol',
+                source: sourceId,
+                layout: {
+                    'text-field': ['get', 'label'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': 10.5,
+                    'text-offset': [0, 1.6],
+                    'text-anchor': 'top',
+                    'text-optional': true
+                },
+                paint: {
+                    'text-color': '#f59e0b',
+                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                    'text-halo-width': 2
+                }
+            });
+
+            // Click -> select place
+            map.current.on('click', 'ambient-maintenance-badge', (e) => {
+                const feature = e.features?.[0];
+                if (feature?.properties?.id) {
+                    const place = maintenancePlaces.find(p => p.id === feature.properties.id);
+                    if (place) onSelectPlace?.(place);
+                }
+            });
+
+            map.current.on('mouseenter', 'ambient-maintenance-badge', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
+            map.current.on('mouseleave', 'ambient-maintenance-badge', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
+        }
+    }, [maintenancePlaces, onSelectPlace, isMapReady, styleVersion, theme]);
 
     // ==========================================
     // UNIFIED WEBGL GEOFENCE POLYGONS

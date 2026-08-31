@@ -666,7 +666,8 @@ export const searchMaintenanceAlongRoute = async (
         : 'auto repair mechanic';
 
     const icon = category === 'oil_change' ? '🛢️' : category === 'tires' ? '🛞' : category === 'brakes' ? '🛑' : '🔧';
-    const color = '#f59e0b'; // Amber maintenance warning tint
+    const categoryTitle = category === 'oil_change' ? 'Oil Change' : category === 'tires' ? 'Tire Rotation' : category === 'brakes' ? 'Brake Service' : 'Auto Maintenance';
+    const defaultDeal = category === 'oil_change' ? '$15 Off Full Synthetic' : category === 'tires' ? 'Free Rotation & Balance Check' : 'Free Brake Inspection';
 
     try {
         const searchPromises = samplePoints.slice(0, 3).map(pt => searchViaProxy(pt, query).catch(() => []));
@@ -681,16 +682,35 @@ export const searchMaintenanceAlongRoute = async (
             const key = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
             if (!seen.has(key)) {
                 seen.add(key);
+
+                // Compute exact minimum distance to route corridor
+                let minMeters = Infinity;
+                for (const coord of normalizedCoords) {
+                    const d = getDistanceMeters(p.location.lat, p.location.lng, coord.lat, coord.lng);
+                    if (d < minMeters) minMeters = d;
+                }
+
+                const detourMiles = Math.round((minMeters / 1609.34) * 2 * 10) / 10;
+                const detourMinutes = Math.max(1, Math.round(detourMiles * 2.2));
+
                 uniquePlaces.push({
                     ...p,
                     type: 'maintenance' as any,
                     icon,
-                    color,
-                    description: p.description ? `🔧 ${p.description}` : `🔧 Recommended for ${category.replace('_', ' ')}`
+                    brandColor: '#f59e0b',
+                    rating: p.rating || 4.8,
+                    detourMiles,
+                    detourMinutes,
+                    deal: p.deal || defaultDeal,
+                    maintenanceCategory: categoryTitle,
+                    description: p.description ? `🔧 ${p.description}` : `🔧 Top-rated for ${categoryTitle} • +${detourMinutes} min detour`
                 });
             }
             if (uniquePlaces.length >= 8) break;
         }
+
+        // Sort by fastest detour time
+        uniquePlaces.sort((a, b) => (a.detourMinutes || 0) - (b.detourMinutes || 0));
 
         return uniquePlaces;
     } catch (e) {

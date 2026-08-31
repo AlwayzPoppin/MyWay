@@ -226,6 +226,39 @@ class MaintenanceAlertService {
     }
 
     /**
+     * Check if vehicle is approaching any maintenance milestone within specified threshold (default 100 miles)
+     */
+    public getPendingMaintenanceDue(vehicle?: Vehicle | null, thresholdMiles: number = 100): {
+        isDue: boolean;
+        item?: VehicleHealthItem;
+        categoryQuery: string;
+        milesRemaining: number;
+    } {
+        const health = this.getVehicleHealth(vehicle);
+        const dueItems = health.items.filter(i => i.milesRemaining <= thresholdMiles || i.status === 'due_soon' || i.status === 'overdue');
+        if (dueItems.length === 0) {
+            return { isDue: false, categoryQuery: 'auto repair', milesRemaining: Infinity };
+        }
+
+        // Sort by most urgent (least miles remaining)
+        dueItems.sort((a, b) => a.milesRemaining - b.milesRemaining);
+        const mostUrgent = dueItems[0];
+
+        let categoryQuery = 'auto repair mechanic';
+        if (mostUrgent.category === 'oil_change') categoryQuery = 'oil change';
+        else if (mostUrgent.category === 'tires') categoryQuery = 'tire shop';
+        else if (mostUrgent.category === 'brakes') categoryQuery = 'brake repair';
+        else if (mostUrgent.category === 'battery' || mostUrgent.category === 'ev_checkup') categoryQuery = 'auto electric battery service';
+
+        return {
+            isDue: true,
+            item: mostUrgent,
+            categoryQuery,
+            milesRemaining: mostUrgent.milesRemaining
+        };
+    }
+
+    /**
      * Add new custom maintenance item to vehicle
      */
     public addMaintenanceItem(
