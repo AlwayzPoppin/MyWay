@@ -39,6 +39,30 @@ export const getCircleCoords = (center: Location, radiusKm: number, points: numb
     return coords;
 };
 
+// Static GeoJSON Shells instantiated once to achieve Zero-GC AAA frame budgeting during route rendering
+const STATIC_EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
+    type: 'FeatureCollection',
+    features: []
+};
+
+const staticRemainingRouteGeoJSON: GeoJSON.Feature<GeoJSON.LineString> = {
+    type: 'Feature',
+    properties: {},
+    geometry: {
+        type: 'LineString',
+        coordinates: []
+    }
+};
+
+const staticCompletedRouteGeoJSON: GeoJSON.Feature<GeoJSON.LineString> = {
+    type: 'Feature',
+    properties: {},
+    geometry: {
+        type: 'LineString',
+        coordinates: []
+    }
+};
+
 interface MapLibre3DViewProps {
     members: FamilyMember[];
     userLocation?: Location | null;
@@ -655,36 +679,49 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         const routeId = 'active-route-line';
         const completedId = 'completed-route-line';
-        const you = members.find(m => m.id === 'demo-you' || m.id === members[0]?.id);
         
         if (routeCoords.length === 0) {
-            if (map.current.getSource(routeId)) (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData({ type: 'FeatureCollection', features: [] });
-            if (map.current.getSource(completedId)) (map.current.getSource(completedId) as maplibregl.GeoJSONSource).setData({ type: 'FeatureCollection', features: [] });
+            staticRemainingRouteGeoJSON.geometry.coordinates.length = 0;
+            staticCompletedRouteGeoJSON.geometry.coordinates.length = 0;
+            const routeSrc = map.current.getSource(routeId) as maplibregl.GeoJSONSource | undefined;
+            const compSrc = map.current.getSource(completedId) as maplibregl.GeoJSONSource | undefined;
+            if (routeSrc) routeSrc.setData(STATIC_EMPTY_FEATURE_COLLECTION);
+            if (compSrc) compSrc.setData(STATIC_EMPTY_FEATURE_COLLECTION);
             return;
         }
 
-        // Split logic: Use pre-calculated splitIndex from navigationEngine or fallback
+        // Split logic: In-place array mutation avoiding slice, map, and per-frame GC allocations
         const effectiveSplitIndex = typeof splitIndex === 'number' ? splitIndex : 0;
-        const completedCoords = routeCoords.slice(0, effectiveSplitIndex + 1);
-        const remainingCoords = routeCoords.slice(effectiveSplitIndex);
+        const totalPoints = routeCoords.length;
 
-        const remainingData = {
-            'type': 'Feature',
-            'properties': {},
-            'geometry': {
-                'type': 'LineString',
-                'coordinates': remainingCoords.map(c => [c.lng, c.lat])
-            }
-        };
+        const remainingCoords = staticRemainingRouteGeoJSON.geometry.coordinates;
+        const completedCoords = staticCompletedRouteGeoJSON.geometry.coordinates;
 
-        const completedData = {
-            'type': 'Feature',
-            'properties': {},
-            'geometry': {
-                'type': 'LineString',
-                'coordinates': completedCoords.map(c => [c.lng, c.lat])
+        // 1. Populate completed coordinates [0 .. effectiveSplitIndex] in-place
+        const completedCount = Math.min(effectiveSplitIndex + 1, totalPoints);
+        completedCoords.length = completedCount;
+        for (let i = 0; i < completedCount; i++) {
+            const pt = routeCoords[i];
+            if (!completedCoords[i]) {
+                completedCoords[i] = [pt.lng, pt.lat];
+            } else {
+                completedCoords[i][0] = pt.lng;
+                completedCoords[i][1] = pt.lat;
             }
-        };
+        }
+
+        // 2. Populate remaining coordinates [effectiveSplitIndex .. totalPoints - 1] in-place
+        const remainingCount = Math.max(0, totalPoints - effectiveSplitIndex);
+        remainingCoords.length = remainingCount;
+        for (let i = 0; i < remainingCount; i++) {
+            const pt = routeCoords[effectiveSplitIndex + i];
+            if (!remainingCoords[i]) {
+                remainingCoords[i] = [pt.lng, pt.lat];
+            } else {
+                remainingCoords[i][0] = pt.lng;
+                remainingCoords[i][1] = pt.lat;
+            }
+        }
 
         const routeColor = mapSkin === 'gta_radar' ? '#facc15' : '#6366f1';
         const routeGlowColor = mapSkin === 'gta_radar' ? '#f59e0b' : '#818cf8';
@@ -693,7 +730,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             if (!map.current) return;
             // --- RENDER REMAINING (Main Line) ---
             if (map.current.getSource(routeId)) {
-                (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(remainingData as any);
+                (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(staticRemainingRouteGeoJSON as any);
                 if (map.current.getLayer(`${routeId}-glow`)) {
                     map.current.setPaintProperty(`${routeId}-glow`, 'line-color', routeGlowColor);
                 }
@@ -701,7 +738,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     map.current.setPaintProperty(routeId, 'line-color', routeColor);
                 }
             } else {
-                map.current.addSource(routeId, { 'type': 'geojson', 'data': remainingData as any });
+                map.current.addSource(routeId, { 'type': 'geojson', 'data': staticRemainingRouteGeoJSON as any });
                 
                 // Glow layer
                 map.current.addLayer({
@@ -720,9 +757,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
             // --- RENDER COMPLETED (Dimmed Grey Line) ---
             if (map.current.getSource(completedId)) {
-                (map.current.getSource(completedId) as maplibregl.GeoJSONSource).setData(completedData as any);
+                (map.current.getSource(completedId) as maplibregl.GeoJSONSource).setData(staticCompletedRouteGeoJSON as any);
             } else {
-                map.current.addSource(completedId, { 'type': 'geojson', 'data': completedData as any });
+                map.current.addSource(completedId, { 'type': 'geojson', 'data': staticCompletedRouteGeoJSON as any });
                 map.current.addLayer({
                     'id': completedId, 'type': 'line', 'source': completedId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
