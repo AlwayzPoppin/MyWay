@@ -1,8 +1,15 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+
+interface NativeAudioFocusPlugin {
+    requestFocus(): Promise<void>;
+    abandonFocus(): Promise<void>;
+}
+
+const NativeAudioFocus = registerPlugin<NativeAudioFocusPlugin>('NativeAudioFocus');
 
 /**
  * Audio Service for Web Speech API and Native TTS integration.
- * Provides unified, deterministic text-to-speech capabilities with audio focus management.
+ * Provides unified, deterministic text-to-speech capabilities with native Android & iOS audio focus management and background music ducking.
  */
 
 class AudioService {
@@ -109,6 +116,32 @@ class AudioService {
         }
     }
 
+    /**
+     * Request native Android/iOS audio session ducking
+     */
+    public async requestNativeAudioFocus(): Promise<void> {
+        if (Capacitor.isNativePlatform()) {
+            try {
+                await NativeAudioFocus.requestFocus();
+            } catch (e) {
+                // Fallback silently if platform does not support plugin
+            }
+        }
+    }
+
+    /**
+     * Abandon native audio focus, restoring background music volume
+     */
+    public async abandonNativeAudioFocus(): Promise<void> {
+        if (Capacitor.isNativePlatform()) {
+            try {
+                await NativeAudioFocus.abandonFocus();
+            } catch (e) {
+                // Fallback silently
+            }
+        }
+    }
+
     public async cancel(): Promise<void> {
         this.isSpeaking = false;
         try {
@@ -121,6 +154,7 @@ class AudioService {
         } catch {
             this.synthesis?.cancel();
         } finally {
+            await this.abandonNativeAudioFocus();
             if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('myway-audio-focus-end'));
             }
@@ -134,7 +168,10 @@ class AudioService {
         await this.cancel();
         this.isSpeaking = true;
 
-        // Notify audio focus systems to duck background media
+        // Request native OS audio focus ducking (lowers Spotify, Apple Music, podcasts)
+        await this.requestNativeAudioFocus();
+
+        // Notify in-app audio focus listeners
         if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('myway-audio-focus-start'));
         }
@@ -142,16 +179,18 @@ class AudioService {
         try {
             // 1. Native Mobile Platform (Android / iOS app)
             if (Capacitor.isNativePlatform()) {
-                const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
+                const { TextToSpeech, QueueStrategy } = await import('@capacitor-community/text-to-speech');
                 await TextToSpeech.speak({
                     text,
                     lang: 'en-US',
-                    rate: 1.0,
+                    rate: 1.05,
                     pitch: 1.0,
                     volume: 1.0,
-                    category: 'ambient',
+                    category: 'playback', // Sets AVAudioSessionCategoryPlayback with DuckOthers on iOS
+                    queueStrategy: QueueStrategy.Flush,
                 });
                 this.isSpeaking = false;
+                await this.abandonNativeAudioFocus();
                 if (typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('myway-audio-focus-end'));
                 }
@@ -161,6 +200,7 @@ class AudioService {
             // 2. Web / Browser Platform (Use pure, unified Web Speech API)
             if (!this.synthesis) {
                 this.isSpeaking = false;
+                await this.abandonNativeAudioFocus();
                 return;
             }
 
@@ -172,6 +212,7 @@ class AudioService {
             return new Promise<void>((resolve) => {
                 if (!this.synthesis) {
                     this.isSpeaking = false;
+                    this.abandonNativeAudioFocus();
                     resolve();
                     return;
                 }
@@ -186,8 +227,9 @@ class AudioService {
                 utterance.rate = 1.05; // Crisp navigation cadence
                 utterance.volume = 1.0;
 
-                const finish = () => {
+                const finish = async () => {
                     this.isSpeaking = false;
+                    await this.abandonNativeAudioFocus();
                     if (typeof window !== 'undefined') {
                         window.dispatchEvent(new CustomEvent('myway-audio-focus-end'));
                     }
@@ -214,6 +256,7 @@ class AudioService {
         } catch (e) {
             console.warn('[AudioService] Speak error:', e);
             this.isSpeaking = false;
+            await this.abandonNativeAudioFocus();
             if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('myway-audio-focus-end'));
             }
@@ -259,6 +302,10 @@ class AudioService {
      * Play a synthesized audio chirp (e.g. for action abort/cancellation)
      * Reuses the managed AudioContext and schedules suspension upon completion.
      */
+    /**
+     * Play a synthesized audio chirp (e.g. for action abort/cancellation)
+     * Reuses the managed AudioContext and schedules suspension upon completion.
+     */
     public playChirp(frequency = 520, durationMs = 120): void {
         if (!this.enabled || typeof window === 'undefined') return;
         try {
@@ -287,14 +334,109 @@ class AudioService {
                 try {
                     osc.disconnect();
                     gain.disconnect();
-                } catch {
-                    // Ignore already disconnected nodes
-                }
+                } catch {}
             };
 
             this.scheduleIdleSuspension();
         } catch (e) {
             // AudioContext not allowed before user gesture or unavailable
+        }
+    }
+
+    /**
+     * Play a clean two-tone navigation guidance chime (e.g. before prompt or on turn arrival)
+     * Automatically ducks background music on Android and iOS.
+     */
+    public async playAlertChime(): Promise<void> {
+        if (!this.enabled || typeof window === 'undefined') return;
+        try {
+            await this.requestNativeAudioFocus();
+            const ctx = this.getAudioContext();
+            if (!ctx) {
+                await this.abandonNativeAudioFocus();
+                return;
+            }
+
+            const now = ctx.currentTime;
+            const osc1 = ctx.createOscillator();
+            const osc2 = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(587.33, now); // D5
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(880.00, now + 0.12); // A5
+
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc1.start(now);
+            osc1.stop(now + 0.12);
+            osc2.start(now + 0.12);
+            osc2.stop(now + 0.35);
+
+            osc2.onended = async () => {
+                try {
+                    osc1.disconnect();
+                    osc2.disconnect();
+                    gain.disconnect();
+                } catch {}
+                await this.abandonNativeAudioFocus();
+            };
+
+            this.scheduleIdleSuspension();
+        } catch (e) {
+            await this.abandonNativeAudioFocus();
+        }
+    }
+
+    /**
+     * Play high-priority SOS emergency siren tone sequence with background music suppression
+     */
+    public async playEmergencyAlert(): Promise<void> {
+        if (typeof window === 'undefined') return;
+        try {
+            await this.requestNativeAudioFocus();
+            const ctx = this.getAudioContext();
+            if (!ctx) {
+                await this.abandonNativeAudioFocus();
+                return;
+            }
+
+            const now = ctx.currentTime;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(880, now);
+            osc.frequency.linearRampToValueAtTime(1320, now + 0.25);
+            osc.frequency.linearRampToValueAtTime(880, now + 0.5);
+
+            gain.gain.setValueAtTime(0.5, now);
+            gain.gain.linearRampToValueAtTime(0.5, now + 0.45);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.5);
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.5);
+
+            osc.onended = async () => {
+                try {
+                    osc.disconnect();
+                    gain.disconnect();
+                } catch {}
+                await this.abandonNativeAudioFocus();
+            };
+
+            this.scheduleIdleSuspension();
+        } catch (e) {
+            await this.abandonNativeAudioFocus();
         }
     }
 
@@ -311,4 +453,5 @@ class AudioService {
 }
 
 export const audioService = new AudioService();
+
 
