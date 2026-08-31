@@ -1678,6 +1678,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const activeConvoy = convoyService.getActiveConvoy();
             let isMultiVehicleConvoy = false;
 
+            const containerHeight = mapContainer.current?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 800);
+            const navTopPadding = Math.round(containerHeight * 0.52); // Anchors vehicle at ~76% screen height
+
             if (activeConvoy && activeConvoy.isActive && activeConvoy.memberIds && activeConvoy.memberIds.length > 1) {
                 const fleetMembers = members.filter(m =>
                     activeConvoy.memberIds.includes(m.id) &&
@@ -1706,8 +1709,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             bearing: prevBearingRef.current,
                             maxZoom: isMobile ? 17.5 : 18.0,
                             padding: {
-                                top: isMobile ? 140 : 130,
-                                bottom: isMobile ? 260 : 200,
+                                top: Math.round(containerHeight * 0.35),
+                                bottom: 40,
                                 left: isMobile ? 50 : 160,
                                 right: isMobile ? 50 : 80
                             },
@@ -1726,8 +1729,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     pitch: 62,
                     zoom: isMobile ? 18.2 : 18.4,
                     padding: {
-                        top: isMobile ? 40 : 30,
-                        bottom: isMobile ? 110 : 90,
+                        top: navTopPadding,
+                        bottom: 0,
                         left: isMobile ? 0 : 120,
                         right: 0
                     },
