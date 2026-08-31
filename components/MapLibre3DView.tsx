@@ -3,10 +3,11 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { FamilyMember, Place, CircleTask, Location } from '../types';
 import { MapSkinId, getMapSkin, applySkinOverrides, SATELLITE_STYLE, TERRAIN_STYLE } from '../services/mapSkinService';
-import { getDistanceMeters, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
+import { getDistanceMeters, getDistanceMiles, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { getBrandMeta } from '../services/brandLogoService';
 import { getGTAPlaceBlipHtml, getGTADestinationPinHtml } from '../services/gtaIconsService';
+import { convoyService } from '../services/convoyService';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
 const circleCoordsCache = new Map<string, [number, number][]>();
@@ -1616,25 +1617,67 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const smoothedBearing = prevBearingRef.current + delta * 0.45;
             prevBearingRef.current = ((smoothedBearing % 360) + 360) % 360;
 
-            // 3rd Person Perspective Chase View:
-            // - Pitch: 60° (high 3D tilt looking down the road)
-            // - Bearing: forward along vehicle heading (MapLibre rotates map so heading faces UP)
-            // - Zoom: 17.8 (detailed driving scale)
-            // - Padding: shifts vehicle marker down to bottom ~35% of screen so 65% is road ahead
-            map.current.easeTo({
-                center: [driverLoc.lng, driverLoc.lat],
-                bearing: prevBearingRef.current,
-                pitch: 60,
-                zoom: isMobile ? 17.5 : 18.0,
-                padding: {
-                    top: isMobile ? 120 : 90,
-                    bottom: isMobile ? 240 : 180,
-                    left: 0,
-                    right: 0
-                },
-                duration: 700,
-                easing: (t: number) => t
-            });
+            // --- FLEET-AWARE DYNAMIC CONVOY FRAMING ---
+            const activeConvoy = convoyService.getActiveConvoy();
+            let isMultiVehicleConvoy = false;
+
+            if (activeConvoy && activeConvoy.isActive && activeConvoy.memberIds && activeConvoy.memberIds.length > 1) {
+                const fleetMembers = members.filter(m =>
+                    activeConvoy.memberIds.includes(m.id) &&
+                    m.location &&
+                    !(m.location.lat === 0 && m.location.lng === 0)
+                );
+
+                if (fleetMembers.length > 1) {
+                    const convoyBounds = new maplibregl.LngLatBounds();
+                    convoyBounds.extend([driverLoc.lng, driverLoc.lat]);
+                    let membersEnclosed = 1;
+
+                    fleetMembers.forEach(m => {
+                        // Include convoy members within local visual corridor (~25 miles)
+                        const distMiles = getDistanceMiles(driverLoc, m.location);
+                        if (distMiles <= 25) {
+                            convoyBounds.extend([m.location.lng, m.location.lat]);
+                            membersEnclosed++;
+                        }
+                    });
+
+                    if (membersEnclosed > 1) {
+                        isMultiVehicleConvoy = true;
+                        map.current.fitBounds(convoyBounds, {
+                            pitch: 60,
+                            bearing: prevBearingRef.current,
+                            maxZoom: isMobile ? 17.5 : 18.0,
+                            padding: {
+                                top: isMobile ? 140 : 110,
+                                bottom: isMobile ? 260 : 200,
+                                left: isMobile ? 50 : 80,
+                                right: isMobile ? 50 : 80
+                            },
+                            duration: 700,
+                            easing: (t: number) => t
+                        });
+                    }
+                }
+            }
+
+            // Fallback: Standard Single-Vehicle 3rd Person Perspective Chase View
+            if (!isMultiVehicleConvoy) {
+                map.current.easeTo({
+                    center: [driverLoc.lng, driverLoc.lat],
+                    bearing: prevBearingRef.current,
+                    pitch: 60,
+                    zoom: isMobile ? 17.5 : 18.0,
+                    padding: {
+                        top: isMobile ? 120 : 90,
+                        bottom: isMobile ? 240 : 180,
+                        left: 0,
+                        right: 0
+                    },
+                    duration: 700,
+                    easing: (t: number) => t
+                });
+            }
             return;
         }
     }, [members, userLocation, currentUserId, isNavigating, isMapReady, routeCoords, is3DMode, isCameraFree, currentStepIndex, isMobile]);
