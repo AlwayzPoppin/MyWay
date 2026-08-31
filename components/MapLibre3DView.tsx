@@ -1505,8 +1505,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 let snappedPoint: Location | null = null;
                 let segBearing = 0;
 
-                const startIdx = Math.max(0, currentStepIndex - 1);
-                const endIdx = Math.min(routeCoords.length - 1, currentStepIndex + 3);
+                const startIdx = 0;
+                const endIdx = Math.min(routeCoords.length - 1, currentStepIndex + 6);
                 for (let i = startIdx; i < endIdx; i++) {
                     const a = routeCoords[i];
                     const b = routeCoords[i + 1];
@@ -1523,8 +1523,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 if (snappedPoint && minSegDist < SNAPPING_THRESHOLD_METERS) {
                     finalLocation = snappedPoint;
                     displayBearing = segBearing;
+                } else if (routeCoords.length >= 2) {
+                    displayBearing = getBearing(routeCoords[0], routeCoords[1]);
                 }
             }
+
+            // Calculate rotation relative to map camera angle so vehicle arrow points directly along the road on-screen
+            const mapCamBearing = map.current ? map.current.getBearing() : 0;
+            const visualRotation = Math.round(((displayBearing - mapCamBearing) % 360 + 360) % 360);
 
             const updatedMs = new Date(member.lastUpdated).getTime();
             const ageMinutes = Math.floor((Date.now() - updatedMs) / 60000);
@@ -1554,13 +1560,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const markerHtml = isSelfNavigating ? `
                 <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
                     <!-- Dynamic Forward Vision Headlight Beam -->
-                    <div style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${displayBearing}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, rgba(56, 189, 248, 0.45) 0%, rgba(56, 189, 248, 0.12) 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
+                    <div style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${visualRotation}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, rgba(56, 189, 248, 0.45) 0%, rgba(56, 189, 248, 0.12) 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
                     
                     <!-- Radar Pulse Beacon -->
                     <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isGTARadar ? '#facc15' : isLightSkin ? '#0284c7' : '#6366f1'}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
                     
                     <!-- 3D Navigation Vehicle Arrow Puck -->
-                    <div style="position: relative; width: 46px; height: 46px; transform: rotate(${displayBearing}deg); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.6));">
+                    <div style="position: relative; width: 46px; height: 46px; transform: rotate(${visualRotation}deg); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.6));">
                         <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
                             <path d="M22 3 L39 39 L22 30 L5 39 Z" fill="${isGTARadar ? '#f59e0b' : isLightSkin ? '#0284c7' : '#4f46e5'}" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" />
                             <path d="M22 6 L35 36 L22 28 L9 36 Z" fill="${isGTARadar ? '#facc15' : isLightSkin ? '#38bdf8' : '#818cf8'}" />
@@ -1575,7 +1581,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
                         <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
                     </div>
-                    ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${displayBearing}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                    ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
                 </div>
             `;
 
