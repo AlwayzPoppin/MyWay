@@ -1116,8 +1116,14 @@ const App: React.FC = () => {
                                 </span>
                               )}
                             </div>
-                            <div className="text-xs text-slate-500 flex items-center gap-2">
-                              <span>{selectedMember.status}</span>
+                            <div className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-slate-300">
+                                {selectedMember.currentPlace
+                                  ? (selectedMember.status === 'Stationary' ? `At ${selectedMember.currentPlace}` : `${selectedMember.status} • ${selectedMember.currentPlace}`)
+                                  : (selectedMember.status === 'Driving' ? `Driving` :
+                                     selectedMember.status === 'Walking' || selectedMember.status === 'Moving' ? `Walking` :
+                                     'Stationary')}
+                              </span>
                               <span>•</span>
                               <span>🔋 {selectedMember.battery}%</span>
                               {selectedMember.speed > 0 && <><span>•</span><span>{Math.round(selectedMember.speed)} mph</span></>}

@@ -206,13 +206,30 @@ export const useLocationSync = (
             }
 
             // ADAPTIVE SYNC: Adjust thresholds based on movement status for battery efficiency
-            // Driving: sync every 2.5m or 5s (responsive tracking)
-            // Moving/Walking: sync every 5m or 15s (balanced)
-            // Stationary: sync every 10m or 60s (battery saver)
+            // Driving: speed > 5 mph
+            // Walking: speed > 0.6 mph and <= 5 mph
+            // Stationary: speed <= 0.6 mph
             const speedMph = Math.round(location.speed || 0);
             const heading = location.heading || 0;
-            const status: 'Driving' | 'Moving' | 'Stationary' = (speedMph > 5) ? 'Driving' : (speedMph > 0.5) ? 'Moving' : 'Stationary';
+            const status: 'Driving' | 'Walking' | 'Stationary' = (speedMph > 5) ? 'Driving' : (speedMph > 0.6) ? 'Walking' : 'Stationary';
             const currentCoords = { lat: location.latitude, lng: location.longitude };
+
+            // Determine if user is currently inside any saved place zone
+            let currentPlaceName: string | undefined = undefined;
+            if (geofences && geofences.length > 0) {
+                for (const g of geofences) {
+                    const gLat = g?.location?.lat ?? (g as any)?.lat;
+                    const gLng = g?.location?.lng ?? (g as any)?.lng;
+                    if (typeof gLat === 'number' && typeof gLng === 'number') {
+                        const distM = getDistanceFromCoords(currentCoords.lat, currentCoords.lng, gLat, gLng);
+                        const radiusM = g.radius || 150;
+                        if (distM <= radiusM) {
+                            currentPlaceName = g.name;
+                            break;
+                        }
+                    }
+                }
+            }
 
             // 1. MUTATE REF IN-PLACE FOR ZERO-LATENCY NON-REACT CONSUMERS (MapLibre 3D, Audio, Crash Telemetry)
             const selfInRef = membersRef.current.find(m => m.id === targetId);
@@ -222,6 +239,7 @@ export const useLocationSync = (
                 selfInRef.heading = heading;
                 selfInRef.accuracy = location.accuracy;
                 selfInRef.status = status;
+                selfInRef.currentPlace = currentPlaceName;
                 selfInRef.signalQuality = location.signalQuality;
                 selfInRef.lastUpdated = new Date().toISOString();
             }
@@ -249,7 +267,7 @@ export const useLocationSync = (
             const speedDiff = Math.abs(speedMph - lastReactRenderRef.current.speed);
             const headingDiff = Math.abs(heading - lastReactRenderRef.current.heading);
 
-            const minDistanceM = (status === 'Driving') ? 3 : (status === 'Moving') ? 5 : 10;
+            const minDistanceM = (status === 'Driving') ? 3 : (status === 'Walking') ? 5 : 10;
             const isSignificantMove = distMovedFromLastReact >= minDistanceM;
             const isSignificantSpeedChange = speedDiff >= 3;
             const isSignificantHeadingChange = (status === 'Driving') && (headingDiff >= 15);
@@ -281,6 +299,7 @@ export const useLocationSync = (
                             avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL, profile?.displayName || user?.displayName || targetId),
                             location: currentCoords,
                             status,
+                            currentPlace: currentPlaceName,
                             battery: currentBattery,
                             membershipTier: profile?.membershipTier || 'free',
                             lastUpdated: new Date().toISOString(),
@@ -306,6 +325,7 @@ export const useLocationSync = (
                             heading,
                             lastUpdated: new Date().toISOString(),
                             status,
+                            currentPlace: currentPlaceName,
                             signalQuality: location.signalQuality
                         } : m
                     );
@@ -475,6 +495,7 @@ export const useLocationSync = (
                     }
 
                     // Circle Member Geofence Arrival / Departure Tracking
+                    let memberPlaceName: string | undefined = undefined;
                     if (geofences && geofences.length > 0 && lat && lng && lat !== 0) {
                         let currentInside = memberInsideGeofencesRef.current.get(member.id);
                         const isFirstTracking = !currentInside;
@@ -484,37 +505,49 @@ export const useLocationSync = (
                         }
 
                         geofences.forEach((gf) => {
-                            const distance = getDistanceFromCoords(lat, lng, gf.location.lat, gf.location.lng);
-                            const wasInside = currentInside!.has(gf.id);
-                            const isInsideNow = distance <= (gf.radius || 150);
+                            const gfLat = gf?.location?.lat ?? (gf as any)?.lat;
+                            const gfLng = gf?.location?.lng ?? (gf as any)?.lng;
+                            if (typeof gfLat === 'number' && typeof gfLng === 'number') {
+                                const distance = getDistanceFromCoords(lat, lng, gfLat, gfLng);
+                                const radius = gf.radius || 150;
+                                const isInsideNow = distance <= radius;
+                                const wasInside = currentInside!.has(gf.id);
 
-                            if (isInsideNow && !wasInside) {
-                                currentInside!.add(gf.id);
-                                if (!isFirstTracking) {
-                                    speechService.speak(`${member.name} arrived at ${gf.name}`, { chime: 'arrival' });
-                                    useUI.getState().addActivity({
-                                        id: `act_${Date.now()}_${Math.random()}`,
-                                        type: 'arrival',
-                                        message: `${member.name} arrived at ${gf.name}`,
-                                        member: member,
-                                        timestamp: Date.now()
-                                    });
+                                if (isInsideNow) {
+                                    memberPlaceName = gf.name;
                                 }
-                            } else if (!isInsideNow && wasInside) {
-                                currentInside!.delete(gf.id);
-                                if (!isFirstTracking) {
-                                    speechService.speak(`${member.name} left ${gf.name}`, { chime: 'turn' });
-                                    useUI.getState().addActivity({
-                                        id: `act_${Date.now()}_${Math.random()}`,
-                                        type: 'departure',
-                                        message: `${member.name} left ${gf.name}`,
-                                        member: member,
-                                        timestamp: Date.now()
-                                    });
+
+                                if (isInsideNow && !wasInside) {
+                                    currentInside!.add(gf.id);
+                                    if (!isFirstTracking) {
+                                        speechService.speak(`${member.name} arrived at ${gf.name}`, { chime: 'arrival' });
+                                        useUI.getState().addActivity({
+                                            id: `act_${Date.now()}_${Math.random()}`,
+                                            type: 'arrival',
+                                            message: `${member.name} arrived at ${gf.name}`,
+                                            member: member,
+                                            timestamp: Date.now()
+                                        });
+                                    }
+                                } else if (!isInsideNow && wasInside) {
+                                    currentInside!.delete(gf.id);
+                                    if (!isFirstTracking) {
+                                        speechService.speak(`${member.name} left ${gf.name}`, { chime: 'turn' });
+                                        useUI.getState().addActivity({
+                                            id: `act_${Date.now()}_${Math.random()}`,
+                                            type: 'departure',
+                                            message: `${member.name} left ${gf.name}`,
+                                            member: member,
+                                            timestamp: Date.now()
+                                        });
+                                    }
                                 }
                             }
                         });
                     }
+
+                    const memberSpeed = Math.round(loc.speed || 0);
+                    const memberStatus: 'Driving' | 'Walking' | 'Stationary' = (memberSpeed > 5) ? 'Driving' : (memberSpeed > 0.6) ? 'Walking' : 'Stationary';
 
                     return {
                         ...member,
@@ -522,11 +555,12 @@ export const useLocationSync = (
                         avatar: getSafeAvatarUrl(member.avatar, member.name || member.id),
                         location: { lat, lng },
                         accuracy: loc.accuracy,
-                        speed: loc.speed,
+                        speed: memberSpeed,
                         heading: loc.heading,
                         battery: loc.battery,
                         lastUpdated: new Date(loc.timestamp).toISOString(),
-                        status: loc.status || ((loc.speed > 5) ? 'Driving' : (loc.speed > 0.5) ? 'Moving' : 'Stationary'),
+                        status: loc.status || memberStatus,
+                        currentPlace: memberPlaceName,
                         signalQuality: loc.signalQuality,
                         sosActive: !!loc.sosActive,
                         impact: loc.impact || undefined,

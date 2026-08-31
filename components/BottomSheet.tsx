@@ -110,17 +110,20 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 
     const getStatusColor = (status: string) => {
         switch (status) {
-            case 'Driving': return '#6366f1';
-            case 'Moving': return '#22c55e';
-            case 'Stationary': return '#94a3b8';
+            case 'Driving': return '#818cf8';
+            case 'Walking': return '#38bdf8';
+            case 'Moving': return '#38bdf8';
+            case 'Stationary': return '#34d399';
             case 'Offline': return '#64748b';
             default: return '#6b7280';
         }
     };
 
-    const getStatusIcon = (status: string) => {
+    const getStatusIcon = (status: string, currentPlace?: string) => {
+        if (currentPlace && status === 'Stationary') return '🏠';
         switch (status) {
-            case 'Driving': return '🏎️';
+            case 'Driving': return '🚗';
+            case 'Walking': return '🚶';
             case 'Moving': return '🚶';
             case 'Stationary': return '📍';
             case 'Offline': return '💤';
@@ -232,7 +235,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         borderColor: isDark ? '#0f172a' : 'white'
                                     }}
                                 >
-                                    {member.currentTrip ? '🚗' : getStatusIcon(member.status)}
+                                    {member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
                                 </div>
                             </button>
                         ))}
@@ -443,7 +446,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                         className="absolute -bottom-1 -right-1 w-4.5 h-4.5 rounded-lg flex items-center justify-center text-[10px] border border-slate-900"
                                                         style={{ backgroundColor: getStatusColor(member.status) }}
                                                     >
-                                                        {member.currentTrip ? '🚗' : getStatusIcon(member.status)}
+                                                        {member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
                                                     </div>
                                                 </div>
 
@@ -460,13 +463,23 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
                                                         </span>
                                                     </div>
-                                                    <div className={`text-[11px] truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                                        {member.status} • {member.currentPlace || 'Live GPS Active'}
+                                                    <div className={`text-[11px] font-medium truncate ${
+                                                        member.currentPlace && member.status === 'Stationary' ? 'text-emerald-400 font-semibold' :
+                                                        member.status === 'Driving' ? 'text-indigo-400' :
+                                                        member.status === 'Walking' || member.status === 'Moving' ? 'text-sky-400' :
+                                                        member.status === 'Stationary' ? 'text-emerald-400' :
+                                                        isDark ? 'text-slate-400' : 'text-slate-500'
+                                                    }`}>
+                                                        {member.currentPlace
+                                                            ? (member.status === 'Stationary' ? `At ${member.currentPlace}` : `${member.status} • ${member.currentPlace}`)
+                                                            : (member.status === 'Driving' ? `Driving ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
+                                                               member.status === 'Walking' || member.status === 'Moving' ? `Walking ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
+                                                               'Stationary')}
                                                     </div>
                                                 </div>
 
                                                 {/* Speed Indicator */}
-                                                {(member.status === 'Driving' || member.status === 'Moving') && member.speed > 0 && (
+                                                {(member.status === 'Driving' || member.status === 'Walking' || member.status === 'Moving') && member.speed > 0 && (
                                                     <div className="text-center shrink-0 pl-1">
                                                         <div className={`text-sm font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
                                                             {Math.round(member.speed)}

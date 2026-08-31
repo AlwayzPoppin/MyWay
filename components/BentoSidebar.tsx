@@ -69,11 +69,11 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     const [showAddCustomPlace, setShowAddCustomPlace] = React.useState(false);
     const [customPlaceName, setCustomPlaceName] = React.useState('');
     const [customPlaceIcon, setCustomPlaceIcon] = React.useState('📍');
-    const [customPlaceType, setCustomPlaceType] = React.useState<'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other'>('other');
-
-    const getStatusIcon = (status: string) => {
+    const getStatusIcon = (status: string, currentPlace?: string) => {
+        if (currentPlace && status === 'Stationary') return '🏠';
         switch (status) {
-            case 'Driving': return '🏎️';
+            case 'Driving': return '🚗';
+            case 'Walking': return '🚶';
             case 'Moving': return '🚶';
             case 'Stationary': return '📍';
             case 'Offline': return '💤';
@@ -273,7 +273,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         ? 'bg-indigo-600 border-white text-white animate-pulse shadow-md' 
                                                         : theme === 'dark' ? 'bg-slate-800 border-white/10' : 'bg-white border-slate-200 shadow-sm'
                                                 }`}>
-                                                    {member.currentTrip ? '🚗' : getStatusIcon(member.status)}
+                                                    {member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
                                                 </div>
 
                                                 {member.isGhostMode && (
@@ -340,11 +340,16 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     ) : (
                                                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                                             <span className={`text-[10px] font-bold ${
+                                                                member.currentPlace && member.status === 'Stationary' ? 'text-emerald-400' :
                                                                 member.status === 'Driving' ? 'text-indigo-400' :
-                                                                member.status === 'Moving' ? 'text-amber-400' :
+                                                                member.status === 'Walking' || member.status === 'Moving' ? 'text-sky-400' :
                                                                 member.status === 'Stationary' ? 'text-emerald-400' : 'text-slate-500'
                                                             }`}>
-                                                                {member.status} {member.speed > 0 ? `• ${member.speed} MPH` : ''}
+                                                                {member.currentPlace
+                                                                    ? (member.status === 'Stationary' ? `At ${member.currentPlace}` : `${member.status} • ${member.currentPlace}`)
+                                                                    : (member.status === 'Driving' ? `Driving ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
+                                                                       member.status === 'Walking' || member.status === 'Moving' ? `Walking ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
+                                                                       'Stationary')}
                                                             </span>
                                                             {member.privacyMode === 'blurred' && (
                                                                 <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-purple-500/20 text-purple-300">

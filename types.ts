@@ -109,7 +109,7 @@ export interface FamilyMember {
   battery: number;
   speed: number;
   lastUpdated: string;
-  status: 'Moving' | 'Stationary' | 'Driving' | 'Offline' | 'Arrived';
+  status: 'Moving' | 'Stationary' | 'Driving' | 'Walking' | 'Offline' | 'Arrived';
   currentPlace?: string;
   safetyScore: number;
   pathHistory: Location[];
