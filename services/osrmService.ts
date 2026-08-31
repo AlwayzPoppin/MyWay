@@ -329,7 +329,7 @@ async function fetchRouteFromProvider(
     if (isOffline()) throw new Error('Device is offline');
     const altParam = alternatives ? '&alternatives=3' : '';
     // Enable annotations for live traffic congestion polyline rendering and 500m snapping radius
-    const url = `${baseUrl}/${start.lng},${start.lat};${endLocation.lng},${endLocation.lat}?overview=full&geometries=geojson&steps=true&annotations=true,congestion,speed,duration${altParam}&radiuses=500;500&continue_straight=false`;
+    const url = `${baseUrl}/${start.lng},${start.lat};${endLocation.lng},${endLocation.lat}?overview=full&geometries=geojson&steps=true&annotations=true${altParam}&radiuses=500;500&continue_straight=false`;
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`OSRM ${response.status}`);
     return response.json();

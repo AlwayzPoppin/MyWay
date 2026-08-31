@@ -159,8 +159,15 @@ const App: React.FC = () => {
   // --- CORE STATE ---
   const [isMapReady, setIsMapReady] = useState(false);
   const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
-  const [isOwner, setIsOwner] = useState(false);
-  const [userPlaces, setUserPlaces] = useState<UserPlace[]>([]);
+  const [userPlaces, setUserPlaces] = useState<UserPlace[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('myway_user_places');
+        if (saved) return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return [];
+  });
   const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>([]);
   const [safetyScore, setSafetyScore] = useState(100);
   const [sessionPoints, setSessionPoints] = useState(0);
@@ -537,6 +544,11 @@ const App: React.FC = () => {
 
   // Synchronize userPlaces with discoveredPlaces without blowing away search results
   useEffect(() => {
+    if (userPlaces && userPlaces.length > 0) {
+      try {
+        localStorage.setItem('myway_user_places', JSON.stringify(userPlaces));
+      } catch (e) {}
+    }
     setDiscoveredPlaces(prev => {
       // Keep any active search/discovered places that are not saved userPlaces
       const searchResults = prev.filter(p => p.type === 'search_result' || p.id.startsWith('photon-') || p.id.startsWith('nominatim-') || p.id.startsWith('overpass-'));
@@ -544,6 +556,11 @@ const App: React.FC = () => {
       return [...userPlaces, ...searchResults];
     });
   }, [userPlaces]);
+
+  const allDisplayPlaces = useMemo(() => {
+    const searchPlaces = (discoveredPlaces || []).filter(dp => !userPlaces.some(up => up.id === dp.id));
+    return [...userPlaces, ...searchPlaces];
+  }, [userPlaces, discoveredPlaces]);
 
 
   // Insights Loop
@@ -852,7 +869,7 @@ const App: React.FC = () => {
               onUserInteraction={handleMapInteraction}
               onMapReady={() => setIsMapReady(true)}
               activeRoute={activeRoute || previewRoute}
-              places={discoveredPlaces}
+              places={allDisplayPlaces}
               incidents={incidents}
               privacyZones={privacyZones}
               tasks={[]}

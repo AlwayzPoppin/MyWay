@@ -125,13 +125,8 @@ export const useLocationSync = (
             return;
         }
 
-        // FIX: Don't inject self into members without a real user ID
-        // This prevents creating 'demo-you' entries that duplicate the real user
-        if (!user?.uid) {
-            console.log('📍 GPS: Skipping member injection — no authenticated user yet');
-            return;
-        }
-        const targetId = user.uid;
+        // Target ID defaults to user.uid or 'local-user' for guest / initial startup
+        const targetId = user?.uid || 'local-user';
 
         // Register geofences for background evaluation and native notifications
         geolocationService.setBackgroundGeofences(geofences, onTransition);

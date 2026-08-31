@@ -1014,17 +1014,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'places-cluster-source';
+        const validPlaces = (places || []).filter(p => p && p.location && typeof p.location.lat === 'number' && typeof p.location.lng === 'number' && !(p.location.lat === 0 && p.location.lng === 0));
         const geojsonData: GeoJSON.FeatureCollection = {
             type: 'FeatureCollection',
-            features: places.map(p => ({
+            features: validPlaces.map(p => ({
                 type: 'Feature',
                 id: p.id,
                 properties: {
                     id: p.id,
                     name: p.name || 'Place',
                     type: p.type || 'home',
-                    icon: p.icon || '📍',
-                    color: p.color || (p.type === 'home' ? '#22c55e' : p.type === 'work' ? '#3b82f6' : p.type === 'school' ? '#f59e0b' : '#6366f1'),
+                    icon: p.icon || (p.type === 'home' ? '🏠' : p.type === 'work' ? '💼' : p.type === 'school' ? '🏫' : p.type === 'gym' ? '💪' : p.type === 'gas' ? '⛽' : p.type === 'food' ? '🍔' : p.type === 'coffee' ? '☕' : '📍'),
+                    color: (p as any).brandColor || (p as any).color || (p.type === 'home' ? '#22c55e' : p.type === 'work' ? '#3b82f6' : p.type === 'school' ? '#f59e0b' : p.type === 'gym' ? '#ec4899' : p.type === 'gas' ? '#f97316' : '#6366f1'),
                 },
                 geometry: {
                     type: 'Point',
@@ -1089,7 +1090,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             });
 
-            // 3. Unclustered Individual Places Outer Circle / Glow
+            // 3. Unclustered Individual Places Outer Circle / Badge
             map.current.addLayer({
                 id: 'places-unclustered-circle',
                 type: 'circle',
@@ -1099,13 +1100,57 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     'circle-color': ['get', 'color'],
                     'circle-radius': [
                         'interpolate', ['linear'], ['zoom'],
-                        10, 6,
-                        14, 10,
-                        17, 14
+                        10, 8,
+                        14, 13,
+                        17, 16
                     ],
-                    'circle-stroke-width': 2,
+                    'circle-stroke-width': 2.5,
                     'circle-stroke-color': '#ffffff',
-                    'circle-stroke-opacity': 0.95
+                    'circle-opacity': 0.95
+                }
+            });
+
+            // 4. Unclustered Place Emoji Icon
+            map.current.addLayer({
+                id: 'places-unclustered-icon',
+                type: 'symbol',
+                source: sourceId,
+                filter: ['!', ['has', 'point_count']],
+                layout: {
+                    'text-field': ['get', 'icon'],
+                    'text-size': [
+                        'interpolate', ['linear'], ['zoom'],
+                        10, 8,
+                        14, 12,
+                        17, 15
+                    ],
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                }
+            });
+
+            // 5. Unclustered Place Text Label
+            map.current.addLayer({
+                id: 'places-unclustered-label',
+                type: 'symbol',
+                source: sourceId,
+                filter: ['!', ['has', 'point_count']],
+                layout: {
+                    'text-field': ['get', 'name'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': [
+                        'interpolate', ['linear'], ['zoom'],
+                        12, 10,
+                        16, 12
+                    ],
+                    'text-offset': [0, 1.5],
+                    'text-anchor': 'top',
+                    'text-optional': true
+                },
+                paint: {
+                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
+                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+                    'text-halo-width': 2
                 }
             });
 
@@ -1515,9 +1560,34 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const SNAPPING_THRESHOLD_METERS = 40;
-        const validMembers = members.filter(m => !(m.location.lat === 0 && m.location.lng === 0));
+        const validMembers = (members || []).filter(m => m && m.location && typeof m.location.lat === 'number' && typeof m.location.lng === 'number' && !(m.location.lat === 0 && m.location.lng === 0));
+
+        // Ensure user location puck is always rendered even before circle sync finishes
+        const allMembersToRender = [...validMembers];
+        const hasSelf = allMembersToRender.some(m => m.id === currentUserId || m.id === 'current_user' || m.id === 'local-user' || m.id === 'demo-you');
+        if (!hasSelf && userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && !(userLocation.lat === 0 && userLocation.lng === 0)) {
+            allMembersToRender.unshift({
+                id: currentUserId || 'current_user',
+                name: 'You',
+                avatar: getDefaultAvatarDataUri('You'),
+                location: userLocation,
+                status: isNavigating ? 'Driving' : 'Stationary',
+                battery: 100,
+                membershipTier: 'free',
+                lastUpdated: new Date().toISOString(),
+                accuracy: 15,
+                isGhostMode: false,
+                speed: 0,
+                heading: 0,
+                role: 'Primary',
+                safetyScore: 100,
+                pathHistory: [],
+                driveEvents: []
+            });
+        }
+
         const dedupedMembers = Array.from(
-            new Map<string, FamilyMember>(validMembers.map(m => [m.id, m])).values()
+            new Map<string, FamilyMember>(allMembersToRender.map(m => [m.id, m])).values()
         );
 
         // 1. Accuracy & Privacy Halos FeatureCollection
@@ -1801,7 +1871,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 if (map.current) map.current.getCanvas().style.cursor = '';
             });
         }
-    }, [members, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin, theme, onSelectMember]);
+    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin, theme, styleVersion, onSelectMember]);
 
     // ==========================================
     // DYNAMIC NAVIGATION CAMERA TRACKING SYSTEM (3RD PERSON CHASE CAM)
