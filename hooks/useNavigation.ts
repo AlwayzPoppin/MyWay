@@ -125,10 +125,13 @@ export const useNavigation = (
             }
 
             startCrashMonitoring(
-                (crashLoc) => {
+                (crashLoc, impact) => {
                     if (user && profile?.familyCircleId) {
-                        triggerSOS(profile.familyCircleId, user.uid);
-                        showNotification('🚨 CRASH SOS SENT!', 10000);
+                        triggerSOS(profile.familyCircleId, user.uid, crashLoc, impact);
+                        const alertMsg = impact
+                            ? `🚨 CRASH SOS SENT (${impact.gForce}G Impact @ ${impact.speed} mph)!`
+                            : '🚨 CRASH SOS SENT!';
+                        showNotification(alertMsg, 10000);
                     }
                     setCrashCountdown(null);
                 },

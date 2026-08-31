@@ -4,12 +4,15 @@
  * and auto-synchronizes them to Firebase Realtime Database once connectivity is restored.
  */
 
+import { CrashImpactMetadata } from '../types';
+
 export interface BufferedSosAlert {
     id?: number;
     circleId: string;
     userId: string;
     action: 'trigger' | 'clear';
     location?: { lat: number; lng: number };
+    impact?: CrashImpactMetadata;
     timestamp: number;
 }
 

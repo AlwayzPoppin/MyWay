@@ -457,6 +457,7 @@ export const useLocationSync = (
                         status: loc.status || ((loc.speed > 5) ? 'Driving' : (loc.speed > 0.5) ? 'Moving' : 'Stationary'),
                         signalQuality: loc.signalQuality,
                         sosActive: !!loc.sosActive,
+                        impact: loc.impact || undefined,
                         privacyMode: loc.privacyMode || (loc.status?.includes('Blurred') ? 'blurred' : loc.status?.includes('Status Only') ? 'status_only' : loc.status?.includes('Frozen') ? 'frozen' : 'exact'),
                         blurredRadiusMeters: loc.blurredRadiusMeters,
                         isGhostMode: loc.privacyMode === 'blurred' || loc.privacyMode === 'frozen' || !!loc.status?.includes('Blurred'),

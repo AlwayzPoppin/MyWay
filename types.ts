@@ -77,6 +77,13 @@ export interface CurrentTrip {
 
 export type PrivacyMode = 'exact' | 'blurred' | 'status_only' | 'frozen';
 
+export interface CrashImpactMetadata {
+  speed: number; // Speed in MPH at impact
+  gForce: number; // G-force magnitude (e.g. 4.5G)
+  deceleration?: number; // Deceleration in m/s²
+  severity?: 'moderate' | 'severe' | 'critical';
+}
+
 export interface FamilyMember {
   id: string;
   name: string;
@@ -100,6 +107,7 @@ export interface FamilyMember {
   privacyMode?: PrivacyMode;
   blurredRadiusMeters?: number;
   sosActive?: boolean;
+  impact?: CrashImpactMetadata;
   locationStale?: boolean; // Audit Fix: Flag for E2EE key exchange pending (shows last known location)
   membershipTier: 'free' | 'gold' | 'platinum';
 }

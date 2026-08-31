@@ -27,7 +27,7 @@ import {
     importPublicKey,
     wrapCircleKey
 } from './cryptoService';
-import { PrivacyMode } from '../types';
+import { PrivacyMode, CrashImpactMetadata } from '../types';
 
 // Types
 export interface UserProfile {
@@ -438,6 +438,7 @@ export interface MemberLocation {
     encryptedData?: string;
     status?: string;
     sosActive?: boolean;
+    impact?: CrashImpactMetadata | null;
     privacyMode?: PrivacyMode;
     blurredRadiusMeters?: number;
     currentTrip?: MemberTrip | null;
@@ -458,20 +459,31 @@ export const updateMemberLocation = async (
             accuracy: location.accuracy || 10,
             speed: location.speed ?? null,
             heading: location.heading ?? null,
-            timestamp: location.timestamp || Date.now(),
-            battery: location.battery,
+            battery: location.battery || 100,
             signalQuality: location.signalQuality,
-            status: location.status,
-            privacyMode: location.privacyMode,
+            timestamp: location.timestamp || Date.now(),
             encryptedData: location.encryptedData
         });
         return;
     }
 
     try {
-        await update(ref(database, `locations/${circleId}/${userId}`), location as Record<string, any>);
+        await set(ref(database, `locations/${circleId}/${userId}`), {
+            lat: location.lat,
+            lng: location.lng,
+            speed: location.speed || 0,
+            heading: location.heading || 0,
+            accuracy: location.accuracy || 10,
+            battery: location.battery || 100,
+            signalQuality: location.signalQuality,
+            timestamp: location.timestamp || Date.now(),
+            status: location.status || 'Moving',
+            privacyMode: location.privacyMode || 'exact',
+            blurredRadiusMeters: location.blurredRadiusMeters || 0,
+            encryptedData: location.encryptedData
+        });
     } catch (err) {
-        console.warn('❌ Failed to update location over network, queuing in IndexedDB:', err);
+        console.error('Failed to update member location in Firebase, buffering locally:', err);
         await bufferLocation({
             userId,
             circleId,
@@ -480,11 +492,9 @@ export const updateMemberLocation = async (
             accuracy: location.accuracy || 10,
             speed: location.speed ?? null,
             heading: location.heading ?? null,
-            timestamp: location.timestamp || Date.now(),
-            battery: location.battery,
+            battery: location.battery || 100,
             signalQuality: location.signalQuality,
-            status: location.status,
-            privacyMode: location.privacyMode,
+            timestamp: location.timestamp || Date.now(),
             encryptedData: location.encryptedData
         });
     }
@@ -506,11 +516,12 @@ export const updateMemberTrip = async (
 export const triggerSOS = async (
     circleId: string,
     userId: string,
-    location?: { lat: number; lng: number }
+    location?: { lat: number; lng: number },
+    impact?: CrashImpactMetadata
 ): Promise<void> => {
     if (!navigator.onLine) {
         console.warn('📶 Offline: Queuing SOS alert in IndexedDB buffer');
-        await bufferSosAlert({ circleId, userId, action: 'trigger', location, timestamp: Date.now() });
+        await bufferSosAlert({ circleId, userId, action: 'trigger', location, impact, timestamp: Date.now() });
         return;
     }
 
@@ -519,22 +530,28 @@ export const triggerSOS = async (
         const snapshot = await get(locRef);
         if (snapshot.exists()) {
             const currentLoc = snapshot.val();
-            await set(locRef, { ...currentLoc, sosActive: true, timestamp: Date.now() });
+            await set(locRef, {
+                ...currentLoc,
+                sosActive: true,
+                impact: impact || null,
+                timestamp: Date.now()
+            });
         } else if (location) {
             await set(locRef, {
                 lat: location.lat,
                 lng: location.lng,
-                speed: 0,
+                speed: impact?.speed || 0,
                 heading: 0,
                 accuracy: 10,
                 battery: 100,
                 timestamp: Date.now(),
-                sosActive: true
+                sosActive: true,
+                impact: impact || null
             });
         }
     } catch (err) {
         console.error('❌ Failed to trigger SOS over network, queuing in IndexedDB:', err);
-        await bufferSosAlert({ circleId, userId, action: 'trigger', location, timestamp: Date.now() });
+        await bufferSosAlert({ circleId, userId, action: 'trigger', location, impact, timestamp: Date.now() });
     }
 };
 
@@ -550,7 +567,12 @@ export const clearSOS = async (circleId: string, userId: string): Promise<void> 
         const snapshot = await get(locRef);
         if (snapshot.exists()) {
             const currentLoc = snapshot.val();
-            await set(locRef, { ...currentLoc, sosActive: false, timestamp: Date.now() });
+            await set(locRef, {
+                ...currentLoc,
+                sosActive: false,
+                impact: null,
+                timestamp: Date.now()
+            });
         }
     } catch (err) {
         console.error('❌ Failed to clear SOS over network, queuing in IndexedDB:', err);
@@ -567,18 +589,20 @@ setupSosAutoFlush(async (alert: BufferedSosAlert) => {
         await set(locRef, {
             ...currentLoc,
             sosActive: alert.action === 'trigger',
+            impact: alert.action === 'trigger' ? (alert.impact || null) : null,
             timestamp: alert.timestamp
         });
     } else if (alert.location) {
         await set(locRef, {
             lat: alert.location.lat,
             lng: alert.location.lng,
-            speed: 0,
+            speed: alert.impact?.speed || 0,
             heading: 0,
             accuracy: 10,
             battery: 100,
             timestamp: alert.timestamp,
-            sosActive: alert.action === 'trigger'
+            sosActive: alert.action === 'trigger',
+            impact: alert.action === 'trigger' ? (alert.impact || null) : null
         });
     }
 });

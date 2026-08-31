@@ -201,7 +201,6 @@ const App: React.FC = () => {
   const [incidents, setIncidents] = useState<IncidentReport[]>([]);
   const [insights, setInsights] = useState<DailyInsight[]>([]);
   const [activities, setActivities] = useState<AppNotification[]>([]);
-  const logActivityRef = useRef<((type: AppNotification['type'], title: string, message: string, icon: string, memberId?: string) => void) | null>(null);
   const prevMembersRef = useRef<Record<string, { sosActive: boolean; battery: number; status: string }>>({});
 
   // Free-look camera state during navigation
@@ -210,17 +209,19 @@ const App: React.FC = () => {
     setIsCameraFree(false);
   }, []);
 
-  // Define logActivity helper
   const logActivity = useCallback((
     type: AppNotification['type'],
     title: string,
     message: string,
     icon: string,
-    memberId?: string
+    memberId?: string,
+    impact?: CrashImpactMetadata
   ) => {
-    const notif = addNotification(type, title, message, icon, memberId);
+    const notif = addNotification(type, title, message, icon, memberId, impact);
     setActivities(prev => [notif, ...prev.filter(a => a.id !== notif.id)]);
   }, []);
+
+  const logActivityRef = useRef<((type: AppNotification['type'], title: string, message: string, icon: string, memberId?: string, impact?: CrashImpactMetadata) => void) | null>(null);
 
   // Update logActivityRef so the geofence transition callback can safely access it
   useEffect(() => {
@@ -378,7 +379,11 @@ const App: React.FC = () => {
       if (prev) {
         // 1. SOS Trigger
         if (currentSos && !prev.sosActive && !isSelf) {
-          logActivity('sos', 'Emergency SOS', `${member.name} triggered an Emergency SOS!`, '🚨', member.id);
+          const impact = member.impact;
+          const alertMsg = impact
+            ? `${member.name} triggered an Emergency SOS (${impact.gForce}G Impact @ ${impact.speed} mph)!`
+            : `${member.name} triggered an Emergency SOS!`;
+          logActivity('sos', 'Emergency SOS', alertMsg, '🚨', member.id, impact);
         }
         // 2. Low Battery Alert
         if (currentBattery <= 20 && prev.battery > 20) {
@@ -642,18 +647,19 @@ const App: React.FC = () => {
     }
   }, [user, profile, userPlaces]);
 
-  const handleTriggerSOS = useCallback(() => {
+  const handleTriggerSOS = useCallback((impact?: CrashImpactMetadata) => {
     const memberName = profile?.displayName || user?.displayName || 'You';
     const memberId = user?.uid || 'demo-you';
     if (user && profile?.familyCircleId) {
-      triggerSOS(profile.familyCircleId, user.uid);
-      showNotification('🚨 SOS SENT!', 10000);
-      logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId);
-      setMembers(prev => prev.map(m => m.id === user.uid ? { ...m, sosActive: true } : m));
+      triggerSOS(profile.familyCircleId, user.uid, undefined, impact);
+      const alertMsg = impact ? `🚨 SOS SENT (${impact.gForce}G Impact)!` : '🚨 SOS SENT!';
+      showNotification(alertMsg, 10000);
+      logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId, impact);
+      setMembers(prev => prev.map(m => m.id === user.uid ? { ...m, sosActive: true, impact } : m));
     } else {
       showNotification('🚨 SOS SENT! (Demo Mode)', 10000);
-      logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId);
-      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, sosActive: true } : m));
+      logActivity('EMERGENCY', 'Emergency SOS', `${memberName} triggered an Emergency SOS`, '🚨', memberId, impact);
+      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, sosActive: true, impact } : m));
     }
   }, [user, profile, showNotification, logActivity, setMembers]);
 

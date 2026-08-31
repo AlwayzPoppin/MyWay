@@ -1,4 +1,4 @@
-import { Location } from '../types';
+import { Location, CrashImpactMetadata } from '../types';
 import { audioService } from './audioService';
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -9,7 +9,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
  * Emits EventTarget telemetry events and supports dynamic speed getter references and background headless execution.
  */
 
-export type CrashCallback = (location: Location) => void;
+export type CrashCallback = (location: Location, impact?: CrashImpactMetadata) => void;
 export type CancelCallback = () => void;
 export type HardBrakeCallback = () => void;
 export type RapidAccelCallback = () => void;
@@ -27,6 +27,7 @@ export class CrashDetectionService extends EventTarget {
     private speedGetter: SpeedGetter | null = null;
     private currentSpeedMph = 0;
     private lastKnownLocation: Location | null = null;
+    private lastImpact: CrashImpactMetadata | null = null;
 
     // Threshold: 4G = ~39.2 m/s² — typical car crash produces 20-60G
     private readonly CRASH_THRESHOLD_MS2 = 39.2;
@@ -114,8 +115,17 @@ export class CrashDetectionService extends EventTarget {
             if (now - this.lastCrashTime < this.COOLDOWN_MS) return;
             this.lastCrashTime = now;
 
-            console.warn(`🚨 Crash Detection: ${accelerationDelta.toFixed(1)} m/s² spike at ${speed.toFixed(0)} mph!`);
-            this.dispatchEvent(new CustomEvent('crash', { detail: { speed, deceleration: accelerationDelta } }));
+            const gForce = Number((accelerationDelta / 9.81).toFixed(1));
+            const severity: 'moderate' | 'severe' | 'critical' = gForce >= 8 ? 'critical' : gForce >= 5 ? 'severe' : 'moderate';
+            this.lastImpact = {
+                speed: Math.round(speed),
+                gForce,
+                deceleration: Number(accelerationDelta.toFixed(1)),
+                severity
+            };
+
+            console.warn(`🚨 Crash Detection: ${accelerationDelta.toFixed(1)} m/s² (${gForce}G - ${severity.toUpperCase()}) spike at ${speed.toFixed(0)} mph!`);
+            this.dispatchEvent(new CustomEvent('crash', { detail: { speed, deceleration: accelerationDelta, impact: this.lastImpact } }));
             this.startCountdown();
         } else if (accelerationDelta >= this.HARD_BRAKE_THRESHOLD_MS2) {
             const now = Date.now();
@@ -174,23 +184,24 @@ export class CrashDetectionService extends EventTarget {
                     }).catch(() => {});
                 }
 
-                // Auto-trigger SOS
+                // Auto-trigger SOS with impact telemetry
+                const impactPayload = this.lastImpact || undefined;
                 if (this.lastKnownLocation) {
-                    this.onCrashDetected?.(this.lastKnownLocation);
+                    this.onCrashDetected?.(this.lastKnownLocation, impactPayload);
                 } else if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(
                         (pos) => {
                             this.onCrashDetected?.({
                                 lat: pos.coords.latitude,
                                 lng: pos.coords.longitude
-                            });
+                            }, impactPayload);
                         },
                         () => {
-                            this.onCrashDetected?.({ lat: 0, lng: 0 });
+                            this.onCrashDetected?.({ lat: 0, lng: 0 }, impactPayload);
                         }
                     );
                 } else {
-                    this.onCrashDetected?.({ lat: 0, lng: 0 });
+                    this.onCrashDetected?.({ lat: 0, lng: 0 }, impactPayload);
                 }
             }
         }, 1000);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { CrashImpactMetadata } from '../types';
 
 export interface AppNotification {
     id: string;
@@ -10,6 +11,7 @@ export interface AppNotification {
     isRead: boolean;
     memberId?: string;
     isResolved?: boolean;
+    impact?: CrashImpactMetadata;
 }
 
 const NOTIFICATIONS_KEY = 'myway_notifications';
@@ -21,7 +23,8 @@ export const addNotification = (
     title: string,
     message: string,
     icon: string,
-    memberId?: string
+    memberId?: string,
+    impact?: CrashImpactMetadata
 ): AppNotification => {
     const notification: AppNotification = {
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -31,7 +34,8 @@ export const addNotification = (
         timestamp: Date.now(),
         icon,
         isRead: false,
-        memberId
+        memberId,
+        impact
     };
 
     const existing = getNotifications();

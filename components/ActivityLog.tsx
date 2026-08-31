@@ -142,6 +142,33 @@ const ActivityLog: React.FC<ActivityLogProps> = ({ activities, members, onResolv
                                         {act.message}
                                     </p>
 
+                                    {/* Severity & Impact Telemetry Badge */}
+                                    {act.impact && (
+                                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                                act.impact.severity === 'critical'
+                                                    ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                                                    : act.impact.severity === 'severe'
+                                                    ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                                                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                            }`}>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                                                {act.impact.severity ? `${act.impact.severity} Impact` : 'Crash Impact'}
+                                            </span>
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-white/5 border border-white/10 text-slate-300">
+                                                ⚡ {act.impact.gForce}G Force
+                                            </span>
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-white/5 border border-white/10 text-slate-300">
+                                                🏎️ {act.impact.speed} MPH
+                                            </span>
+                                            {act.impact.deceleration && (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-white/5 border border-white/10 text-slate-400">
+                                                    🛑 {act.impact.deceleration} m/s²
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+
                                     {/* Action button for active SOS */}
                                     {isSos && (
                                         <button
