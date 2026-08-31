@@ -575,165 +575,160 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
       {/* DESKTOP / TABLET: Left Docked Navigation Cockpit + Right Action Buttons */}
       {!isMobile ? (
         <>
-          {/* Left Docked Navigation Sidebar */}
-          <div className="absolute left-6 bottom-6 z-20 pointer-events-auto flex items-end gap-3.5 max-w-xl w-[520px] animate-in slide-in-from-left duration-500">
-            {/* Speedometer Dial & MUTCD Speed Limit Sign */}
-            <div className="flex flex-col items-center gap-2 shrink-0">
-              {/* Safety / Speed Camera Warning Badge */}
-              {hasCameraNearby && (
-                <div className="px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-[10px] font-black text-amber-300 flex items-center gap-1 shadow-lg animate-pulse">
-                  <span>📷</span>
-                  <span>CAMERA ZONE</span>
-                </div>
-              )}
-
-              <div className="flex items-center gap-2.5">
-                {/* Speedometer Dial */}
-                <div className="relative">
-                  <div className="bg-black/75 backdrop-blur-2xl border-4 border-indigo-500/40 rounded-3xl w-28 h-28 flex flex-col items-center justify-center shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
-                    <span className={`font-black text-5xl leading-none transition-colors duration-300 ${
-                      isSevereSpeeding ? 'text-red-400' : isSpeeding ? 'text-amber-300' : 'text-white'
-                    }`}>{speed}</span>
-                    <span className="font-bold text-indigo-300 uppercase text-[11px] tracking-wider mt-0.5">MPH</span>
-                    <svg className="absolute inset-0 w-full h-full -rotate-90">
-                      <circle
-                        cx="56" cy="56" r="50"
-                        fill="none" stroke="currentColor" strokeWidth="3"
-                        strokeDasharray="314"
-                        strokeDashoffset={314 - (314 * (Math.min(speed, 80) / 80))}
-                        className={`${
-                          isSevereSpeeding ? 'text-red-500' : isSpeeding ? 'text-amber-400' : 'text-indigo-500'
-                        } transition-all duration-500`}
-                      />
-                    </svg>
+          {/* Left Docked Navigation Sidebar (Flush Far-Left Margin) */}
+          <div className="absolute left-6 bottom-6 z-20 pointer-events-auto flex flex-col gap-3 w-[340px] max-w-[360px] animate-in slide-in-from-left duration-500">
+            {/* ETA & Distance Summary Card */}
+            <div className="bg-black/80 backdrop-blur-2xl border border-white/15 rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
+              <div className="flex items-center justify-between">
+                <div className="flex gap-5">
+                  <div>
+                    <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Estimated Arrival</p>
+                    <p className="font-black text-white text-2xl tracking-tight">{route.totalTime}</p>
+                  </div>
+                  <div className="w-px bg-white/15" />
+                  <div>
+                    <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Distance</p>
+                    <p className="font-black text-white text-2xl tracking-tight">{route.totalDistance}</p>
                   </div>
                 </div>
 
-                {/* MUTCD Speed Limit Sign */}
-                <div className={`rounded-2xl border-2 flex flex-col items-center justify-center w-16 h-24 p-1.5 transition-all duration-300 ${
-                  isSevereSpeeding
-                    ? 'bg-red-50 border-red-600 ring-4 ring-red-500/80 shadow-[0_0_25px_rgba(239,68,68,0.75)] animate-pulse'
-                    : isSpeeding
-                    ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400 shadow-[0_0_18px_rgba(245,158,11,0.65)]'
-                    : 'bg-white border-black shadow-xl'
-                }`}>
-                  <span className={`font-black uppercase tracking-tighter text-[9px] leading-tight ${
-                    isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
-                  }`}>SPEED</span>
-                  <span className={`font-black uppercase tracking-tighter text-[9px] leading-tight ${
-                    isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
-                  }`}>LIMIT</span>
-                  <span className={`font-black text-3xl tracking-tight leading-none mt-1 ${
-                    isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600 font-black' : 'text-black'
-                  }`}>
-                    {currentSpeedLimit}
-                  </span>
+                <div className="flex flex-col items-end gap-1">
+                  <div className="px-2 py-0.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1">
+                    <span className="text-[11px]">🛡️</span>
+                    <span className="text-[10px] font-black text-emerald-400">{safetyScore}% Safety</span>
+                  </div>
+                  {sessionPoints !== undefined && (
+                    <span className="text-[10px] font-black text-amber-400/80 px-1">
+                      {sessionPoints > 0 ? `+${sessionPoints} Pts` : '0 Pts'}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Left Stacked Panels: ETA Summary (Yellow) + Itinerary Deck (Blue) */}
-            <div className="flex-1 flex flex-col gap-3">
-              {/* ETA & Distance Summary Card (Yellow section) */}
-              <div className="bg-black/75 backdrop-blur-2xl border border-white/15 rounded-3xl p-5 shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
-                <div className="flex items-center justify-between">
-                  <div className="flex gap-6">
-                    <div>
-                      <p className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">Estimated Arrival</p>
-                      <p className="font-black text-white text-3xl">{route.totalTime}</p>
-                    </div>
-                    <div className="w-px bg-white/15" />
-                    <div>
-                      <p className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">Distance</p>
-                      <p className="font-black text-white text-3xl">{route.totalDistance}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-end gap-1.5">
-                    <div className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5">
-                      <span className="text-xs">🛡️</span>
-                      <span className="text-[11px] font-black text-emerald-400">{safetyScore}% Safety</span>
-                    </div>
-                    {sessionPoints !== undefined && (
-                      <span className="text-[11px] font-black text-amber-400/80 px-1">
-                        {sessionPoints > 0 ? `+${sessionPoints} Pts` : '0 Pts'}
-                      </span>
-                    )}
-                  </div>
-                </div>
+            {/* Step-by-Step Itinerary Deck */}
+            <div className="bg-black/80 backdrop-blur-2xl border border-white/15 rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
+                  Upcoming Itinerary ({steps.length - stepIndex} Remaining)
+                </p>
+                <span className="text-[9px] text-slate-400 font-bold truncate max-w-[120px]" title={route.destinationName}>
+                  {route.destinationName}
+                </span>
               </div>
 
-              {/* Step-by-Step Itinerary Deck (Blue section) */}
-              <div className="bg-black/75 backdrop-blur-2xl border border-white/15 rounded-3xl p-5 shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">
-                    Upcoming Itinerary ({steps.length - stepIndex} Remaining)
-                  </p>
-                  <span className="text-[10px] text-slate-400 font-bold truncate max-w-[140px]" title={route.destinationName}>
-                    {route.destinationName}
-                  </span>
-                </div>
+              {showDetails && (
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar animate-in fade-in duration-300">
+                  {steps.slice(stepIndex).map((step, sliceIdx) => {
+                    const actualIdx = stepIndex + sliceIdx;
+                    const isCurrent = sliceIdx === 0;
 
-                {showDetails && (
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar animate-in fade-in duration-300">
-                    {steps.slice(stepIndex).map((step, sliceIdx) => {
-                      const actualIdx = stepIndex + sliceIdx;
-                      const isCurrent = sliceIdx === 0;
-
-                      return (
-                        <div key={actualIdx} className={`flex gap-3 items-center p-2.5 rounded-2xl transition-all ${
-                          isCurrent 
-                            ? 'bg-indigo-500/25 border border-indigo-500/50 shadow-lg' 
-                            : 'bg-white/5 border border-white/5 opacity-75 hover:opacity-100'
+                    return (
+                      <div key={actualIdx} className={`flex gap-2.5 items-center p-2 rounded-2xl transition-all ${
+                        isCurrent 
+                          ? 'bg-indigo-500/25 border border-indigo-500/50 shadow-lg' 
+                          : 'bg-white/5 border border-white/5 opacity-75 hover:opacity-100'
+                      }`}>
+                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
+                          isCurrent ? 'bg-indigo-600 text-white shadow-md' : 'bg-white/10 text-slate-400'
                         }`}>
-                          <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${
-                            isCurrent ? 'bg-indigo-600 text-white shadow-md' : 'bg-white/10 text-slate-400'
-                          }`}>
-                            <span className="text-[11px] font-black">{actualIdx + 1}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-xs font-bold leading-snug ${isCurrent ? 'text-white' : 'text-slate-300'}`}>
-                              {step.instruction}
-                            </p>
-                            {step.lanes && step.lanes.length > 0 && (
-                              <div className="flex items-center gap-1 mt-1">
-                                {step.lanes.map((l, lk) => (
-                                  <span
-                                    key={lk}
-                                    className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[8px] font-black ${
-                                      l.isValid ? 'bg-sky-500/30 text-sky-300 border border-sky-400/40' : 'bg-white/5 text-slate-500'
-                                    }`}
-                                  >
-                                    {l.direction === 'right' || l.direction === 'slight_right' ? '↗' : l.direction === 'left' || l.direction === 'slight_left' ? '↖' : l.direction === 'uturn' ? '↶' : '↑'}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {step.speedLimit && (
-                              <span className="px-1.5 py-0.5 rounded bg-white/10 text-[9px] font-black text-slate-300">
-                                {step.speedLimit} MPH
-                              </span>
-                            )}
-                            <span className={`text-[11px] font-bold ${isCurrent ? 'text-indigo-300' : 'text-slate-500'}`}>
-                              {step.distance}
-                            </span>
-                          </div>
+                          <span className="text-[10px] font-black">{actualIdx + 1}</span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[11px] font-bold leading-snug ${isCurrent ? 'text-white' : 'text-slate-300'}`}>
+                            {step.instruction}
+                          </p>
+                          {step.lanes && step.lanes.length > 0 && (
+                            <div className="flex items-center gap-1 mt-1">
+                              {step.lanes.map((l, lk) => (
+                                <span
+                                  key={lk}
+                                  className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[8px] font-black ${
+                                    l.isValid ? 'bg-sky-500/30 text-sky-300 border border-sky-400/40' : 'bg-white/5 text-slate-500'
+                                  }`}
+                                >
+                                  {l.direction === 'right' || l.direction === 'slight_right' ? '↗' : l.direction === 'left' || l.direction === 'slight_left' ? '↖' : l.direction === 'uturn' ? '↶' : '↑'}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {step.speedLimit && (
+                            <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-black text-slate-300">
+                              {step.speedLimit} MPH
+                            </span>
+                          )}
+                          <span className={`text-[10px] font-bold ${isCurrent ? 'text-indigo-300' : 'text-slate-500'}`}>
+                            {step.distance}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
-                <button
-                  onClick={() => setShowDetails(!showDetails)}
-                  className="mt-3 w-full flex items-center justify-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white py-1.5 bg-white/5 hover:bg-white/10 rounded-xl border border-white/5 transition-all active:scale-95"
-                >
-                  <span className="text-[10px] opacity-70">{showDetails ? '▼' : '▲'}</span>
-                  <span>{showDetails ? 'Minimize Itinerary' : 'Expand Itinerary'}</span>
-                </button>
+              <button
+                onClick={() => setShowDetails(!showDetails)}
+                className="mt-2.5 w-full flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-400 hover:text-white py-1 bg-white/5 hover:bg-white/10 rounded-xl border border-white/5 transition-all active:scale-95 cursor-pointer"
+              >
+                <span className="text-[9px] opacity-70">{showDetails ? '▼' : '▲'}</span>
+                <span>{showDetails ? 'Minimize Itinerary' : 'Expand Itinerary'}</span>
+              </button>
+            </div>
+
+            {/* Bottom Row: Speedometer Dial + Speed Limit Sign + Camera Warning */}
+            <div className="flex items-center gap-3">
+              {/* Speedometer Dial */}
+              <div className="relative shrink-0">
+                <div className="bg-black/80 backdrop-blur-2xl border-4 border-indigo-500/40 rounded-3xl w-24 h-24 flex flex-col items-center justify-center shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
+                  <span className={`font-black text-4xl leading-none transition-colors duration-300 ${
+                    isSevereSpeeding ? 'text-red-400' : isSpeeding ? 'text-amber-300' : 'text-white'
+                  }`}>{speed}</span>
+                  <span className="font-bold text-indigo-300 uppercase text-[10px] tracking-wider mt-0.5">MPH</span>
+                  <svg className="absolute inset-0 w-full h-full -rotate-90">
+                    <circle
+                      cx="48" cy="48" r="42"
+                      fill="none" stroke="currentColor" strokeWidth="3"
+                      strokeDasharray="264"
+                      strokeDashoffset={264 - (264 * (Math.min(speed, 80) / 80))}
+                      className={`${
+                        isSevereSpeeding ? 'text-red-500' : isSpeeding ? 'text-amber-400' : 'text-indigo-500'
+                      } transition-all duration-500`}
+                    />
+                  </svg>
+                </div>
               </div>
+
+              {/* MUTCD Speed Limit Sign */}
+              <div className={`shrink-0 rounded-2xl border-2 flex flex-col items-center justify-center w-14 h-24 p-1 transition-all duration-300 ${
+                isSevereSpeeding
+                  ? 'bg-red-50 border-red-600 ring-4 ring-red-500/80 shadow-[0_0_25px_rgba(239,68,68,0.75)] animate-pulse'
+                  : isSpeeding
+                  ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400 shadow-[0_0_18px_rgba(245,158,11,0.65)]'
+                  : 'bg-white border-black shadow-xl'
+              }`}>
+                <span className={`font-black uppercase tracking-tighter text-[8px] leading-tight ${
+                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+                }`}>SPEED</span>
+                <span className={`font-black uppercase tracking-tighter text-[8px] leading-tight ${
+                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+                }`}>LIMIT</span>
+                <span className={`font-black text-2xl tracking-tight leading-none mt-1 ${
+                  isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600 font-black' : 'text-black'
+                }`}>
+                  {currentSpeedLimit}
+                </span>
+              </div>
+
+              {/* Safety / Speed Camera Warning Badge */}
+              {hasCameraNearby && (
+                <div className="flex-1 px-3 py-2 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-[10px] font-black text-amber-300 flex items-center justify-center gap-1.5 shadow-lg animate-pulse">
+                  <span>📷</span>
+                  <span className="leading-tight text-center">CAMERA ZONE</span>
+                </div>
+              )}
             </div>
           </div>
 
