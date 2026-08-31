@@ -244,6 +244,165 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         return coords;
     }, [activeRoute]);
 
+    // ==========================================
+    // 3D BUILDINGS & ARCHITECTURAL SHADING ENGINE
+    // ==========================================
+    const apply3DBuildingLayer = useCallback(() => {
+        if (!map.current) return;
+
+        // Apply skin-specific color overrides
+        if (mapStyle === 'standard' && !isLowDataMode) {
+            applySkinOverrides(map.current, mapSkin as MapSkinId, theme);
+        }
+
+        const layers = map.current.getStyle()?.layers || [];
+        const buildingLayer = layers.find(
+            (layer: any) => layer.id.includes('building') && layer.type === 'fill'
+        );
+
+        // Low Data Mode: Suppress heavy 3D building extrusions, tessellation, and complex lighting to conserve bandwidth & CPU
+        if (isLowDataMode) {
+            if (map.current.getLayer('buildings-3d')) {
+                map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
+            }
+            if (buildingLayer) {
+                map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'visible');
+            }
+            try {
+                map.current.setLight({ intensity: 0 });
+            } catch {}
+            return;
+        }
+
+        if (buildingLayer) {
+            const source = (buildingLayer as any).source;
+            const sourceLayer = (buildingLayer as any)['source-layer'];
+            const labelLayerId = layers.find(
+                (layer: any) => layer.type === 'symbol' && layer.layout?.['text-field']
+            )?.id;
+
+            map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'none');
+
+            const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
+            const baseHeight = Math.round(14 * heightMultiplier);
+            const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
+
+            const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+
+            // 3D Architectural Lighting & Balanced Sun Shading (Anchor: map, gentle intensity to prevent washout)
+            try {
+                map.current.setLight({
+                    anchor: 'map',
+                    color: '#ffffff',
+                    intensity: isWarmLight ? 0.32 : 0.38,
+                    position: [1.4, 210, 30]
+                });
+            } catch (e) {
+                console.warn('[MapLibre] setLight:', e);
+            }
+
+            const isGTARadar = mapSkin === 'gta_radar';
+            // Solid, rich architectural limestone & sandstone contrast for warm/light skins
+            const extrusionColor = [
+                'interpolate', ['linear'], ['zoom'],
+                14, isWarmLight ? '#d2c6b4' : isGTARadar ? '#202936' : '#1e293b',
+                16, isWarmLight ? '#c4b7a2' : isGTARadar ? '#2a3647' : '#243044'
+            ];
+
+            // 100% Solid opaque buildings for authentic WebGL depth testing (no see-through artifacts)
+            const opacityExpr: any = [
+                'interpolate', ['linear'], ['zoom'],
+                13.5, 0,
+                14.5, 1.0
+            ];
+
+            const heightExpr: any = [
+                'interpolate', ['linear'], ['zoom'],
+                13.5, 0,
+                15, [
+                    'case',
+                    ['has', 'height'], ['*', ['get', 'height'], heightMultiplier],
+                    ['has', 'render_height'], ['*', ['get', 'render_height'], heightMultiplier],
+                    ['has', 'levels'], ['*', ['get', 'levels'], levelHeight],
+                    baseHeight
+                ]
+            ];
+
+            const baseExpr: any = [
+                'case',
+                ['has', 'render_min_height'], ['get', 'render_min_height'],
+                ['has', 'min_height'], ['get', 'min_height'],
+                0
+            ];
+
+            if (map.current.getLayer('buildings-3d')) {
+                map.current.setLayoutProperty('buildings-3d', 'visibility', 'visible');
+                map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
+                map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
+                map.current.setPaintProperty('buildings-3d', 'fill-extrusion-base', baseExpr);
+                map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
+            } else {
+                map.current.addLayer({
+                    'id': 'buildings-3d',
+                    'source': source,
+                    'source-layer': sourceLayer,
+                    'type': 'fill-extrusion',
+                    'minzoom': 13.5,
+                    'paint': {
+                        'fill-extrusion-color': extrusionColor as any,
+                        'fill-extrusion-height': heightExpr,
+                        'fill-extrusion-base': baseExpr,
+                        'fill-extrusion-opacity': opacityExpr
+                    }
+                }, labelLayerId);
+            }
+        }
+
+        // GTA Los Santos Radar Vector Styling (Freeway Yellow, Bright White Arterials, Sage Parks, Deep Ocean)
+        if (mapSkin === 'gta_radar') {
+            try {
+                const motLayers = ['road_mot_fill_noramp', 'road_mot_fill_ramp', 'bridge_mot_fill', 'tunnel_mot_fill'];
+                motLayers.forEach(id => {
+                    if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#fbbf24');
+                });
+                const trunkLayers = ['road_trunk_fill_noramp', 'road_pri_fill_noramp', 'bridge_trunk_fill', 'bridge_pri_fill'];
+                trunkLayers.forEach(id => {
+                    if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#f8fafc');
+                });
+                const secLayers = ['road_sec_fill_noramp', 'bridge_sec_fill'];
+                secLayers.forEach(id => {
+                    if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#cbd5e1');
+                });
+                if (map.current!.getLayer('road_minor_fill')) map.current!.setPaintProperty('road_minor_fill', 'line-color', '#475569');
+                if (map.current!.getLayer('park')) map.current!.setPaintProperty('park', 'fill-color', '#1a2e22');
+                if (map.current!.getLayer('water')) map.current!.setPaintProperty('water', 'fill-color', '#0d1721');
+            } catch (e) {}
+        }
+
+        // AUDIT #6: Improve Map Label Readability with Harmonious Halos
+        const isWarmLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+        layers.forEach((layer: any) => {
+            if (layer.type === 'symbol') {
+                try {
+                    map.current!.setPaintProperty(
+                        layer.id, 
+                        'text-halo-color', 
+                        isWarmLightSkin ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.85)'
+                    );
+                    map.current!.setPaintProperty(layer.id, 'text-halo-width', 2);
+                    map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
+
+                    // Ensure street and highway names use soft modern slate instead of harsh dark pills
+                    if (isWarmLightSkin && (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway'))) {
+                        map.current!.setPaintProperty(layer.id, 'text-color', '#475569');
+                    }
+                } catch (e) {
+                    // Some layers might not support these paint properties
+                }
+            }
+        });
+    }, [mapStyle, isLowDataMode, mapSkin, theme, buildingScale]);
+
     useEffect(() => {
         if (map.current) return;
         if (!mapContainer.current) return;
@@ -342,162 +501,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         };
         document.addEventListener('visibilitychange', handleVisibilityChange);
 
-        const apply3DBuildingLayer = () => {
-            if (!map.current) return;
-
-            // Apply skin-specific color overrides
-            if (mapStyle === 'standard' && !isLowDataMode) {
-                applySkinOverrides(map.current, mapSkin as MapSkinId, theme);
-            }
-
-            const layers = map.current.getStyle().layers || [];
-            const buildingLayer = layers.find(
-                (layer: any) => layer.id.includes('building') && layer.type === 'fill'
-            );
-
-            // Low Data Mode: Suppress heavy 3D building extrusions, tessellation, and complex lighting to conserve bandwidth & CPU
-            if (isLowDataMode) {
-                if (map.current.getLayer('buildings-3d')) {
-                    map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
-                }
-                if (buildingLayer) {
-                    map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'visible');
-                }
-                try {
-                    map.current.setLight({ intensity: 0 });
-                } catch {}
-                return;
-            }
-
-            if (buildingLayer) {
-                const source = (buildingLayer as any).source;
-                const sourceLayer = (buildingLayer as any)['source-layer'];
-                const labelLayerId = layers.find(
-                    (layer: any) => layer.type === 'symbol' && layer.layout?.['text-field']
-                )?.id;
-
-                map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'none');
-
-                const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
-                const baseHeight = Math.round(14 * heightMultiplier);
-                const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
-
-                const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
-
-                // 3D Architectural Lighting & Balanced Sun Shading (Anchor: map, gentle intensity to prevent washout)
-                try {
-                    map.current.setLight({
-                        anchor: 'map',
-                        color: '#ffffff',
-                        intensity: isWarmLight ? 0.32 : 0.38,
-                        position: [1.4, 210, 30]
-                    });
-                } catch (e) {
-                    console.warn('[MapLibre] setLight:', e);
-                }
-
-                const isGTARadar = mapSkin === 'gta_radar';
-                // Solid, rich architectural limestone & sandstone contrast for warm/light skins
-                const extrusionColor = [
-                    'interpolate', ['linear'], ['zoom'],
-                    14, isWarmLight ? '#d2c6b4' : isGTARadar ? '#202936' : '#1e293b',
-                    16, isWarmLight ? '#c4b7a2' : isGTARadar ? '#2a3647' : '#243044'
-                ];
-
-                // 100% Solid opaque buildings for authentic WebGL depth testing (no see-through artifacts)
-                const opacityExpr: any = [
-                    'interpolate', ['linear'], ['zoom'],
-                    13.5, 0,
-                    14.5, 1.0
-                ];
-
-                const heightExpr: any = [
-                    'interpolate', ['linear'], ['zoom'],
-                    13.5, 0,
-                    15, [
-                        'case',
-                        ['has', 'height'], ['*', ['get', 'height'], heightMultiplier],
-                        ['has', 'render_height'], ['*', ['get', 'render_height'], heightMultiplier],
-                        ['has', 'levels'], ['*', ['get', 'levels'], levelHeight],
-                        baseHeight
-                    ]
-                ];
-
-                const baseExpr: any = [
-                    'case',
-                    ['has', 'render_min_height'], ['get', 'render_min_height'],
-                    ['has', 'min_height'], ['get', 'min_height'],
-                    0
-                ];
-
-                if (map.current.getLayer('buildings-3d')) {
-                    map.current.setLayoutProperty('buildings-3d', 'visibility', 'visible');
-                    map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
-                    map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
-                    map.current.setPaintProperty('buildings-3d', 'fill-extrusion-base', baseExpr);
-                    map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
-                } else {
-                    map.current.addLayer({
-                        'id': 'buildings-3d',
-                        'source': source,
-                        'source-layer': sourceLayer,
-                        'type': 'fill-extrusion',
-                        'minzoom': 13.5,
-                        'paint': {
-                            'fill-extrusion-color': extrusionColor as any,
-                            'fill-extrusion-height': heightExpr,
-                            'fill-extrusion-base': baseExpr,
-                            'fill-extrusion-opacity': opacityExpr
-                        }
-                    }, labelLayerId);
-                }
-            }
-
-            // GTA Los Santos Radar Vector Styling (Freeway Yellow, Bright White Arterials, Sage Parks, Deep Ocean)
-            if (mapSkin === 'gta_radar') {
-                try {
-                    const motLayers = ['road_mot_fill_noramp', 'road_mot_fill_ramp', 'bridge_mot_fill', 'tunnel_mot_fill'];
-                    motLayers.forEach(id => {
-                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#fbbf24');
-                    });
-                    const trunkLayers = ['road_trunk_fill_noramp', 'road_pri_fill_noramp', 'bridge_trunk_fill', 'bridge_pri_fill'];
-                    trunkLayers.forEach(id => {
-                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#f8fafc');
-                    });
-                    const secLayers = ['road_sec_fill_noramp', 'bridge_sec_fill'];
-                    secLayers.forEach(id => {
-                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#cbd5e1');
-                    });
-                    if (map.current!.getLayer('road_minor_fill')) map.current!.setPaintProperty('road_minor_fill', 'line-color', '#475569');
-                    if (map.current!.getLayer('park')) map.current!.setPaintProperty('park', 'fill-color', '#1a2e22');
-                    if (map.current!.getLayer('water')) map.current!.setPaintProperty('water', 'fill-color', '#0d1721');
-                } catch (e) {}
-            }
-
-            // AUDIT #6: Improve Map Label Readability with Harmonious Halos
-            const isWarmLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
-            layers.forEach((layer: any) => {
-                if (layer.type === 'symbol') {
-                    try {
-                        map.current!.setPaintProperty(
-                            layer.id, 
-                            'text-halo-color', 
-                            isWarmLightSkin ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.85)'
-                        );
-                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2);
-                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
-
-                        // Ensure street and highway names use soft modern slate instead of harsh dark pills
-                        if (isWarmLightSkin && (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway'))) {
-                            map.current!.setPaintProperty(layer.id, 'text-color', '#475569');
-                        }
-                    } catch (e) {
-                        // Some layers might not support these paint properties
-                    }
-                }
-            });
-        };
-
         mapInstance.on('load', () => {
             apply3DBuildingLayer();
             setIsMapReady(true);
@@ -572,134 +575,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     // Live update 3D building heights, ambient landmark glow, and architectural lighting
     useEffect(() => {
-        if (!map.current) return;
-
-        const layers = map.current.getStyle()?.layers || [];
-        const buildingLayer = layers.find(
-            (layer: any) => layer.id.includes('building') && layer.type === 'fill'
-        );
-
-        // Low Data Mode: Suppress 3D extrusions & complex lighting
-        if (isLowDataMode) {
-            if (map.current.getLayer('buildings-3d')) {
-                map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
-            }
-            if (buildingLayer) {
-                map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'visible');
-            }
-            try {
-                map.current.setLight({ intensity: 0 });
-            } catch {}
-            return;
-        }
-
-        if (buildingLayer) {
-            map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'none');
-        }
-
-        if (!map.current.getLayer('buildings-3d')) {
-            apply3DBuildingLayer();
-            return;
-        }
-
-        map.current.setLayoutProperty('buildings-3d', 'visibility', 'visible');
-
-        const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
-        const baseHeight = Math.round(14 * heightMultiplier);
-        const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
-
-        const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
-
-        try {
-            map.current.setLight({
-                anchor: 'map',
-                color: '#ffffff',
-                intensity: isWarmLight ? 0.32 : 0.38,
-                position: [1.4, 210, 30]
-            });
-
-            const isGTARadar = mapSkin === 'gta_radar';
-            // Solid, rich architectural limestone & sandstone contrast for warm/light skins
-            const extrusionColor = [
-                'interpolate', ['linear'], ['zoom'],
-                14, isWarmLight ? '#d2c6b4' : isGTARadar ? '#202936' : '#1e293b',
-                16, isWarmLight ? '#c4b7a2' : isGTARadar ? '#2a3647' : '#243044'
-            ];
-
-            const opacityExpr: any = [
-                'interpolate', ['linear'], ['zoom'],
-                13.5, 0,
-                14.5, 1.0
-            ];
-
-            const heightExpr: any = [
-                'interpolate', ['linear'], ['zoom'],
-                13.5, 0,
-                15, [
-                    'case',
-                    ['has', 'height'], ['*', ['get', 'height'], heightMultiplier],
-                    ['has', 'render_height'], ['*', ['get', 'render_height'], heightMultiplier],
-                    ['has', 'levels'], ['*', ['get', 'levels'], levelHeight],
-                    baseHeight
-                ]
-            ];
-
-            const baseExpr: any = [
-                'case',
-                ['has', 'render_min_height'], ['get', 'render_min_height'],
-                ['has', 'min_height'], ['get', 'min_height'],
-                0
-            ];
-
-            map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
-            map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
-            map.current.setPaintProperty('buildings-3d', 'fill-extrusion-base', baseExpr);
-            map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
-
-            // GTA Los Santos Radar Vector Styling
-            if (isGTARadar) {
-                try {
-                    const motLayers = ['road_mot_fill_noramp', 'road_mot_fill_ramp', 'bridge_mot_fill', 'tunnel_mot_fill'];
-                    motLayers.forEach(id => {
-                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#fbbf24');
-                    });
-                    const trunkLayers = ['road_trunk_fill_noramp', 'road_pri_fill_noramp', 'bridge_trunk_fill', 'bridge_pri_fill'];
-                    trunkLayers.forEach(id => {
-                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#f8fafc');
-                    });
-                    const secLayers = ['road_sec_fill_noramp', 'bridge_sec_fill'];
-                    secLayers.forEach(id => {
-                        if (map.current!.getLayer(id)) map.current!.setPaintProperty(id, 'line-color', '#cbd5e1');
-                    });
-                    if (map.current!.getLayer('road_minor_fill')) map.current!.setPaintProperty('road_minor_fill', 'line-color', '#475569');
-                    if (map.current!.getLayer('park')) map.current!.setPaintProperty('park', 'fill-color', '#1a2e22');
-                    if (map.current!.getLayer('water')) map.current!.setPaintProperty('water', 'fill-color', '#0d1721');
-                } catch {}
-            }
-
-            // Dynamically update symbol layer halos and colors
-            const layers = map.current.getStyle()?.layers || [];
-            layers.forEach((layer: any) => {
-                if (layer.type === 'symbol') {
-                    try {
-                        map.current!.setPaintProperty(
-                            layer.id, 
-                            'text-halo-color', 
-                            isWarmLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.85)'
-                        );
-                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2);
-                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
-
-                        if (isWarmLight && (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway'))) {
-                            map.current!.setPaintProperty(layer.id, 'text-color', '#475569');
-                        }
-                    } catch {}
-                }
-            });
-        } catch (e) {
-            console.warn('[MapLibre] Dynamic building style update:', e);
-        }
-    }, [buildingScale, landmarkGlow, theme, mapSkin, mapStyle, styleVersion, isLowDataMode]);
+        if (!map.current || !isMapReady) return;
+        apply3DBuildingLayer();
+    }, [apply3DBuildingLayer, isMapReady, styleVersion]);
 
     // UNIFIED MAP: Toggle 2D/3D mode by adjusting pitch and bearing
     // When not navigating, use the static 3D toggle; navigation camera is handled below.
