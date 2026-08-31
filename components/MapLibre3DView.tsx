@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { FamilyMember, Place, CircleTask, Location } from '../types';
+import { FamilyMember, Place, CircleTask, Location, TrafficSegment } from '../types';
 import { MapSkinId, getMapSkin, applySkinOverrides, SATELLITE_STYLE, TERRAIN_STYLE } from '../services/mapSkinService';
 import { getDistanceMeters, getDistanceMiles, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { getBrandMeta } from '../services/brandLogoService';
 import { getGTAPlaceBlipHtml, getGTADestinationPinHtml } from '../services/gtaIconsService';
 import { convoyService } from '../services/convoyService';
+import { computeRouteTrafficSegments } from '../services/trafficService';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
 const circleCoordsCache = new Map<string, [number, number][]>();
@@ -676,35 +677,141 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         }
 
-        const routeColor = mapSkin === 'gta_radar' ? '#facc15' : '#6366f1';
-        const routeGlowColor = mapSkin === 'gta_radar' ? '#f59e0b' : '#818cf8';
+        // --- Live Traffic Congestion Polyline Construction ---
+        const trafficSegments: TrafficSegment[] = activeRoute?.trafficSegments || (
+            routeCoords.length > 1
+                ? computeRouteTrafficSegments(
+                    routeCoords.map(c => [c.lng, c.lat]),
+                    activeRoute?.steps || [],
+                    undefined,
+                    incidents
+                )
+                : []
+        );
+
+        // Convert segments into GeoJSON Features accounting for effectiveSplitIndex
+        const remainingFeatures: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+        let accumulatedPoints = 0;
+
+        for (const seg of trafficSegments) {
+            const segCoords = seg.coordinates;
+            const segLen = segCoords.length;
+            const segStartIdx = accumulatedPoints;
+            const segEndIdx = accumulatedPoints + segLen - 1;
+            accumulatedPoints += segLen;
+
+            // If the segment is completely traversed by the user
+            if (segEndIdx <= effectiveSplitIndex) {
+                continue;
+            }
+
+            // If the user is currently inside this segment
+            if (segStartIdx < effectiveSplitIndex && effectiveSplitIndex < segEndIdx) {
+                const subIndex = effectiveSplitIndex - segStartIdx;
+                const activeSlice = segCoords.slice(subIndex);
+                if (activeSlice.length >= 2) {
+                    remainingFeatures.push({
+                        type: 'Feature',
+                        properties: {
+                            congestion: seg.congestion,
+                            isCompleted: false
+                        },
+                        geometry: {
+                            type: 'LineString',
+                            coordinates: activeSlice
+                        }
+                    });
+                }
+            } else if (segStartIdx >= effectiveSplitIndex) {
+                // Segment is ahead of user
+                remainingFeatures.push({
+                    type: 'Feature',
+                    properties: {
+                        congestion: seg.congestion,
+                        isCompleted: false
+                    },
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: segCoords
+                    }
+                });
+            }
+        }
+
+        // If no split segments, fallback to whole remaining line
+        if (remainingFeatures.length === 0 && remainingCoords.length >= 2) {
+            remainingFeatures.push({
+                type: 'Feature',
+                properties: { congestion: 'low', isCompleted: false },
+                geometry: { type: 'LineString', coordinates: remainingCoords }
+            });
+        }
+
+        const remainingGeoJSON: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+            type: 'FeatureCollection',
+            features: remainingFeatures
+        };
 
         const updateGeoJsonSources = () => {
             if (!map.current || !map.current.isStyleLoaded()) return;
-            // --- RENDER REMAINING (Main Line) ---
+
+            const routeColorExpression: any = [
+                'match',
+                ['get', 'congestion'],
+                'severe', '#dc2626',
+                'heavy', '#ea580c',
+                'moderate', '#eab308',
+                'low', mapSkin === 'gta_radar' ? '#facc15' : '#4f46e5',
+                mapSkin === 'gta_radar' ? '#facc15' : '#6366f1'
+            ];
+
+            const routeGlowExpression: any = [
+                'match',
+                ['get', 'congestion'],
+                'severe', '#ef4444',
+                'heavy', '#fb923c',
+                'moderate', '#fde047',
+                'low', mapSkin === 'gta_radar' ? '#f59e0b' : '#818cf8',
+                '#818cf8'
+            ];
+
+            // --- RENDER REMAINING (Live Traffic Polyline) ---
             if (map.current.getSource(routeId)) {
-                (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(staticRemainingRouteGeoJSON as any);
+                (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(remainingGeoJSON as any);
                 if (map.current.getLayer(`${routeId}-glow`)) {
-                    map.current.setPaintProperty(`${routeId}-glow`, 'line-color', routeGlowColor);
+                    map.current.setPaintProperty(`${routeId}-glow`, 'line-color', routeGlowExpression);
                 }
                 if (map.current.getLayer(routeId)) {
-                    map.current.setPaintProperty(routeId, 'line-color', routeColor);
+                    map.current.setPaintProperty(routeId, 'line-color', routeColorExpression);
                 }
             } else {
-                map.current.addSource(routeId, { 'type': 'geojson', 'data': staticRemainingRouteGeoJSON as any });
+                map.current.addSource(routeId, { 'type': 'geojson', 'data': remainingGeoJSON as any });
+
+                // Contrast Casing Layer (dark background outline)
+                map.current.addLayer({
+                    'id': `${routeId}-casing`,
+                    'type': 'line',
+                    'source': routeId,
+                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                    'paint': { 'line-color': '#0f172a', 'line-width': 11, 'line-opacity': 0.75 }
+                });
                 
                 // Glow layer
                 map.current.addLayer({
-                    'id': `${routeId}-glow`, 'type': 'line', 'source': routeId,
+                    'id': `${routeId}-glow`,
+                    'type': 'line',
+                    'source': routeId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': routeGlowColor, 'line-width': 12, 'line-opacity': 0.35 }
+                    'paint': { 'line-color': routeGlowExpression, 'line-width': 15, 'line-opacity': 0.35 }
                 });
 
-                // Main line layer
+                // Main traffic line layer
                 map.current.addLayer({
-                    'id': routeId, 'type': 'line', 'source': routeId,
+                    'id': routeId,
+                    'type': 'line',
+                    'source': routeId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': routeColor, 'line-width': 8, 'line-opacity': 0.95 }
+                    'paint': { 'line-color': routeColorExpression, 'line-width': 8, 'line-opacity': 0.95 }
                 });
             }
 
@@ -714,10 +821,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             } else {
                 map.current.addSource(completedId, { 'type': 'geojson', 'data': staticCompletedRouteGeoJSON as any });
                 map.current.addLayer({
-                    'id': completedId, 'type': 'line', 'source': completedId,
+                    'id': completedId,
+                    'type': 'line',
+                    'source': completedId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
                     'paint': { 'line-color': theme === 'dark' ? '#475569' : '#94a3b8', 'line-width': 6, 'line-opacity': 0.4 }
-                }, routeId); // Add below the active route
+                }, `${routeId}-casing`); // Add below the active route casing
             }
         };
 

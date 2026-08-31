@@ -13,6 +13,16 @@ export interface LaneGuidance {
   isActive?: boolean; // currently recommended lane
 }
 
+export type CongestionLevel = 'low' | 'moderate' | 'heavy' | 'severe';
+
+export interface TrafficSegment {
+  coordinates: [number, number][]; // [[lng, lat], ...]
+  congestion: CongestionLevel; // 'low' (green/blue), 'moderate' (amber), 'heavy' (orange/red), 'severe' (dark crimson)
+  speedMph?: number;
+  lengthMeters?: number;
+  annotationIndex?: number;
+}
+
 export interface RouteStep {
   instruction: string;
   distance: string;
@@ -23,6 +33,7 @@ export interface RouteStep {
   isToll?: boolean; // Step is on a toll road, bridge, or turnpike
   tollName?: string; // e.g. "NJ Turnpike", "Verrazzano-Narrows Bridge"
   estimatedToll?: number; // e.g. 19.50
+  congestion?: CongestionLevel;
 }
 
 export interface IncidentReport {
@@ -56,6 +67,8 @@ export interface NavigationRoute {
   savingsLabel?: string; // e.g. "Save $50.60 in tolls", "Save 12.1 mi"
   safetyAdvisory?: string;
   routeGeometry?: [number, number][]; // Full road-following polyline [[lng,lat], ...] from OSRM
+  trafficSegments?: TrafficSegment[]; // Visual live traffic congestion polyline segments
+  congestionLevel?: CongestionLevel; // Predominant route congestion
 }
 
 export interface CircleTask {

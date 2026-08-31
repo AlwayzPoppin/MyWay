@@ -3,6 +3,7 @@ import { functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 import { getDistanceMeters } from '../utils/geo';
 import { vehicleFuelService } from './vehicleFuelService';
+import { computeRouteTrafficSegments } from './trafficService';
 
 // ROUTING PROVIDERS: Multi-provider failover chain for production reliability
 // Configure VITE_OSRM_URL for your primary provider (self-hosted, Mapbox, etc.)
@@ -327,8 +328,8 @@ async function fetchRouteFromProvider(
 ): Promise<OSRMResponse> {
     if (isOffline()) throw new Error('Device is offline');
     const altParam = alternatives ? '&alternatives=3' : '';
-    // Enable 500m snapping radius so OSRM connects directly to parking aisles and driveways
-    const url = `${baseUrl}/${start.lng},${start.lat};${endLocation.lng},${endLocation.lat}?overview=full&geometries=geojson&steps=true${altParam}&radiuses=500;500&continue_straight=false`;
+    // Enable annotations for live traffic congestion polyline rendering and 500m snapping radius
+    const url = `${baseUrl}/${start.lng},${start.lat};${endLocation.lng},${endLocation.lat}?overview=full&geometries=geojson&steps=true&annotations=true,congestion,speed,duration${altParam}&radiuses=500;500&continue_straight=false`;
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`OSRM ${response.status}`);
     return response.json();
@@ -400,6 +401,9 @@ function parseOSRMRoute(
     const rawSummary = route.legs.map(l => l.summary).filter(Boolean).join(' / ');
     const summary = rawSummary ? `via ${rawSummary}` : 'Main Route';
 
+    const routeGeometry = route.geometry?.coordinates || undefined;
+    const trafficSegments = routeGeometry ? computeRouteTrafficSegments(routeGeometry, steps, route.legs[0]?.annotation) : undefined;
+
     return {
         id: `route_${idx}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         destinationName: endName,
@@ -418,7 +422,8 @@ function parseOSRMRoute(
         tollCostEstimate: tollAnalysis.tollCostEstimate,
         tollSummary: tollAnalysis.tollSummary,
         totalEstimatedTripCost,
-        routeGeometry: route.geometry?.coordinates || undefined
+        routeGeometry,
+        trafficSegments
     };
 }
 
