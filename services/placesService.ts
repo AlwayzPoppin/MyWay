@@ -627,3 +627,74 @@ export const searchRestaurants = (location: { lat: number; lng: number }) =>
 
 export const searchGroceryStores = (location: { lat: number; lng: number }) =>
     searchViaProxy(location, 'grocery store', 'grocery_or_supermarket');
+
+/**
+ * Search maintenance and auto repair facilities along a route corridor
+ * for Predictive Ambient Maintenance.
+ */
+export const searchMaintenanceAlongRoute = async (
+    routeGeometry: Array<{ lat: number; lng: number } | [number, number]> | undefined,
+    category: string = 'oil_change',
+    userLocation?: { lat: number; lng: number } | null
+): Promise<Place[]> => {
+    if (!routeGeometry || routeGeometry.length === 0) {
+        const center = userLocation || DEFAULT_COORDS;
+        const query = category === 'oil_change' ? 'oil change' : category === 'tires' ? 'tire shop' : category === 'brakes' ? 'brake repair' : 'auto repair';
+        return searchViaProxy(center, query);
+    }
+
+    // Convert routeGeometry to normalized {lat, lng} array
+    const normalizedCoords: Array<{ lat: number; lng: number }> = routeGeometry.map(pt => {
+        if (Array.isArray(pt)) return { lng: pt[0], lat: pt[1] };
+        return { lat: (pt as any).lat, lng: (pt as any).lng };
+    });
+
+    // Sample 3 corridor anchor points along route (e.g. 25%, 50%, 75%)
+    const samplePoints: Array<{ lat: number; lng: number }> = [];
+    const step = Math.max(1, Math.floor(normalizedCoords.length / 4));
+    for (let i = 0; i < normalizedCoords.length; i += step) {
+        samplePoints.push(normalizedCoords[i]);
+    }
+    if (samplePoints.length === 0 && userLocation) samplePoints.push(userLocation);
+
+    const query = category === 'oil_change' 
+        ? 'oil change auto repair' 
+        : category === 'tires' 
+        ? 'tire shop' 
+        : category === 'brakes' 
+        ? 'brake repair auto service' 
+        : 'auto repair mechanic';
+
+    const icon = category === 'oil_change' ? '🛢️' : category === 'tires' ? '🛞' : category === 'brakes' ? '🛑' : '🔧';
+    const color = '#f59e0b'; // Amber maintenance warning tint
+
+    try {
+        const searchPromises = samplePoints.slice(0, 3).map(pt => searchViaProxy(pt, query).catch(() => []));
+        const allResultsArrays = await Promise.all(searchPromises);
+        const allResults = allResultsArrays.flat();
+
+        // Deduplicate places by name and proximity
+        const seen = new Set<string>();
+        const uniquePlaces: Place[] = [];
+
+        for (const p of allResults) {
+            const key = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!seen.has(key)) {
+                seen.add(key);
+                uniquePlaces.push({
+                    ...p,
+                    type: 'maintenance' as any,
+                    icon,
+                    color,
+                    description: p.description ? `🔧 ${p.description}` : `🔧 Recommended for ${category.replace('_', ' ')}`
+                });
+            }
+            if (uniquePlaces.length >= 8) break;
+        }
+
+        return uniquePlaces;
+    } catch (e) {
+        console.warn('[PlacesService] Failed to search maintenance along route:', e);
+        return [];
+    }
+};

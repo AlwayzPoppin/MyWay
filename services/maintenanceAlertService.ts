@@ -100,9 +100,10 @@ class MaintenanceAlertService {
     /**
      * Get or create maintenance profile for a vehicle
      */
-    public getProfile(vehicle: Vehicle): VehicleMaintenanceProfile {
-        if (!this.profiles[vehicle.id]) {
-            const isEv = vehicle.fuelType === 'electric';
+    public getProfile(vehicle?: Vehicle | null): VehicleMaintenanceProfile {
+        const vId = vehicle?.id || 'primary_vehicle';
+        if (!this.profiles[vId]) {
+            const isEv = vehicle?.fuelType === 'electric';
             const template = isEv ? DEFAULT_EV_ITEMS : DEFAULT_GAS_ITEMS;
 
             const initialItems: MaintenanceItem[] = template.map(t => ({
@@ -111,8 +112,8 @@ class MaintenanceAlertService {
                 lastServiceMileage: 0
             }));
 
-            this.profiles[vehicle.id] = {
-                vehicleId: vehicle.id,
+            this.profiles[vId] = {
+                vehicleId: vId,
                 baseOdometer: 0,
                 accumulatedTripMiles: 0,
                 items: initialItems,
@@ -120,13 +121,13 @@ class MaintenanceAlertService {
             };
             this.save();
         }
-        return this.profiles[vehicle.id];
+        return this.profiles[vId];
     }
 
     /**
      * Compute current vehicle total odometer reading
      */
-    public getCurrentOdometer(vehicle: Vehicle): number {
+    public getCurrentOdometer(vehicle?: Vehicle | null): number {
         const profile = this.getProfile(vehicle);
         return Math.round((profile.baseOdometer + profile.accumulatedTripMiles) * 10) / 10;
     }
@@ -160,7 +161,7 @@ class MaintenanceAlertService {
     /**
      * Get detailed health and predictive status for all items on a vehicle
      */
-    public getVehicleHealth(vehicle: Vehicle, trips?: Trip[]): {
+    public getVehicleHealth(vehicle?: Vehicle | null, trips?: Trip[]): {
         items: VehicleHealthItem[];
         currentOdometer: number;
         overdueCount: number;

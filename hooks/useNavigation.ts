@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { FamilyMember, Place, NavigationRoute } from '../types';
 import { getRouteFromOSRM, geocodePlace, fetchRouteOptions } from '../services/osrmService';
-import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText } from '../services/placesService';
+import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText, searchMaintenanceAlongRoute } from '../services/placesService';
 import { searchPlacesOnMap } from '../services/geminiService';
 import { updateNavigationState, NavigationState } from '../services/navigationEngine';
 import { startTrip, recordTripPoint, recordDriveEvent, endTrip } from '../services/tripHistoryService';
@@ -12,6 +12,7 @@ import { speechService, ManeuverProximity } from '../services/speechService';
 import { offlineMapService } from '../services/offlineMapService';
 import { searchHistoryService } from '../services/searchHistoryService';
 import { convoyService } from '../services/convoyService';
+import { maintenanceAlertService, VehicleHealthItem } from '../services/maintenanceAlertService';
 
 export interface BetterRouteSuggestion {
     route: NavigationRoute;
@@ -34,6 +35,14 @@ export interface LeaderDivertedPrompt {
     reason: string;
     timeRemainingSeconds: number;
     timestamp: number;
+}
+
+export interface AmbientMaintenanceAdvisory {
+    item: VehicleHealthItem;
+    places: Place[];
+    recommendedPlace: Place;
+    title: string;
+    description: string;
 }
 
 export const useNavigation = (
@@ -713,6 +722,74 @@ export const useNavigation = (
         };
     }, [user, members, showNotification, clearLeaderPromptTimer]);
 
+    // Predictive Ambient Maintenance: Autonomously highlight local mechanics along the commute corridor when maintenance is due within 100 miles
+    const [ambientMaintenanceAdvisory, setAmbientMaintenanceAdvisory] = useState<AmbientMaintenanceAdvisory | null>(null);
+    const hasSearchedMaintenanceForRouteRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (!isNavigating || !activeRoute) {
+            hasSearchedMaintenanceForRouteRef.current = null;
+            setAmbientMaintenanceAdvisory(null);
+            return;
+        }
+
+        const routeKey = `${activeRoute.destinationName}_${activeRoute.totalDistance}`;
+        if (hasSearchedMaintenanceForRouteRef.current === routeKey) return;
+        hasSearchedMaintenanceForRouteRef.current = routeKey;
+
+        const checkAmbientMaintenance = async () => {
+            try {
+                const health = maintenanceAlertService.getVehicleHealth(profile?.vehicle);
+                // Find item due soon (e.g. oil change or tires due within 100 miles, or overdue)
+                const dueItem = health.items.find(i => i.status === 'overdue' || i.status === 'due_soon' || i.milesRemaining <= 100);
+
+                if (!dueItem) return;
+
+                console.log(`🔧 [Predictive Maintenance] Vehicle ${dueItem.title} is due in ${Math.round(dueItem.milesRemaining)} miles. Querying corridor...`);
+
+                const maintenanceSpots = await searchMaintenanceAlongRoute(
+                    activeRoute.routeGeometry,
+                    dueItem.category,
+                    userLocation
+                );
+
+                if (maintenanceSpots && maintenanceSpots.length > 0) {
+                    console.log(`🔧 [Predictive Maintenance] Found ${maintenanceSpots.length} auto shops along route corridor`);
+
+                    // Drop custom 3D pins onto the MapLibre layer
+                    setDiscoveredPlaces(maintenanceSpots);
+
+                    const topSpot = maintenanceSpots[0];
+                    const advisory: AmbientMaintenanceAdvisory = {
+                        item: dueItem,
+                        places: maintenanceSpots,
+                        recommendedPlace: topSpot,
+                        title: `${dueItem.icon} ${dueItem.title} Due Soon`,
+                        description: `${Math.round(dueItem.milesRemaining)} mi remaining • ${maintenanceSpots.length} auto shops along your route`
+                    };
+
+                    setAmbientMaintenanceAdvisory(advisory);
+                    speechService.speak(`Vehicle notice: ${dueItem.title} due in ${Math.round(dueItem.milesRemaining)} miles. Local service spots highlighted on your route.`);
+                }
+            } catch (err) {
+                console.warn('[Predictive Maintenance] Ambient check failed:', err);
+            }
+        };
+
+        checkAmbientMaintenance();
+    }, [isNavigating, activeRoute, profile?.vehicle, userLocation, setDiscoveredPlaces]);
+
+    const handleSelectMaintenanceStop = useCallback(async (place: Place) => {
+        showNotification(`🔧 Adding ${place.name} as stop along route...`, 4000);
+        speechService.speak(`Adding ${place.name} to route.`, { chime: 'turn' });
+        setAmbientMaintenanceAdvisory(null);
+        await handleStartNavigation(place.name);
+    }, [handleStartNavigation, showNotification]);
+
+    const handleDismissMaintenanceAdvisory = useCallback(() => {
+        setAmbientMaintenanceAdvisory(null);
+    }, []);
+
     return {
         activeRoute,
         setActiveRoute,
@@ -723,6 +800,9 @@ export const useNavigation = (
         betterRouteSuggestion,
         upcomingTollAlert,
         leaderDivertedPrompt,
+        ambientMaintenanceAdvisory,
+        handleSelectMaintenanceStop,
+        handleDismissMaintenanceAdvisory,
         handleFollowLeader,
         handleKeepOriginalRoute,
         handleSwitchRoute,

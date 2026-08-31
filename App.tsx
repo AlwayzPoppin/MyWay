@@ -287,6 +287,9 @@ const App: React.FC = () => {
     betterRouteSuggestion,
     upcomingTollAlert,
     leaderDivertedPrompt,
+    ambientMaintenanceAdvisory,
+    handleSelectMaintenanceStop,
+    handleDismissMaintenanceAdvisory,
     handleFollowLeader,
     handleKeepOriginalRoute,
     handleSwitchRoute,
@@ -964,6 +967,9 @@ const App: React.FC = () => {
                 leaderDivertedPrompt={leaderDivertedPrompt}
                 onFollowLeader={handleFollowLeader}
                 onKeepOriginalRoute={handleKeepOriginalRoute}
+                ambientMaintenanceAdvisory={ambientMaintenanceAdvisory}
+                onSelectMaintenanceStop={handleSelectMaintenanceStop}
+                onDismissMaintenanceAdvisory={handleDismissMaintenanceAdvisory}
                 members={members}
                 userLocation={userLocation}
                 currentUserId={user?.uid || ''}

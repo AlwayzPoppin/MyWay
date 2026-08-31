@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { NavigationRoute, FamilyMember, Location } from '../types';
 import { speechService } from '../services/speechService';
-import { BetterRouteSuggestion, UpcomingTollAlert, LeaderDivertedPrompt } from '../hooks/useNavigation';
+import { BetterRouteSuggestion, UpcomingTollAlert, LeaderDivertedPrompt, AmbientMaintenanceAdvisory } from '../hooks/useNavigation';
 import { convoyService, ConvoyMember, ConvoySession } from '../services/convoyService';
 import { maintenanceAlertService } from '../services/maintenanceAlertService';
 import { vehicleFuelService } from '../services/vehicleFuelService';
@@ -25,6 +25,9 @@ interface DriveModeHUDProps {
   leaderDivertedPrompt?: LeaderDivertedPrompt | null;
   onFollowLeader?: () => void;
   onKeepOriginalRoute?: () => void;
+  ambientMaintenanceAdvisory?: AmbientMaintenanceAdvisory | null;
+  onSelectMaintenanceStop?: (place: Place) => void;
+  onDismissMaintenanceAdvisory?: () => void;
   members?: FamilyMember[];
   userLocation?: Location | null;
   currentUserId?: string;
@@ -101,6 +104,9 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   leaderDivertedPrompt,
   onFollowLeader,
   onKeepOriginalRoute,
+  ambientMaintenanceAdvisory,
+  onSelectMaintenanceStop,
+  onDismissMaintenanceAdvisory,
   members = [],
   userLocation,
   currentUserId = '',
@@ -309,6 +315,53 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
                 className="py-2.5 px-3 bg-white/10 hover:bg-white/20 active:scale-95 text-slate-300 hover:text-white font-bold text-xs rounded-xl border border-white/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <span>🛑 Keep My Route</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Predictive Ambient Maintenance: Commute Corridor Auto-Service Highlight */}
+      {ambientMaintenanceAdvisory && (
+        <div className={`w-full pointer-events-auto flex justify-center mt-2.5 px-4 animate-in slide-in-from-top-3 duration-300`}>
+          <div className="bg-gradient-to-r from-amber-950/95 via-slate-900/98 to-orange-950/95 backdrop-blur-2xl border-2 border-amber-500/60 rounded-2xl sm:rounded-3xl p-3 sm:px-5 sm:py-3.5 shadow-[0_15px_40px_rgba(245,158,11,0.35)] flex items-center justify-between gap-3 sm:gap-6 max-w-lg w-full">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shrink-0 shadow-md animate-pulse">
+                {ambientMaintenanceAdvisory.item.icon || '🔧'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-black text-amber-400 uppercase tracking-wider">
+                    {ambientMaintenanceAdvisory.item.title} Due Soon
+                  </span>
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                    {Math.round(ambientMaintenanceAdvisory.item.milesRemaining)} mi left
+                  </span>
+                </div>
+                <p className="text-xs font-bold text-slate-200 truncate mt-0.5">
+                  Stop: {ambientMaintenanceAdvisory.recommendedPlace.name}
+                </p>
+                <p className="text-[10px] text-slate-400 truncate">
+                  {ambientMaintenanceAdvisory.places.length} mechanics along your standard commute
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => onSelectMaintenanceStop && onSelectMaintenanceStop(ambientMaintenanceAdvisory.recommendedPlace)}
+                className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/30 transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <span>➕</span> Add Stop
+              </button>
+              <button
+                type="button"
+                onClick={() => onDismissMaintenanceAdvisory && onDismissMaintenanceAdvisory()}
+                className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
+                title="Dismiss recommendation"
+              >
+                ✕
               </button>
             </div>
           </div>
