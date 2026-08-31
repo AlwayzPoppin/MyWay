@@ -704,16 +704,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
     }, [is3DMode, isNavigating]);
 
-    // Update Route Line
-    useEffect(() => {
-        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
+    // ==========================================
+    // BULLETPROOF REAL-TIME ROUTE GUIDELINE RENDERER
+    // ==========================================
+    const syncRouteLayers = useCallback(() => {
+        if (!map.current || !map.current.isStyleLoaded()) return;
 
         const routeId = 'active-route-line';
         const completedId = 'completed-route-line';
-        
-        if (routeCoords.length === 0) {
-            staticRemainingRouteGeoJSON.geometry.coordinates.length = 0;
-            staticCompletedRouteGeoJSON.geometry.coordinates.length = 0;
+
+        if (routeCoords.length < 2) {
             const routeSrc = map.current.getSource(routeId) as maplibregl.GeoJSONSource | undefined;
             const compSrc = map.current.getSource(completedId) as maplibregl.GeoJSONSource | undefined;
             if (routeSrc) routeSrc.setData(STATIC_EMPTY_FEATURE_COLLECTION);
@@ -721,214 +721,171 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             return;
         }
 
-        // Split logic: In-place array mutation avoiding slice, map, and per-frame GC allocations
-        const effectiveSplitIndex = typeof splitIndex === 'number' ? splitIndex : 0;
-        const totalPoints = routeCoords.length;
+        const isLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+        const isGTARadar = mapSkin === 'gta_radar';
 
-        const remainingCoords = staticRemainingRouteGeoJSON.geometry.coordinates;
-        const completedCoords = staticCompletedRouteGeoJSON.geometry.coordinates;
+        // Full coordinates array [[lng, lat], ...]
+        const fullCoordinates: [number, number][] = routeCoords.map(c => [c.lng, c.lat]);
 
-        // 1. Populate completed coordinates [0 .. effectiveSplitIndex] in-place
-        const completedCount = Math.min(effectiveSplitIndex + 1, totalPoints);
-        completedCoords.length = completedCount;
-        for (let i = 0; i < completedCount; i++) {
-            const pt = routeCoords[i];
-            if (!completedCoords[i]) {
-                completedCoords[i] = [pt.lng, pt.lat];
-            } else {
-                completedCoords[i][0] = pt.lng;
-                completedCoords[i][1] = pt.lat;
-            }
-        }
-
-        // 2. Populate remaining coordinates [effectiveSplitIndex .. totalPoints - 1] in-place
-        const remainingCount = Math.max(0, totalPoints - effectiveSplitIndex);
-        remainingCoords.length = remainingCount;
-        for (let i = 0; i < remainingCount; i++) {
-            const pt = routeCoords[effectiveSplitIndex + i];
-            if (!remainingCoords[i]) {
-                remainingCoords[i] = [pt.lng, pt.lat];
-            } else {
-                remainingCoords[i][0] = pt.lng;
-                remainingCoords[i][1] = pt.lat;
-            }
-        }
-
-        // --- Live Traffic Congestion Polyline Construction ---
-        const trafficSegments: TrafficSegment[] = activeRoute?.trafficSegments || (
-            routeCoords.length > 1
-                ? computeRouteTrafficSegments(
-                    routeCoords.map(c => [c.lng, c.lat]),
-                    activeRoute?.steps || [],
-                    undefined,
-                    incidents
-                )
-                : []
+        // Split logic: remaining vs completed
+        const effectiveSplitIndex = Math.min(
+            Math.max(0, typeof splitIndex === 'number' ? splitIndex : 0),
+            Math.max(0, fullCoordinates.length - 1)
         );
 
-        // Convert segments into GeoJSON Features accounting for effectiveSplitIndex
-        const remainingFeatures: GeoJSON.Feature<GeoJSON.LineString>[] = [];
-        let accumulatedPoints = 0;
+        const remainingCoordinates = fullCoordinates.slice(effectiveSplitIndex);
+        const completedCoordinates = fullCoordinates.slice(0, effectiveSplitIndex + 1);
 
-        for (const seg of trafficSegments) {
-            const segCoords = seg.coordinates;
-            const segLen = segCoords.length;
-            const segStartIdx = accumulatedPoints;
-            const segEndIdx = accumulatedPoints + segLen - 1;
-            accumulatedPoints += segLen;
+        // Ensure at least 2 points for LineString
+        const activeLineCoords = remainingCoordinates.length >= 2 ? remainingCoordinates : fullCoordinates;
 
-            // If the segment is completely traversed by the user
-            if (segEndIdx <= effectiveSplitIndex) {
-                continue;
-            }
-
-            // If the user is currently inside this segment
-            if (segStartIdx < effectiveSplitIndex && effectiveSplitIndex < segEndIdx) {
-                const subIndex = effectiveSplitIndex - segStartIdx;
-                const activeSlice = segCoords.slice(subIndex);
-                if (activeSlice.length >= 2) {
-                    remainingFeatures.push({
-                        type: 'Feature',
-                        properties: {
-                            congestion: seg.congestion,
-                            isCompleted: false
-                        },
-                        geometry: {
-                            type: 'LineString',
-                            coordinates: activeSlice
-                        }
-                    });
-                }
-            } else if (segStartIdx >= effectiveSplitIndex) {
-                // Segment is ahead of user
-                remainingFeatures.push({
+        const activeRouteGeoJSON: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+            type: 'FeatureCollection',
+            features: [
+                {
                     type: 'Feature',
                     properties: {
-                        congestion: seg.congestion,
+                        congestion: 'low',
                         isCompleted: false
                     },
                     geometry: {
                         type: 'LineString',
-                        coordinates: segCoords
+                        coordinates: activeLineCoords
                     }
-                });
-            }
-        }
-
-        // If no split segments, fallback to whole remaining line
-        if (remainingFeatures.length === 0 && remainingCoords.length >= 2) {
-            remainingFeatures.push({
-                type: 'Feature',
-                properties: { congestion: 'low', isCompleted: false },
-                geometry: { type: 'LineString', coordinates: remainingCoords }
-            });
-        }
-
-        const remainingGeoJSON: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
-            type: 'FeatureCollection',
-            features: remainingFeatures
+                }
+            ]
         };
 
-        const updateGeoJsonSources = () => {
-            if (!map.current || !map.current.isStyleLoaded()) return;
+        const completedRouteGeoJSON: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+            type: 'FeatureCollection',
+            features: completedCoordinates.length >= 2 ? [
+                {
+                    type: 'Feature',
+                    properties: {
+                        isCompleted: true
+                    },
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: completedCoordinates
+                    }
+                }
+            ] : []
+        };
 
-            const isLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
-            const routeColorExpression: any = [
-                'match',
-                ['get', 'congestion'],
-                'severe', '#dc2626',
-                'heavy', '#ea580c',
-                'moderate', '#eab308',
-                'low', mapSkin === 'gta_radar' ? '#facc15' : isLightSkin ? '#0284c7' : '#4f46e5',
-                mapSkin === 'gta_radar' ? '#facc15' : isLightSkin ? '#0284c7' : '#6366f1'
-            ];
+        const primaryRouteColor = isGTARadar ? '#facc15' : isLightSkin ? '#0284c7' : '#38bdf8';
+        const glowColor = isGTARadar ? '#f59e0b' : isLightSkin ? '#38bdf8' : '#818cf8';
+        const casingColor = isLightSkin ? '#0f172a' : '#020617';
 
-            const routeGlowExpression: any = [
-                'match',
-                ['get', 'congestion'],
-                'severe', '#ef4444',
-                'heavy', '#fb923c',
-                'moderate', '#fde047',
-                'low', mapSkin === 'gta_radar' ? '#f59e0b' : isLightSkin ? '#38bdf8' : '#818cf8',
-                isLightSkin ? '#38bdf8' : '#818cf8'
-            ];
-
-            // --- RENDER REMAINING (Live Traffic Polyline) ---
+        try {
+            // 1. UPDATE OR ADD SOURCE
             const existingRouteSrc = map.current.getSource(routeId) as maplibregl.GeoJSONSource | undefined;
             if (existingRouteSrc) {
-                existingRouteSrc.setData(remainingGeoJSON as any);
+                existingRouteSrc.setData(activeRouteGeoJSON as any);
             } else {
-                map.current.addSource(routeId, { 'type': 'geojson', 'data': remainingGeoJSON as any });
+                map.current.addSource(routeId, {
+                    type: 'geojson',
+                    data: activeRouteGeoJSON as any
+                });
             }
 
-            // Contrast Casing Layer (dark background outline)
+            // 2. ADD / UPDATE CASING LAYER
             if (!map.current.getLayer(`${routeId}-casing`)) {
                 map.current.addLayer({
-                    'id': `${routeId}-casing`,
-                    'type': 'line',
-                    'source': routeId,
-                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': isLightSkin ? '#0f172a' : '#020617', 'line-width': 12, 'line-opacity': 0.8 }
+                    id: `${routeId}-casing`,
+                    type: 'line',
+                    source: routeId,
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: {
+                        'line-color': casingColor,
+                        'line-width': 13,
+                        'line-opacity': 0.85
+                    }
                 });
+            } else {
+                map.current.setPaintProperty(`${routeId}-casing`, 'line-color', casingColor);
             }
-            
-            // Glow layer
+
+            // 3. ADD / UPDATE GLOW LAYER
             if (!map.current.getLayer(`${routeId}-glow`)) {
                 map.current.addLayer({
-                    'id': `${routeId}-glow`,
-                    'type': 'line',
-                    'source': routeId,
-                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': routeGlowExpression, 'line-width': 16, 'line-opacity': 0.4 }
+                    id: `${routeId}-glow`,
+                    type: 'line',
+                    source: routeId,
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: {
+                        'line-color': glowColor,
+                        'line-width': 18,
+                        'line-opacity': 0.45
+                    }
                 });
             } else {
-                map.current.setPaintProperty(`${routeId}-glow`, 'line-color', routeGlowExpression);
+                map.current.setPaintProperty(`${routeId}-glow`, 'line-color', glowColor);
             }
 
-            // Main traffic line layer
+            // 4. ADD / UPDATE MAIN GUIDELINE LAYER
             if (!map.current.getLayer(routeId)) {
                 map.current.addLayer({
-                    'id': routeId,
-                    'type': 'line',
-                    'source': routeId,
-                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': routeColorExpression, 'line-width': 8, 'line-opacity': 1.0 }
+                    id: routeId,
+                    type: 'line',
+                    source: routeId,
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: {
+                        'line-color': primaryRouteColor,
+                        'line-width': 8,
+                        'line-opacity': 1.0
+                    }
                 });
             } else {
-                map.current.setPaintProperty(routeId, 'line-color', routeColorExpression);
+                map.current.setPaintProperty(routeId, 'line-color', primaryRouteColor);
             }
 
-            // --- RENDER COMPLETED (Dimmed Grey Line) ---
+            // 5. COMPLETED ROUTE LAYER
             const existingCompSrc = map.current.getSource(completedId) as maplibregl.GeoJSONSource | undefined;
             if (existingCompSrc) {
-                existingCompSrc.setData(staticCompletedRouteGeoJSON as any);
+                existingCompSrc.setData(completedRouteGeoJSON as any);
             } else {
-                map.current.addSource(completedId, { 'type': 'geojson', 'data': staticCompletedRouteGeoJSON as any });
+                map.current.addSource(completedId, {
+                    type: 'geojson',
+                    data: completedRouteGeoJSON as any
+                });
             }
 
             if (!map.current.getLayer(completedId)) {
                 map.current.addLayer({
-                    'id': completedId,
-                    'type': 'line',
-                    'source': completedId,
-                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': theme === 'dark' ? '#475569' : '#94a3b8', 'line-width': 6, 'line-opacity': 0.45 }
-                }, `${routeId}-casing`);
+                    id: completedId,
+                    type: 'line',
+                    source: completedId,
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: {
+                        'line-color': theme === 'dark' ? '#475569' : '#94a3b8',
+                        'line-width': 6,
+                        'line-opacity': 0.45
+                    }
+                });
             }
-        };
-
-        if (routeRafRef.current) {
-            cancelAnimationFrame(routeRafRef.current);
+        } catch (err) {
+            console.warn('[MapLibre3DView] Error syncing route layers:', err);
         }
-        routeRafRef.current = requestAnimationFrame(updateGeoJsonSources);
+    }, [routeCoords, splitIndex, mapSkin, theme]);
+
+    // Trigger route layers sync whenever route, split index, map state, or skin changes
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+        syncRouteLayers();
+
+        const onMapData = () => syncRouteLayers();
+        map.current.on('styledata', onMapData);
+        map.current.on('style.load', onMapData);
+        map.current.on('idle', onMapData);
 
         return () => {
-            if (routeRafRef.current) {
-                cancelAnimationFrame(routeRafRef.current);
+            if (map.current) {
+                map.current.off('styledata', onMapData);
+                map.current.off('style.load', onMapData);
+                map.current.off('idle', onMapData);
             }
         };
-
-    }, [routeCoords, isMapReady, styleVersion, isNavigating, theme, currentStepIndex, splitIndex]); 
+    }, [syncRouteLayers, isMapReady, styleVersion]); 
 
     // ==========================================
     // UNIFIED WEBGL DESTINATION PIN LAYER
@@ -1586,6 +1543,36 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
             const initials = (member.name || 'M').charAt(0).toUpperCase();
 
+            const isSelfNavigating = isNavigating && isSelf;
+            const isLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+            const markerHtml = isSelfNavigating ? `
+                <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
+                    <!-- Dynamic Forward Vision Headlight Beam -->
+                    <div style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${displayBearing}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, rgba(56, 189, 248, 0.45) 0%, rgba(56, 189, 248, 0.12) 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
+                    
+                    <!-- Radar Pulse Beacon -->
+                    <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isGTARadar ? '#facc15' : isLightSkin ? '#0284c7' : '#6366f1'}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+                    
+                    <!-- 3D Navigation Vehicle Arrow Puck -->
+                    <div style="position: relative; width: 46px; height: 46px; transform: rotate(${displayBearing}deg); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.6));">
+                        <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+                            <path d="M22 3 L39 39 L22 30 L5 39 Z" fill="${isGTARadar ? '#f59e0b' : isLightSkin ? '#0284c7' : '#4f46e5'}" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" />
+                            <path d="M22 6 L35 36 L22 28 L9 36 Z" fill="${isGTARadar ? '#facc15' : isLightSkin ? '#38bdf8' : '#818cf8'}" />
+                            <circle cx="22" cy="22" r="4.5" fill="#ffffff" />
+                        </svg>
+                    </div>
+                </div>
+            ` : `
+                <div class="myway-member-avatar-container select-none" style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
+                    ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${borderColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
+                    <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3.5px solid #ffffff; background: ${borderColor}; box-shadow: 0 6px 18px rgba(0,0,0,0.45); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
+                        ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
+                        <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
+                    </div>
+                    ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${displayBearing}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                </div>
+            `;
+
             let marker = membersMarkersRef.current.get(member.id);
             if (!marker) {
                 const el = document.createElement('div');
@@ -1595,17 +1582,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 el.style.flexDirection = 'column';
                 el.style.alignItems = 'center';
                 el.style.transform = 'translate3d(0,0,0)';
-
-                el.innerHTML = `
-                    <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
-                        ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${borderColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
-                        <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3.5px solid #ffffff; background: ${borderColor}; box-shadow: 0 6px 18px rgba(0,0,0,0.45); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
-                            ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
-                            <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
-                        </div>
-                        ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${displayBearing}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
-                    </div>
-                `;
+                el.innerHTML = markerHtml;
 
                 el.addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -1617,6 +1594,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     .addTo(map.current!);
                 membersMarkersRef.current.set(member.id, marker);
             } else {
+                marker.getElement().innerHTML = markerHtml;
                 marker.setLngLat([finalLocation.lng, finalLocation.lat]);
             }
         });
