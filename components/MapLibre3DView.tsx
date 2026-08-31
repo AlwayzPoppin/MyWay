@@ -378,24 +378,24 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                 const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
 
-                // 3D Architectural Lighting & Ambient Landmark Glow
+                // 3D Architectural Lighting & Balanced Sun Shading (Anchor: map, gentle intensity to prevent washout)
                 try {
                     map.current.setLight({
-                        anchor: 'viewport',
-                        color: isWarmLight ? '#ffffff' : '#f1f5f9',
-                        intensity: isWarmLight ? 0.62 : 0.28,
-                        position: [1.2, isWarmLight ? 55 : 75, isWarmLight ? 35 : 45]
+                        anchor: 'map',
+                        color: '#ffffff',
+                        intensity: isWarmLight ? 0.32 : 0.38,
+                        position: [1.4, 210, 30]
                     });
                 } catch (e) {
                     console.warn('[MapLibre] setLight:', e);
                 }
 
                 const isGTARadar = mapSkin === 'gta_radar';
-                // Solid opaque Warm Limestone vs Muted Graphite vs GTA Dark Charcoal for 3D buildings
+                // Solid, rich architectural limestone & sandstone contrast for warm/light skins
                 const extrusionColor = [
                     'interpolate', ['linear'], ['zoom'],
-                    14, isWarmLight ? '#eae5dc' : isGTARadar ? '#242d38' : '#1c2128',
-                    16, isWarmLight ? '#dfd7ca' : isGTARadar ? '#2e3846' : '#242b35'
+                    14, isWarmLight ? '#d2c6b4' : isGTARadar ? '#202936' : '#1e293b',
+                    16, isWarmLight ? '#c4b7a2' : isGTARadar ? '#2a3647' : '#243044'
                 ];
 
                 // 100% Solid opaque buildings for authentic WebGL depth testing (no see-through artifacts)
@@ -417,9 +417,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     ]
                 ];
 
+                const baseExpr: any = [
+                    'case',
+                    ['has', 'render_min_height'], ['get', 'render_min_height'],
+                    ['has', 'min_height'], ['get', 'min_height'],
+                    0
+                ];
+
                 if (map.current.getLayer('buildings-3d')) {
                     map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
                     map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
+                    map.current.setPaintProperty('buildings-3d', 'fill-extrusion-base', baseExpr);
                     map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
                 } else {
                     map.current.addLayer({
@@ -431,12 +439,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         'paint': {
                             'fill-extrusion-color': extrusionColor as any,
                             'fill-extrusion-height': heightExpr,
-                            'fill-extrusion-base': [
-                                'case',
-                                ['has', 'render_min_height'], ['get', 'render_min_height'],
-                                ['has', 'min_height'], ['get', 'min_height'],
-                                0
-                            ],
+                            'fill-extrusion-base': baseExpr,
                             'fill-extrusion-opacity': opacityExpr
                         }
                     }, labelLayerId);
@@ -574,18 +577,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         try {
             map.current.setLight({
-                anchor: 'viewport',
-                color: isWarmLight ? '#ffffff' : '#f1f5f9',
-                intensity: isWarmLight ? 0.62 : 0.28,
-                position: [1.2, isWarmLight ? 55 : 75, isWarmLight ? 35 : 45]
+                anchor: 'map',
+                color: '#ffffff',
+                intensity: isWarmLight ? 0.32 : 0.38,
+                position: [1.4, 210, 30]
             });
 
             const isGTARadar = mapSkin === 'gta_radar';
-            // Solid opaque Warm Limestone vs Muted Graphite vs GTA Charcoal for 3D buildings
+            // Solid, rich architectural limestone & sandstone contrast for warm/light skins
             const extrusionColor = [
                 'interpolate', ['linear'], ['zoom'],
-                14, isWarmLight ? '#eae5dc' : isGTARadar ? '#242d38' : '#1c2128',
-                16, isWarmLight ? '#dfd7ca' : isGTARadar ? '#2e3846' : '#242b35'
+                14, isWarmLight ? '#d2c6b4' : isGTARadar ? '#202936' : '#1e293b',
+                16, isWarmLight ? '#c4b7a2' : isGTARadar ? '#2a3647' : '#243044'
             ];
 
             const opacityExpr: any = [
@@ -606,8 +609,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 ]
             ];
 
+            const baseExpr: any = [
+                'case',
+                ['has', 'render_min_height'], ['get', 'render_min_height'],
+                ['has', 'min_height'], ['get', 'min_height'],
+                0
+            ];
+
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-color', extrusionColor);
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-height', heightExpr);
+            map.current.setPaintProperty('buildings-3d', 'fill-extrusion-base', baseExpr);
             map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
 
             // GTA Los Santos Radar Vector Styling
