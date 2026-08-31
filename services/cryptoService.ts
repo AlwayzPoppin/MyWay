@@ -24,6 +24,35 @@ export const setFamilyKey = (key: CryptoKey, circleId?: string) => {
 
 export const getFamilyKey = (): CryptoKey | null => familyKey;
 
+/**
+ * Automatically restores the circle key from secure IndexedDB storage if lost in memory during background sleep.
+ */
+export const ensureFamilyKeyRestored = async (circleId?: string): Promise<CryptoKey | null> => {
+    if (familyKey) return familyKey;
+    if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) return null;
+
+    try {
+        let jwk = circleId ? await loadKeyPairFromSecureStorage(circleId) : null;
+        if (!jwk) {
+            jwk = await loadKeyPairFromSecureStorage('current_family_key');
+        }
+        if (jwk) {
+            const restoredKey = await window.crypto.subtle.importKey(
+                'jwk',
+                jwk,
+                { name: 'AES-GCM' },
+                true,
+                ['encrypt', 'decrypt']
+            );
+            familyKey = restoredKey;
+            return restoredKey;
+        }
+    } catch (err) {
+        console.warn('🔒 Error restoring family key from storage:', err);
+    }
+    return null;
+};
+
 // --- SECURE STORAGE (IndexedDB) ---
 const DB_NAME = 'MyWaySecurity';
 const STORE_NAME = 'E2EEKeys';
@@ -172,8 +201,12 @@ export const unwrapCircleKey = async (wrappedKeyBase64: string, sharedSecret: Cr
 };
 
 
-export const encryptLocation = async (lat: number, lng: number): Promise<string> => {
-    if (!familyKey) {
+export const encryptLocation = async (lat: number, lng: number, circleId?: string): Promise<string> => {
+    let key = familyKey;
+    if (!key) {
+        key = await ensureFamilyKeyRestored(circleId);
+    }
+    if (!key) {
         console.warn("🔒 Encryption skipped: No Family Key established yet.");
         // We return empty string or throw error to prevent leaking plaintext location
         return "";
@@ -184,7 +217,7 @@ export const encryptLocation = async (lat: number, lng: number): Promise<string>
 
     const ciphertext = await window.crypto.subtle.encrypt(
         { name: 'AES-GCM', iv },
-        familyKey,
+        key,
         data
     );
 
@@ -196,8 +229,12 @@ export const encryptLocation = async (lat: number, lng: number): Promise<string>
     return btoa(String.fromCharCode(...combined));
 };
 
-export const decryptLocation = async (wrappedData: string): Promise<{ lat: number, lng: number } | null> => {
-    if (!familyKey || !wrappedData) return null;
+export const decryptLocation = async (wrappedData: string, circleId?: string): Promise<{ lat: number, lng: number } | null> => {
+    let key = familyKey;
+    if (!key) {
+        key = await ensureFamilyKeyRestored(circleId);
+    }
+    if (!key || !wrappedData) return null;
     try {
         const combined = new Uint8Array(atob(wrappedData).split('').map(c => c.charCodeAt(0)));
         const iv = combined.slice(0, 12);
@@ -205,7 +242,7 @@ export const decryptLocation = async (wrappedData: string): Promise<{ lat: numbe
 
         const decrypted = await window.crypto.subtle.decrypt(
             { name: 'AES-GCM', iv },
-            familyKey,
+            key,
             encrypted
         );
 
@@ -217,13 +254,17 @@ export const decryptLocation = async (wrappedData: string): Promise<{ lat: numbe
     }
 };
 
-export const encryptMessage = async (text: string): Promise<string> => {
-    if (!familyKey) return text;
+export const encryptMessage = async (text: string, circleId?: string): Promise<string> => {
+    let key = familyKey;
+    if (!key) {
+        key = await ensureFamilyKeyRestored(circleId);
+    }
+    if (!key) return text;
     const data = new TextEncoder().encode(text);
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await window.crypto.subtle.encrypt(
         { name: 'AES-GCM', iv },
-        familyKey,
+        key,
         data
     );
     const combined = new Uint8Array(iv.length + ciphertext.byteLength);
@@ -232,15 +273,19 @@ export const encryptMessage = async (text: string): Promise<string> => {
     return btoa(String.fromCharCode(...combined));
 };
 
-export const decryptMessage = async (text: string): Promise<string> => {
-    if (!familyKey || !text) return text;
+export const decryptMessage = async (text: string, circleId?: string): Promise<string> => {
+    let key = familyKey;
+    if (!key) {
+        key = await ensureFamilyKeyRestored(circleId);
+    }
+    if (!key || !text) return text;
     try {
         const combined = new Uint8Array(atob(text).split('').map(c => c.charCodeAt(0)));
         const iv = combined.slice(0, 12);
         const encrypted = combined.slice(12);
         const decrypted = await window.crypto.subtle.decrypt(
             { name: 'AES-GCM', iv },
-            familyKey,
+            key,
             encrypted
         );
         return new TextDecoder().decode(decrypted);

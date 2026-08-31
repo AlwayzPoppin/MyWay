@@ -73,7 +73,7 @@ export const useE2EE = (
                     const selfWrapped = await wrapCircleKey(circleKey, selfSharedSecret);
                     await deliverWrappedKey(currentCircle.id, user.uid, selfWrapped);
                 }
-                setFamilyKey(circleKey);
+                setFamilyKey(circleKey, currentCircle.id);
 
                 for (const member of circleMembers) {
                     if (member.uid !== user.uid && member.ecdhPublicKey) {
@@ -93,7 +93,7 @@ export const useE2EE = (
                     const ownerPubKey = await importPublicKey(ownerProfile.ecdhPublicKey);
                     const sharedSecret = await deriveSharedSecretKey(keys.privateKey, ownerPubKey);
                     const unwrapped = await unwrapCircleKey(wrapped, sharedSecret);
-                    setFamilyKey(unwrapped);
+                    setFamilyKey(unwrapped, currentCircle.id);
                 }
             });
         }

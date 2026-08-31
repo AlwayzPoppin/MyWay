@@ -13,6 +13,7 @@ import { speechService } from '../services/speechService';
 import { batteryService } from '../services/batteryService';
 import { getSafeAvatarUrl } from '../utils/avatar';
 import { registerDeadZone } from '../services/offlineLocationBuffer';
+import { backgroundKeySyncService } from '../services/backgroundKeySyncService';
 
 export const useLocationSync = (
     user: any,
@@ -106,6 +107,16 @@ export const useLocationSync = (
         });
         return () => unsubscribe();
     }, [user?.uid]);
+
+    // Continuous Background E2EE Key Synchronization
+    useEffect(() => {
+        if (!user?.uid || !currentCircleId) return;
+        backgroundKeySyncService.init(user.uid, currentCircleId);
+
+        return () => {
+            backgroundKeySyncService.stop();
+        };
+    }, [user?.uid, currentCircleId]);
 
     // 1. WATCH POSITION (GPS) & UPLOAD
     useEffect(() => {
@@ -397,9 +408,9 @@ export const useLocationSync = (
                         }
                     }
 
-                    // PRIVACY FIX: Encrypt the chosen target location
+                    // PRIVACY FIX: Encrypt the chosen target location with background key auto-restoration
                     const encrypted = (targetLat !== 0 && targetLng !== 0) 
-                        ? await encryptLocation(targetLat, targetLng) 
+                        ? await encryptLocation(targetLat, targetLng, currentCircleId) 
                         : null;
 
                     // If encryption is pending
