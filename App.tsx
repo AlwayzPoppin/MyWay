@@ -1664,12 +1664,19 @@ const App: React.FC = () => {
         </OverlayManager>
       )}
 
-      {/* Crash Detection Countdown Overlay */}
+      {/* Crash Detection Dynamic Island Floating Notification */}
       {crashCountdown !== null && (
         <OverlayManager priority={10}>
           <CrashCountdownOverlay
             remainingSeconds={crashCountdown}
             onDismiss={() => cancelCrashCountdown()}
+            onFindHospital={() => {
+              handleDiscovery('Hospital', userLocation || undefined);
+            }}
+            onImmediateSOS={() => {
+              handleTriggerSOS();
+              cancelCrashCountdown();
+            }}
           />
         </OverlayManager>
       )}
