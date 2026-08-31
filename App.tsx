@@ -21,7 +21,6 @@ import SafetyAlerts from './components/SafetyAlerts';
 import QuickActions from './components/QuickActions';
 import MessagingPanel from './components/MessagingPanel';
 import SettingsPanel from './components/SettingsPanel';
-import OfflineMapManager from './components/OfflineMapManager';
 import BentoSidebar from './components/BentoSidebar';
 import HoldToActivate from './components/HoldToActivate';
 import LoginScreen from './components/LoginScreen';
@@ -91,19 +90,22 @@ import { useGeofences } from './hooks/useGeofences';
 import { useNavigation } from './hooks/useNavigation';
 import { useE2EE } from './hooks/useE2EE';
 import { startTrip, recordTripPoint, endTrip, getActiveTrip } from './services/tripHistoryService';
-import TripHistoryPanel from './components/TripHistoryPanel';
 import { startCrashMonitoring, stopCrashMonitoring, cancelCrashCountdown, updateCrashDetectionSpeed } from './services/crashDetectionService';
 import CrashCountdownOverlay from './components/CrashCountdownOverlay';
-import CircleAdminPanel from './components/CircleAdminPanel';
 import NotificationCenter, { addNotification, getUnreadCount, getNotifications, AppNotification } from './components/NotificationCenter';
-import InviteShareModal from './components/InviteShareModal';
-import WeeklySafetyReport from './components/WeeklySafetyReport';
 import BatteryOptimizationPrompt, { shouldShowBatteryPrompt } from './components/BatteryOptimizationPrompt';
-import KeyRecoveryPanel from './components/KeyRecoveryPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import PermissionGuard from './components/PermissionGuard';
 import { convoyService, ConvoyInvite } from './services/convoyService';
-import MaintenancePanel from './components/MaintenancePanel';
+
+// Lazy-loaded modal panels for optimal tree-shaking & main-thread responsiveness
+const OfflineMapManager = React.lazy(() => import('./components/OfflineMapManager'));
+const TripHistoryPanel = React.lazy(() => import('./components/TripHistoryPanel'));
+const CircleAdminPanel = React.lazy(() => import('./components/CircleAdminPanel'));
+const MaintenancePanel = React.lazy(() => import('./components/MaintenancePanel'));
+const KeyRecoveryPanel = React.lazy(() => import('./components/KeyRecoveryPanel'));
+const WeeklySafetyReport = React.lazy(() => import('./components/WeeklySafetyReport'));
+const InviteShareModal = React.lazy(() => import('./components/InviteShareModal'));
 
 export type ActiveModal =
   | 'settings'
@@ -1441,12 +1443,14 @@ const App: React.FC = () => {
           {activeModal === 'offline_maps' && (
             <OverlayManager>
               <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
-                <OfflineMapManager
-                  currentBounds={mapBounds}
-                  userLocation={userLocation}
-                  theme={theme}
-                  onClose={() => setActiveModal(null)}
-                />
+                <React.Suspense fallback={<div className="glass-panel p-6 text-center text-xs text-slate-400 font-bold rounded-2xl">Loading Offline Maps...</div>}>
+                  <OfflineMapManager
+                    currentBounds={mapBounds}
+                    userLocation={userLocation}
+                    theme={theme}
+                    onClose={() => setActiveModal(null)}
+                  />
+                </React.Suspense>
               </div>
             </OverlayManager>
           )}
@@ -1456,24 +1460,26 @@ const App: React.FC = () => {
             <OverlayManager>
               <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
-                  <TripHistoryPanel
-                    onClose={() => {
-                      setActiveModal(null);
-                      setReviewedTrip(null);
-                    }}
-                    onBack={() => {
-                      setActiveModal('settings');
-                      setReviewedTrip(null);
-                    }}
-                    onReplayTrip={(trip) => {
-                      setReviewedTrip(trip);
-                      // Show trip path on map
-                      if (trip.path.length > 0) {
-                        const mid = trip.path[Math.floor(trip.path.length / 2)];
-                        setMapCenter([mid.lng, mid.lat]);
-                      }
-                    }}
-                  />
+                  <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Trip History...</div>}>
+                    <TripHistoryPanel
+                      onClose={() => {
+                        setActiveModal(null);
+                        setReviewedTrip(null);
+                      }}
+                      onBack={() => {
+                        setActiveModal('settings');
+                        setReviewedTrip(null);
+                      }}
+                      onReplayTrip={(trip) => {
+                        setReviewedTrip(trip);
+                        // Show trip path on map
+                        if (trip.path.length > 0) {
+                          const mid = trip.path[Math.floor(trip.path.length / 2)];
+                          setMapCenter([mid.lng, mid.lat]);
+                        }
+                      }}
+                    />
+                  </React.Suspense>
                 </div>
               </div>
             </OverlayManager>
@@ -1484,26 +1490,28 @@ const App: React.FC = () => {
             <OverlayManager>
               <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
-                  <CircleAdminPanel
-                    members={members}
-                    circleOwnerId={currentCircle?.ownerId}
-                    currentUserId={user?.uid}
-                    onClose={() => setActiveModal(null)}
-                    onRemoveMember={(memberId) => {
-                      if (currentCircle?.id && user?.uid) {
-                        removeMember(currentCircle.id, user.uid, memberId).catch(err => {
-                          console.error('Failed to remove member and rotate key:', err);
-                        });
-                      }
-                      setMembers(prev => prev.filter(m => m.id !== memberId));
-                      showNotification('Member removed & security keys rotated', 3000);
-                    }}
-                    onUpdateRole={(memberId, role) => {
-                      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
-                    }}
-                    showNotification={showNotification}
-                    theme={theme}
-                  />
+                  <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Circle Admin...</div>}>
+                    <CircleAdminPanel
+                      members={members}
+                      circleOwnerId={currentCircle?.ownerId}
+                      currentUserId={user?.uid}
+                      onClose={() => setActiveModal(null)}
+                      onRemoveMember={(memberId) => {
+                        if (currentCircle?.id && user?.uid) {
+                          removeMember(currentCircle.id, user.uid, memberId).catch(err => {
+                            console.error('Failed to remove member and rotate key:', err);
+                          });
+                        }
+                        setMembers(prev => prev.filter(m => m.id !== memberId));
+                        showNotification('Member removed & security keys rotated', 3000);
+                      }}
+                      onUpdateRole={(memberId, role) => {
+                        setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
+                      }}
+                      showNotification={showNotification}
+                      theme={theme}
+                    />
+                  </React.Suspense>
                 </div>
               </div>
             </OverlayManager>
@@ -1529,12 +1537,14 @@ const App: React.FC = () => {
             <OverlayManager>
               <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
-                  <WeeklySafetyReport
-                    onClose={() => setActiveModal(null)}
-                    onBack={() => setActiveModal('settings')}
-                    memberName={profile?.name || members[0]?.name}
-                    theme={theme}
-                  />
+                  <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Weekly Report...</div>}>
+                    <WeeklySafetyReport
+                      onClose={() => setActiveModal(null)}
+                      onBack={() => setActiveModal('settings')}
+                      memberName={profile?.name || members[0]?.name}
+                      theme={theme}
+                    />
+                  </React.Suspense>
                 </div>
               </div>
             </OverlayManager>
@@ -1542,14 +1552,16 @@ const App: React.FC = () => {
 
           {/* Invite Share Modal */}
           {activeModal === 'invite' && currentCircle?.inviteCode && (
-            <InviteShareModal
-              inviteCode={currentCircle.inviteCode}
-              circleName={currentCircle.name}
-              onClose={() => setActiveModal(null)}
-              onBack={() => setActiveModal('settings')}
-              showNotification={showNotification}
-              theme={theme}
-            />
+            <React.Suspense fallback={<div className="glass-panel p-6 text-center text-xs text-slate-400 font-bold rounded-2xl">Loading Invite...</div>}>
+              <InviteShareModal
+                inviteCode={currentCircle.inviteCode}
+                circleName={currentCircle.name}
+                onClose={() => setActiveModal(null)}
+                onBack={() => setActiveModal('settings')}
+                showNotification={showNotification}
+                theme={theme}
+              />
+            </React.Suspense>
           )}
 
           {/* Key Recovery Panel */}
@@ -1559,13 +1571,15 @@ const App: React.FC = () => {
                 <div className={`rounded-3xl overflow-hidden shadow-2xl border ${
                   theme === 'dark' ? 'bg-slate-900/95 border-white/10' : 'bg-white/95 border-slate-200'
                 }`}>
-                  <KeyRecoveryPanel
-                    uid={user?.uid || ''}
-                    onClose={() => setActiveModal(null)}
-                    onBack={() => setActiveModal('settings')}
-                    showNotification={showNotification}
-                    theme={theme}
-                  />
+                  <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Key Recovery...</div>}>
+                    <KeyRecoveryPanel
+                      uid={user?.uid || ''}
+                      onClose={() => setActiveModal(null)}
+                      onBack={() => setActiveModal('settings')}
+                      showNotification={showNotification}
+                      theme={theme}
+                    />
+                  </React.Suspense>
                 </div>
               </div>
             </OverlayManager>
@@ -1573,10 +1587,12 @@ const App: React.FC = () => {
 
           {/* My Maintenance Panel — Vehicle expenses, mileage, gig driver tracking */}
           {activeModal === 'maintenance' && (
-            <MaintenancePanel
-              theme={theme}
-              onClose={() => setActiveModal(null)}
-            />
+            <React.Suspense fallback={<div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 text-slate-300 font-bold text-sm">Loading Maintenance Hub...</div>}>
+              <MaintenancePanel
+                theme={theme}
+                onClose={() => setActiveModal(null)}
+              />
+            </React.Suspense>
           )}
 
           {/* Battery Optimization Prompt (Android only, after onboarding) */}
