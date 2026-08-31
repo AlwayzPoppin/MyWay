@@ -159,6 +159,7 @@ const App: React.FC = () => {
   // --- CORE STATE ---
   const [isMapReady, setIsMapReady] = useState(false);
   const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
   const [userPlaces, setUserPlaces] = useState<UserPlace[]>(() => {
     if (typeof window !== 'undefined') {
       try {
