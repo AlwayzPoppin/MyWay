@@ -6,6 +6,9 @@
  * Uses IndexedDB for persistence — survives app restarts.
  */
 
+import { offlineMapService, computeRadiusBounds } from './offlineMapService';
+import { getDistanceFromCoords } from '../utils/geo';
+
 export interface BufferedLocation {
     id?: number;
     lat: number;
@@ -316,4 +319,164 @@ export const setupAutoFlush = (
     }
 
     return () => window.removeEventListener('online', handleOnline);
+};
+
+// ==========================================
+// PREDICTIVE GEOGRAPHIC CACHING & DEAD ZONE SPATIAL INDEX
+// ==========================================
+
+export interface DeadZoneRecord {
+    id: string;
+    center: { lat: number; lng: number };
+    radiusKm: number; // default 10km
+    firstObservedAt: number;
+    lastObservedAt: number;
+    durationSeconds: number;
+    signalDropsCount: number;
+    isCached: boolean;
+}
+
+const DEAD_ZONES_STORAGE_KEY = 'myway_known_dead_zones';
+
+export const getKnownDeadZones = (): DeadZoneRecord[] => {
+    if (typeof window === 'undefined') return [];
+    try {
+        const raw = localStorage.getItem(DEAD_ZONES_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+        console.warn('📦 Failed to load known dead zones:', e);
+        return [];
+    }
+};
+
+const saveKnownDeadZones = (zones: DeadZoneRecord[]): void => {
+    if (typeof window === 'undefined') return;
+    try {
+        localStorage.setItem(DEAD_ZONES_STORAGE_KEY, JSON.stringify(zones));
+    } catch (e) {
+        console.warn('📦 Failed to save known dead zones:', e);
+    }
+};
+
+/**
+ * Preemptively download/delta-update MapLibre tiles for a 10km dead zone radius.
+ */
+export const syncDeadZoneTiles = async (deadZone: DeadZoneRecord): Promise<boolean> => {
+    const isCovered = offlineMapService.isLocationCovered(deadZone.center, deadZone.radiusKm, 10, 14);
+    if (isCovered) {
+        console.log(`📦 [Predictive Cache] Dead zone ${deadZone.id} already covered in tile cache`);
+        return true;
+    }
+
+    console.log(`📦 [Predictive Cache] Proactively downloading ${deadZone.radiusKm}km map tiles for dead zone [${deadZone.center.lat.toFixed(3)}, ${deadZone.center.lng.toFixed(3)}]...`);
+    const bounds = computeRadiusBounds(deadZone.center, deadZone.radiusKm);
+
+    try {
+        const area = await offlineMapService.downloadArea(
+            `Dead Zone (${deadZone.center.lat.toFixed(2)}, ${deadZone.center.lng.toFixed(2)})`,
+            bounds,
+            { min: 10, max: 14 }
+        );
+
+        if (area) {
+            deadZone.isCached = true;
+            const zones = getKnownDeadZones();
+            const idx = zones.findIndex(z => z.id === deadZone.id);
+            if (idx >= 0) {
+                zones[idx].isCached = true;
+                saveKnownDeadZones(zones);
+            }
+            console.log(`📦 [Predictive Cache] ✅ Successfully cached map tiles for dead zone ${deadZone.id}`);
+            return true;
+        }
+    } catch (err) {
+        console.warn(`📦 [Predictive Cache] Failed to sync tiles for dead zone ${deadZone.id}:`, err);
+    }
+    return false;
+};
+
+/**
+ * Register a cellular dead zone or poor signal cluster.
+ * Merges with existing dead zones if within 5km, updating drop count and duration.
+ */
+export const registerDeadZone = (
+    center: { lat: number; lng: number },
+    durationSeconds: number = 120,
+    radiusKm: number = 10
+): DeadZoneRecord => {
+    const zones = getKnownDeadZones();
+    const existingIndex = zones.findIndex(z => {
+        const distKm = getDistanceFromCoords(z.center.lat, z.center.lng, center.lat, center.lng) / 1000;
+        return distKm <= 5;
+    });
+
+    const now = Date.now();
+    let updatedZone: DeadZoneRecord;
+
+    if (existingIndex >= 0) {
+        const existing = zones[existingIndex];
+        updatedZone = {
+            ...existing,
+            lastObservedAt: now,
+            durationSeconds: existing.durationSeconds + durationSeconds,
+            signalDropsCount: existing.signalDropsCount + 1,
+            isCached: offlineMapService.isLocationCovered(existing.center, existing.radiusKm)
+        };
+        zones[existingIndex] = updatedZone;
+        console.log(`📦 [Dead Zone Registry] Updated existing dead zone ${updatedZone.id} (drops: ${updatedZone.signalDropsCount})`);
+    } else {
+        updatedZone = {
+            id: `deadzone_${Math.round(center.lat * 100)}_${Math.round(center.lng * 100)}_${now}`,
+            center,
+            radiusKm,
+            firstObservedAt: now,
+            lastObservedAt: now,
+            durationSeconds,
+            signalDropsCount: 1,
+            isCached: offlineMapService.isLocationCovered(center, radiusKm)
+        };
+        zones.push(updatedZone);
+        console.log(`📦 [Dead Zone Registry] Registered new cellular dead zone at [${center.lat.toFixed(4)}, ${center.lng.toFixed(4)}] (${radiusKm}km radius)`);
+    }
+
+    saveKnownDeadZones(zones);
+
+    // If online, immediately initiate background delta tile cache for this dead zone
+    if (typeof navigator !== 'undefined' && navigator.onLine && !updatedZone.isCached) {
+        syncDeadZoneTiles(updatedZone).catch(err => console.warn('📦 Background dead zone sync error:', err));
+    }
+
+    return updatedZone;
+};
+
+/**
+ * Find all known dead zones intersecting a navigation route polyline.
+ */
+export const findDeadZonesIntersectingRoute = (
+    routeCoords: Array<{ lat: number; lng: number } | [number, number]> | undefined
+): DeadZoneRecord[] => {
+    if (!routeCoords || routeCoords.length === 0) return [];
+    const zones = getKnownDeadZones();
+    if (zones.length === 0) return [];
+
+    const normalized: Array<{ lat: number; lng: number }> = routeCoords.map(pt => {
+        if (Array.isArray(pt)) return { lng: pt[0], lat: pt[1] };
+        return { lat: (pt as any).lat, lng: (pt as any).lng };
+    });
+
+    const matchingZones = new Set<DeadZoneRecord>();
+
+    for (const zone of zones) {
+        // Step sample points along the route
+        for (let i = 0; i < normalized.length; i += Math.max(1, Math.floor(normalized.length / 20))) {
+            const pt = normalized[i];
+            const distKm = getDistanceFromCoords(pt.lat, pt.lng, zone.center.lat, zone.center.lng) / 1000;
+            if (distKm <= zone.radiusKm) {
+                matchingZones.add(zone);
+                break;
+            }
+        }
+    }
+
+    return Array.from(matchingZones);
 };

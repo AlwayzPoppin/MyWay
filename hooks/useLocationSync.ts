@@ -12,6 +12,7 @@ import { broadcastGeofencePushAlert } from '../services/pushNotificationService'
 import { speechService } from '../services/speechService';
 import { batteryService } from '../services/batteryService';
 import { getSafeAvatarUrl } from '../utils/avatar';
+import { registerDeadZone } from '../services/offlineLocationBuffer';
 
 export const useLocationSync = (
     user: any,
@@ -54,6 +55,8 @@ export const useLocationSync = (
         time: number;
     }>({ lat: 0, lng: 0, speed: -1, heading: -1, status: '', time: 0 });
     const hasReceivedRealSignalRef = useRef(false);
+    const poorSignalStartTimeRef = useRef<number | null>(null);
+    const poorSignalAnchorRef = useRef<{ lat: number; lng: number } | null>(null);
 
     // Haversine distance — delegated to shared utils/geo.ts
     const getDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) =>
@@ -301,6 +304,24 @@ export const useLocationSync = (
                         } : m
                     );
                 });
+            }
+
+            // Predictive Geographic Caching: Track poor signal duration and register dead zones
+            if (location.signalQuality === 'poor') {
+                if (!poorSignalStartTimeRef.current) {
+                    poorSignalStartTimeRef.current = Date.now();
+                    poorSignalAnchorRef.current = { lat: location.latitude, lng: location.longitude };
+                } else if (Date.now() - poorSignalStartTimeRef.current >= 2 * 60 * 1000) {
+                    // Poor signal persisted for > 2 minutes: Register dead zone
+                    const anchor = poorSignalAnchorRef.current || { lat: location.latitude, lng: location.longitude };
+                    const durationSec = Math.round((Date.now() - poorSignalStartTimeRef.current) / 1000);
+                    registerDeadZone(anchor, durationSec, 10);
+                    // Reset start time anchor so it records continuously without spam
+                    poorSignalStartTimeRef.current = Date.now();
+                }
+            } else {
+                poorSignalStartTimeRef.current = null;
+                poorSignalAnchorRef.current = null;
             }
 
             // 5. DEBOUNCE CHECK FOR FIREBASE SYNC (Adaptive Network Thresholds)

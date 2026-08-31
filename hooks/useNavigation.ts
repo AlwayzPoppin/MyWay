@@ -13,6 +13,7 @@ import { offlineMapService } from '../services/offlineMapService';
 import { searchHistoryService } from '../services/searchHistoryService';
 import { convoyService } from '../services/convoyService';
 import { maintenanceAlertService, VehicleHealthItem } from '../services/maintenanceAlertService';
+import { findDeadZonesIntersectingRoute, syncDeadZoneTiles } from '../services/offlineLocationBuffer';
 
 export interface BetterRouteSuggestion {
     route: NavigationRoute;
@@ -789,6 +790,31 @@ export const useNavigation = (
     const handleDismissMaintenanceAdvisory = useCallback(() => {
         setAmbientMaintenanceAdvisory(null);
     }, []);
+
+    // Predictive Geographic Caching: Preemptively cache map tiles for known dead zones along the upcoming route
+    const hasCachedDeadZonesForRouteRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (!isNavigating || !activeRoute) {
+            hasCachedDeadZonesForRouteRef.current = null;
+            return;
+        }
+
+        const routeKey = `${activeRoute.destinationName}_${activeRoute.totalDistance}`;
+        if (hasCachedDeadZonesForRouteRef.current === routeKey) return;
+        hasCachedDeadZonesForRouteRef.current = routeKey;
+
+        const intersectingDeadZones = findDeadZonesIntersectingRoute(activeRoute.routeGeometry);
+        const uncached = intersectingDeadZones.filter(z => !z.isCached);
+
+        if (uncached.length > 0) {
+            console.log(`📦 [Predictive Caching] Route intersects ${uncached.length} known cellular dead zones. Proactively triggering background tile sync...`);
+            uncached.forEach(zone => {
+                syncDeadZoneTiles(zone).catch(err => console.warn('📦 Failed to delta sync dead zone:', err));
+            });
+            showNotification(`📦 Preemptively caching map tiles for ${uncached.length} cellular dead zone${uncached.length > 1 ? 's' : ''} along your route`, 4000);
+        }
+    }, [isNavigating, activeRoute, showNotification]);
 
     return {
         activeRoute,
