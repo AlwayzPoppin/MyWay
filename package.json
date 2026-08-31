@@ -22,6 +22,7 @@
     "@google/genai": "^1.35.0",
     "firebase": "^12.8.0",
     "maplibre-gl": "^5.16.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },

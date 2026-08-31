@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface InviteShareModalProps {
     inviteCode: string;
@@ -8,79 +9,6 @@ interface InviteShareModalProps {
     showNotification?: (msg: string, duration?: number) => void;
     theme: 'light' | 'dark';
 }
-
-/**
- * Generate a simple QR code as SVG using a minimal inline implementation.
- * Uses a basic 2D matrix encoding (not full QR spec, but visually functional).
- */
-const generateQRMatrix = (text: string, size: number = 21): boolean[][] => {
-    const matrix: boolean[][] = Array(size).fill(null).map(() => Array(size).fill(false));
-
-    // Seed from text
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-        hash = ((hash << 5) - hash) + text.charCodeAt(i);
-        hash |= 0;
-    }
-
-    // Finder patterns (top-left, top-right, bottom-left)
-    const addFinder = (x: number, y: number) => {
-        for (let i = -1; i <= 7; i++) {
-            for (let j = -1; j <= 7; j++) {
-                const px = x + j, py = y + i;
-                if (px < 0 || py < 0 || px >= size || py >= size) continue;
-                const isEdge = i === -1 || i === 7 || j === -1 || j === 7;
-                const isInner = i >= 2 && i <= 4 && j >= 2 && j <= 4;
-                const isBorder = i === 0 || i === 6 || j === 0 || j === 6;
-                matrix[py][px] = !isEdge && (isBorder || isInner);
-            }
-        }
-    };
-
-    addFinder(0, 0);
-    addFinder(size - 7, 0);
-    addFinder(0, size - 7);
-
-    // Data pattern — deterministic from hash
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            if (matrix[y][x]) continue;
-            // Skip finder pattern areas
-            if ((x < 8 && y < 8) || (x >= size - 8 && y < 8) || (x < 8 && y >= size - 8)) continue;
-            // Deterministic data from text hash
-            const bit = ((hash * (x + 1) * (y + 1)) ^ (text.charCodeAt((x + y) % text.length) * 31)) % 3 === 0;
-            matrix[y][x] = bit;
-        }
-    }
-
-    return matrix;
-};
-
-const QRCode: React.FC<{ text: string; size?: number }> = ({ text, size = 200 }) => {
-    const matrix = generateQRMatrix(text);
-    const cellSize = size / matrix.length;
-
-    return (
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="rounded-xl">
-            <rect width={size} height={size} fill="white" rx="12" />
-            {matrix.map((row, y) =>
-                row.map((cell, x) =>
-                    cell ? (
-                        <rect
-                            key={`${x}-${y}`}
-                            x={x * cellSize + 1}
-                            y={y * cellSize + 1}
-                            width={cellSize - 0.5}
-                            height={cellSize - 0.5}
-                            fill="#0f172a"
-                            rx={1}
-                        />
-                    ) : null
-                )
-            )}
-        </svg>
-    );
-};
 
 const InviteShareModal: React.FC<InviteShareModalProps> = ({
     inviteCode,
@@ -153,7 +81,7 @@ const InviteShareModal: React.FC<InviteShareModalProps> = ({
                     {/* QR Code */}
                     <div className="flex justify-center">
                         <div className="p-3 bg-white rounded-2xl shadow-lg">
-                            <QRCode text={shareUrl} size={180} />
+                            <QRCodeSVG value={shareUrl} size={180} level="H" includeMargin={false} />
                         </div>
                     </div>
 
