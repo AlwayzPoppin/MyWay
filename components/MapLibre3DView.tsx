@@ -143,6 +143,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const [mapEpoch, setMapEpoch] = React.useState(0); // Incremented to trigger WebGL context loss recovery reboot
     const renderedGeofenceIdsRef = useRef<Set<string>>(new Set());
     const routeRafRef = useRef<number | null>(null);
+    const membersMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const placesMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const currentStyleUrlRef = useRef<string | null>(null);
 
     // Predictive Autonomous Maintenance Corridor Places
     const [maintenancePlaces, setMaintenancePlaces] = React.useState<Place[]>([]);
@@ -199,6 +202,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 requestAnimationFrame(() => {
                     console.warn('🔄 MapLibre3DView: Executing WebGL recovery reboot...');
                     renderedGeofenceIdsRef.current.clear();
+                    membersMarkersRef.current.forEach(m => m.remove());
+                    membersMarkersRef.current.clear();
+                    placesMarkersRef.current.forEach(m => m.remove());
+                    placesMarkersRef.current.clear();
 
                     if (map.current) {
                         try {
@@ -564,6 +571,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         document.addEventListener('visibilitychange', handleVisibilityChange);
 
         mapInstance.on('load', () => {
+            currentStyleUrlRef.current = styleUrl;
             apply3DBuildingLayer();
             setIsMapReady(true);
             onMapReady?.();
@@ -613,6 +621,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             canvas.removeEventListener('webglcontextlost', handleContextLost);
             canvas.removeEventListener('webglcontextrestored', handleContextRestored);
+            membersMarkersRef.current.forEach(m => m.remove());
+            membersMarkersRef.current.clear();
+            placesMarkersRef.current.forEach(m => m.remove());
+            placesMarkersRef.current.clear();
             if (map.current) {
                 try {
                     map.current.remove();
@@ -624,16 +636,22 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     // Audit Fix: Reactively update styleUrl when skin or style changes
     useEffect(() => {
-        if (map.current && styleUrl) {
-            try {
-                // Set diff: false to prevent "Cannot read properties of undefined (reading 'setState')"
-                // occurring in maplibre-gl when switching between complex style objects.
-                map.current.setStyle(styleUrl, { diff: false });
-            } catch (err) {
-                console.error('🗺️ Map: setStyle failed', err);
-            }
+        if (!map.current || !isMapReady) return;
+        if (!currentStyleUrlRef.current) {
+            currentStyleUrlRef.current = styleUrl;
+            return;
         }
-    }, [styleUrl, mapStyle]);
+        if (currentStyleUrlRef.current === styleUrl) return;
+        currentStyleUrlRef.current = styleUrl;
+
+        try {
+            // Set diff: false to prevent "Cannot read properties of undefined (reading 'setState')"
+            // occurring in maplibre-gl when switching between complex style objects.
+            map.current.setStyle(styleUrl, { diff: false });
+        } catch (err) {
+            console.error('🗺️ Map: setStyle failed', err);
+        }
+    }, [styleUrl, mapStyle, isMapReady]);
 
     // Live update 3D building heights, ambient landmark glow, and architectural lighting
     useEffect(() => {
@@ -1008,209 +1026,85 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const prevMapSkinRef = useRef(mapSkin);
 
     // ==========================================
-    // WEBGL SYMBOL & CIRCLE LAYER CLUSTERING FOR PLACES
+    // PLACES MARKERS (HTML DOM MARKERS FOR GUARANTEED INSTANT VISIBILITY)
     // ==========================================
     useEffect(() => {
-        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
+        if (!map.current || !isMapReady) return;
 
-        const sourceId = 'places-cluster-source';
         const validPlaces = (places || []).filter(p => p && p.location && typeof p.location.lat === 'number' && typeof p.location.lng === 'number' && !(p.location.lat === 0 && p.location.lng === 0));
-        const geojsonData: GeoJSON.FeatureCollection = {
-            type: 'FeatureCollection',
-            features: validPlaces.map(p => ({
-                type: 'Feature',
-                id: p.id,
-                properties: {
-                    id: p.id,
-                    name: p.name || 'Place',
-                    type: p.type || 'home',
-                    icon: p.icon || (p.type === 'home' ? '🏠' : p.type === 'work' ? '💼' : p.type === 'school' ? '🏫' : p.type === 'gym' ? '💪' : p.type === 'gas' ? '⛽' : p.type === 'food' ? '🍔' : p.type === 'coffee' ? '☕' : '📍'),
-                    color: (p as any).brandColor || (p as any).color || (p.type === 'home' ? '#22c55e' : p.type === 'work' ? '#3b82f6' : p.type === 'school' ? '#f59e0b' : p.type === 'gym' ? '#ec4899' : p.type === 'gas' ? '#f97316' : '#6366f1'),
-                },
-                geometry: {
-                    type: 'Point',
-                    coordinates: [p.location.lng, p.location.lat]
-                }
-            }))
-        };
+        const currentPlaceIds = new Set(validPlaces.map(p => p.id));
 
-        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
-        if (source) {
-            source.setData(geojsonData);
-        } else {
-            map.current.addSource(sourceId, {
-                type: 'geojson',
-                data: geojsonData,
-                cluster: true,
-                clusterMaxZoom: 14,
-                clusterRadius: 50
-            });
-
-            // 1. Cluster Circles (GPU-accelerated gradient by count)
-            map.current.addLayer({
-                id: 'places-clusters-glow',
-                type: 'circle',
-                source: sourceId,
-                filter: ['has', 'point_count'],
-                paint: {
-                    'circle-color': [
-                        'step', ['get', 'point_count'],
-                        '#6366f1', 5,
-                        '#8b5cf6', 15,
-                        '#ec4899'
-                    ],
-                    'circle-radius': [
-                        'step', ['get', 'point_count'],
-                        20, 5,
-                        26, 15,
-                        32
-                    ],
-                    'circle-opacity': 0.85,
-                    'circle-stroke-width': 2.5,
-                    'circle-stroke-color': '#ffffff',
-                    'circle-stroke-opacity': 0.9
-                }
-            });
-
-            // 2. Cluster Count Text
-            map.current.addLayer({
-                id: 'places-cluster-count',
-                type: 'symbol',
-                source: sourceId,
-                filter: ['has', 'point_count'],
-                layout: {
-                    'text-field': '{point_count_abbreviated}',
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': 13,
-                    'text-allow-overlap': true,
-                    'text-ignore-placement': true
-                },
-                paint: {
-                    'text-color': '#ffffff'
-                }
-            });
-
-            // 3. Unclustered Individual Places Outer Circle / Badge
-            map.current.addLayer({
-                id: 'places-unclustered-circle',
-                type: 'circle',
-                source: sourceId,
-                filter: ['!', ['has', 'point_count']],
-                paint: {
-                    'circle-color': ['get', 'color'],
-                    'circle-radius': [
-                        'interpolate', ['linear'], ['zoom'],
-                        10, 8,
-                        14, 13,
-                        17, 16
-                    ],
-                    'circle-stroke-width': 2.5,
-                    'circle-stroke-color': '#ffffff',
-                    'circle-opacity': 0.95
-                }
-            });
-
-            // 4. Unclustered Place Emoji Icon
-            map.current.addLayer({
-                id: 'places-unclustered-icon',
-                type: 'symbol',
-                source: sourceId,
-                filter: ['!', ['has', 'point_count']],
-                layout: {
-                    'text-field': ['get', 'icon'],
-                    'text-size': [
-                        'interpolate', ['linear'], ['zoom'],
-                        10, 8,
-                        14, 12,
-                        17, 15
-                    ],
-                    'text-allow-overlap': true,
-                    'text-ignore-placement': true
-                }
-            });
-
-            // 5. Unclustered Place Text Label
-            map.current.addLayer({
-                id: 'places-unclustered-label',
-                type: 'symbol',
-                source: sourceId,
-                filter: ['!', ['has', 'point_count']],
-                layout: {
-                    'text-field': ['get', 'name'],
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': [
-                        'interpolate', ['linear'], ['zoom'],
-                        12, 10,
-                        16, 12
-                    ],
-                    'text-offset': [0, 1.5],
-                    'text-anchor': 'top',
-                    'text-optional': true
-                },
-                paint: {
-                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.85)',
-                    'text-halo-width': 2
-                }
-            });
-
-            // 4. Unclustered Place Text Label
-            map.current.addLayer({
-                id: 'places-unclustered-label',
-                type: 'symbol',
-                source: sourceId,
-                filter: ['!', ['has', 'point_count']],
-                layout: {
-                    'text-field': ['get', 'name'],
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': [
-                        'interpolate', ['linear'], ['zoom'],
-                        12, 10,
-                        16, 12
-                    ],
-                    'text-offset': [0, 1.3],
-                    'text-anchor': 'top',
-                    'text-optional': true
-                },
-                paint: {
-                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.85)',
-                    'text-halo-width': 1.5
-                }
-            });
-
-            // Cluster click -> smooth zoom expansion
-            map.current.on('click', 'places-clusters-glow', (e) => {
-                const features = map.current?.queryRenderedFeatures(e.point, { layers: ['places-clusters-glow'] });
-                if (!features || !features[0]) return;
-                const clusterId = features[0].properties?.cluster_id;
-                const src = map.current?.getSource(sourceId) as maplibregl.GeoJSONSource;
-                src?.getClusterExpansionZoom(clusterId, (err, zoom) => {
-                    if (err || !map.current) return;
-                    map.current.easeTo({
-                        center: (features[0].geometry as any).coordinates,
-                        zoom: zoom + 0.5,
-                        duration: 600
-                    });
-                });
-            });
-
-            // Unclustered place click -> select place
-            map.current.on('click', 'places-unclustered-circle', (e) => {
-                const feature = e.features?.[0];
-                if (feature?.properties?.id) {
-                    const place = placesRef.current.find(p => p.id === feature.properties.id);
-                    if (place) onSelectPlace?.(place);
-                }
-            });
-
-            // Hover cursor styles
-            map.current.on('mouseenter', 'places-clusters-glow', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
-            map.current.on('mouseleave', 'places-clusters-glow', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
-            map.current.on('mouseenter', 'places-unclustered-circle', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
-            map.current.on('mouseleave', 'places-unclustered-circle', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
+        // Remove old place markers
+        for (const [id, marker] of placesMarkersRef.current.entries()) {
+            if (!currentPlaceIds.has(id)) {
+                marker.remove();
+                placesMarkersRef.current.delete(id);
+            }
         }
-    }, [places, onSelectPlace, isMapReady, styleVersion, theme]);
+
+        // Add or update place markers
+        validPlaces.forEach(place => {
+            const placeColor = place.brandColor || (place as any).color || (
+                place.type === 'home' ? '#22c55e' :
+                place.type === 'work' ? '#3b82f6' :
+                place.type === 'school' ? '#f59e0b' :
+                place.type === 'gym' ? '#ec4899' :
+                place.type === 'gas' ? '#f97316' :
+                place.type === 'food' ? '#ef4444' :
+                place.type === 'coffee' ? '#a855f7' : '#6366f1'
+            );
+
+            const icon = place.icon || (
+                place.type === 'home' ? '🏠' :
+                place.type === 'work' ? '💼' :
+                place.type === 'school' ? '🏫' :
+                place.type === 'gym' ? '💪' :
+                place.type === 'gas' ? '⛽' :
+                place.type === 'food' ? '🍔' :
+                place.type === 'coffee' ? '☕' : '📍'
+            );
+
+            let marker = placesMarkersRef.current.get(place.id);
+            if (!marker) {
+                const el = document.createElement('div');
+                el.className = 'myway-place-marker select-none';
+                el.style.display = 'flex';
+                el.style.flexDirection = 'column';
+                el.style.alignItems = 'center';
+                el.style.cursor = 'pointer';
+                el.style.transform = 'translate3d(0,0,0)';
+                el.innerHTML = `
+                    <div style="width: 36px; height: 36px; border-radius: 50%; background: ${placeColor}; border: 2.5px solid #ffffff; box-shadow: 0 4px 14px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; font-size: 17px; transition: transform 0.15s ease;">
+                        ${icon}
+                    </div>
+                    <div style="margin-top: 3px; font-size: 11px; font-weight: 800; color: ${theme === 'dark' ? '#f8fafc' : '#0f172a'}; text-shadow: 0 1px 4px ${theme === 'dark' ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)'}; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis; padding: 2px 7px; border-radius: 6px; background: ${theme === 'dark' ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.9)'}; border: 1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}; box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
+                        ${place.name}
+                    </div>
+                `;
+
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    onSelectPlace?.(place);
+                });
+
+                el.addEventListener('mouseenter', () => {
+                    const badge = el.querySelector('div') as HTMLElement;
+                    if (badge) badge.style.transform = 'scale(1.15)';
+                });
+                el.addEventListener('mouseleave', () => {
+                    const badge = el.querySelector('div') as HTMLElement;
+                    if (badge) badge.style.transform = 'scale(1)';
+                });
+
+                marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+                    .setLngLat([place.location.lng, place.location.lat])
+                    .addTo(map.current!);
+                placesMarkersRef.current.set(place.id, marker);
+            } else {
+                marker.setLngLat([place.location.lng, place.location.lat]);
+            }
+        });
+    }, [places, isMapReady, theme, onSelectPlace]);
 
     // ==========================================
     // PREDICTIVE AUTONOMOUS MAINTENANCE CORRIDOR LAYER
@@ -1551,13 +1445,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }, [privacyZones, styleVersion]);
 
     // ==========================================
-    // UNIFIED WEBGL MEMBERS & ACCURACY LAYER
+    // MEMBER AVATARS & LIVE LOCATION PUCK MARKERS
     // ==========================================
-    const membersRef = useRef(members);
-    membersRef.current = members;
-
     useEffect(() => {
-        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
+        if (!map.current || !isMapReady) return;
 
         const SNAPPING_THRESHOLD_METERS = 40;
         const validMembers = (members || []).filter(m => m && m.location && typeof m.location.lat === 'number' && typeof m.location.lng === 'number' && !(m.location.lat === 0 && m.location.lng === 0));
@@ -1590,10 +1481,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             new Map<string, FamilyMember>(allMembersToRender.map(m => [m.id, m])).values()
         );
 
-        // 1. Accuracy & Privacy Halos FeatureCollection
-        const haloFeatures: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
-        // 2. Members FeatureCollection
-        const memberFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
+        const currentMemberIds = new Set(dedupedMembers.map(m => m.id));
+
+        // Remove stale member markers
+        for (const [id, marker] of membersMarkersRef.current.entries()) {
+            if (!currentMemberIds.has(id)) {
+                marker.remove();
+                membersMarkersRef.current.delete(id);
+            }
+        }
 
         dedupedMembers.forEach(member => {
             let finalLocation = member.location;
@@ -1629,12 +1525,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const updatedMs = new Date(member.lastUpdated).getTime();
             const ageMinutes = Math.floor((Date.now() - updatedMs) / 60000);
             const isStale = ageMinutes >= 5;
-            const ageBadge = isStale ? (ageMinutes >= 60 ? `${Math.floor(ageMinutes / 60)}h ago` : `${ageMinutes}m ago`) : '';
-
             const isBlurred = member.privacyMode === 'blurred' || member.isGhostMode;
             const isFrozen = member.privacyMode === 'frozen';
             const isGTARadar = mapSkin === 'gta_radar';
-            const isDriving = member.status === 'Driving';
+            const isDriving = member.status === 'Driving' || (member.speed && member.speed > 5);
+            const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
 
             const borderColor = isGTARadar
                 ? '#facc15'
@@ -1648,229 +1543,46 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                                 ? '#6366f1' 
                                 : '#22c55e';
 
-            // Accuracy/Privacy Halo
-            const circleRadiusKm = isBlurred ? ((member.blurredRadiusMeters || 2400) / 1000) : (member.accuracy ? member.accuracy / 1000 : 0);
-            if (circleRadiusKm > 0 && !isNavigating) {
-                const coords = getCircleCoords(finalLocation, circleRadiusKm, 36);
-                haloFeatures.push({
-                    type: 'Feature',
-                    properties: {
-                        id: member.id,
-                        color: isBlurred ? '#a855f7' : '#6366f1',
-                        opacity: isBlurred ? 0.16 : 0.10
-                    },
-                    geometry: { type: 'Polygon', coordinates: [coords] }
-                });
-            }
-
             const initials = (member.name || 'M').charAt(0).toUpperCase();
-            const etaBadge = member.currentTrip?.totalTime ? `🚗 ${member.currentTrip.totalTime}` : '';
-            const statusBadge = isStale ? ageBadge : isBlurred ? '🏙️ ~1.5 mi' : isFrozen ? '❄️ Frozen' : '';
 
-            memberFeatures.push({
-                type: 'Feature',
-                id: member.id,
-                properties: {
-                    id: member.id,
-                    name: member.name || 'Member',
-                    initials,
-                    color: borderColor,
-                    isDriving,
-                    bearing: displayBearing,
-                    eta: etaBadge,
-                    badge: statusBadge
-                },
-                geometry: {
-                    type: 'Point',
-                    coordinates: [finalLocation.lng, finalLocation.lat]
-                }
-            });
+            let marker = membersMarkersRef.current.get(member.id);
+            if (!marker) {
+                const el = document.createElement('div');
+                el.className = 'myway-member-avatar-marker select-none';
+                el.style.cursor = 'pointer';
+                el.style.display = 'flex';
+                el.style.flexDirection = 'column';
+                el.style.alignItems = 'center';
+                el.style.transform = 'translate3d(0,0,0)';
+
+                el.innerHTML = `
+                    <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
+                        ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${borderColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
+                        <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3.5px solid #ffffff; background: ${borderColor}; box-shadow: 0 6px 18px rgba(0,0,0,0.45); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
+                            ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
+                            <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
+                        </div>
+                        ${isSelf ? `<span style="position: absolute; bottom: -2px; right: -2px; font-size: 8px; font-weight: 900; background: #4f46e5; color: #ffffff; padding: 1.5px 5px; border-radius: 9999px; border: 1.5px solid #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">YOU</span>` : ''}
+                        ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${displayBearing}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                    </div>
+                    <div style="margin-top: 2px; font-size: 11px; font-weight: 800; color: ${theme === 'dark' ? '#f8fafc' : '#0f172a'}; text-shadow: 0 1px 4px ${theme === 'dark' ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)'}; white-space: nowrap; padding: 2px 7px; border-radius: 6px; background: ${theme === 'dark' ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.9)'}; border: 1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}; box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
+                        ${member.name || 'Member'}
+                    </div>
+                `;
+
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    onSelectMember?.(member.id);
+                });
+
+                marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+                    .setLngLat([finalLocation.lng, finalLocation.lat])
+                    .addTo(map.current!);
+                membersMarkersRef.current.set(member.id, marker);
+            } else {
+                marker.setLngLat([finalLocation.lng, finalLocation.lat]);
+            }
         });
-
-        // --- UPDATE ACCURACY HALOS ---
-        const haloSourceId = 'members-accuracy-halos-source';
-        const haloGeoJson: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: haloFeatures };
-        const haloSource = map.current.getSource(haloSourceId) as maplibregl.GeoJSONSource;
-        if (haloSource) {
-            haloSource.setData(haloGeoJson);
-        } else {
-            map.current.addSource(haloSourceId, { type: 'geojson', data: haloGeoJson });
-            map.current.addLayer({
-                id: 'members-accuracy-fill',
-                type: 'fill',
-                source: haloSourceId,
-                paint: {
-                    'fill-color': ['get', 'color'],
-                    'fill-opacity': ['get', 'opacity']
-                }
-            });
-        }
-
-        // --- UPDATE MEMBERS WEBGL LAYERS ---
-        const membersSourceId = 'members-webgl-source';
-        const membersGeoJson: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: memberFeatures };
-        const membersSource = map.current.getSource(membersSourceId) as maplibregl.GeoJSONSource;
-        if (membersSource) {
-            membersSource.setData(membersGeoJson);
-        } else {
-            map.current.addSource(membersSourceId, { type: 'geojson', data: membersGeoJson });
-
-            // 1. Member Ambient Glow Ring
-            map.current.addLayer({
-                id: 'members-glow-ring',
-                type: 'circle',
-                source: membersSourceId,
-                paint: {
-                    'circle-color': ['get', 'color'],
-                    'circle-radius': [
-                        'interpolate', ['linear'], ['zoom'],
-                        10, 14,
-                        14, 18,
-                        17, 24
-                    ],
-                    'circle-opacity': 0.35,
-                    'circle-stroke-width': 1.5,
-                    'circle-stroke-color': '#ffffff'
-                }
-            });
-
-            // 2. Member Core Circle
-            map.current.addLayer({
-                id: 'members-core-circle',
-                type: 'circle',
-                source: membersSourceId,
-                paint: {
-                    'circle-color': ['get', 'color'],
-                    'circle-radius': [
-                        'interpolate', ['linear'], ['zoom'],
-                        10, 10,
-                        14, 14,
-                        17, 18
-                    ],
-                    'circle-stroke-width': 2.5,
-                    'circle-stroke-color': '#ffffff',
-                    'circle-opacity': 0.98
-                }
-            });
-
-            // 3. Member Initials Symbol
-            map.current.addLayer({
-                id: 'members-initials-symbol',
-                type: 'symbol',
-                source: membersSourceId,
-                layout: {
-                    'text-field': ['get', 'initials'],
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': [
-                        'interpolate', ['linear'], ['zoom'],
-                        10, 9,
-                        14, 12,
-                        17, 14
-                    ],
-                    'text-allow-overlap': true,
-                    'text-ignore-placement': true
-                },
-                paint: {
-                    'text-color': '#ffffff'
-                }
-            });
-
-            // 4. Direction Arrow (Visible when driving)
-            map.current.addLayer({
-                id: 'members-direction-arrow',
-                type: 'symbol',
-                source: membersSourceId,
-                filter: ['==', ['get', 'isDriving'], true],
-                layout: {
-                    'text-field': '▲',
-                    'text-size': 14,
-                    'text-rotate': ['get', 'bearing'],
-                    'text-offset': [0, -1.8],
-                    'text-allow-overlap': true,
-                    'text-ignore-placement': true
-                },
-                paint: {
-                    'text-color': ['get', 'color'],
-                    'text-halo-color': '#000000',
-                    'text-halo-width': 1.5
-                }
-            });
-
-            // 5. Member Name Label
-            map.current.addLayer({
-                id: 'members-name-label',
-                type: 'symbol',
-                source: membersSourceId,
-                layout: {
-                    'text-field': ['get', 'name'],
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': 11,
-                    'text-offset': [0, 1.8],
-                    'text-anchor': 'top',
-                    'text-optional': true
-                },
-                paint: {
-                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.9)',
-                    'text-halo-width': 2
-                }
-            });
-
-            // 6. Live ETA Badge
-            map.current.addLayer({
-                id: 'members-eta-badge',
-                type: 'symbol',
-                source: membersSourceId,
-                filter: ['!=', ['get', 'eta'], ''],
-                layout: {
-                    'text-field': ['get', 'eta'],
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': 10,
-                    'text-offset': [0, -2.6],
-                    'text-allow-overlap': true
-                },
-                paint: {
-                    'text-color': '#ffffff',
-                    'text-halo-color': '#4f46e5',
-                    'text-halo-width': 2
-                }
-            });
-
-            // 7. Status / Privacy Badge
-            map.current.addLayer({
-                id: 'members-status-badge',
-                type: 'symbol',
-                source: membersSourceId,
-                filter: ['!=', ['get', 'badge'], ''],
-                layout: {
-                    'text-field': ['get', 'badge'],
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': 9,
-                    'text-offset': [0, 3.0],
-                    'text-optional': true
-                },
-                paint: {
-                    'text-color': '#94a3b8',
-                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.85)',
-                    'text-halo-width': 1.5
-                }
-            });
-
-            // Interactive Click & Hover
-            map.current.on('click', 'members-core-circle', (e) => {
-                const feature = e.features?.[0];
-                if (feature?.properties?.id) {
-                    onSelectMember?.(feature.properties.id);
-                }
-            });
-
-            map.current.on('mouseenter', 'members-core-circle', () => {
-                if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-            });
-            map.current.on('mouseleave', 'members-core-circle', () => {
-                if (map.current) map.current.getCanvas().style.cursor = '';
-            });
-        }
     }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin, theme, styleVersion, onSelectMember]);
 
     // ==========================================
