@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { NavigationRoute, FamilyMember, Location } from '../types';
 import { speechService } from '../services/speechService';
-import { BetterRouteSuggestion, UpcomingTollAlert } from '../hooks/useNavigation';
+import { BetterRouteSuggestion, UpcomingTollAlert, LeaderDivertedPrompt } from '../hooks/useNavigation';
 import { convoyService, ConvoyMember, ConvoySession } from '../services/convoyService';
 import { maintenanceAlertService } from '../services/maintenanceAlertService';
 import { vehicleFuelService } from '../services/vehicleFuelService';
@@ -22,6 +22,9 @@ interface DriveModeHUDProps {
   upcomingTollAlert?: UpcomingTollAlert | null;
   onTakeTollFreeExit?: () => void;
   onDismissTollAlert?: () => void;
+  leaderDivertedPrompt?: LeaderDivertedPrompt | null;
+  onFollowLeader?: () => void;
+  onKeepOriginalRoute?: () => void;
   members?: FamilyMember[];
   userLocation?: Location | null;
   currentUserId?: string;
@@ -95,6 +98,9 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   upcomingTollAlert,
   onTakeTollFreeExit,
   onDismissTollAlert,
+  leaderDivertedPrompt,
+  onFollowLeader,
+  onKeepOriginalRoute,
   members = [],
   userLocation,
   currentUserId = '',
@@ -253,6 +259,61 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
           <div className="absolute bottom-0 left-0 h-1 bg-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }} />
         </div>
       </div>
+
+      {/* Hive-Mind Fleet Routing: Leader Diverted Interactive 10-Second Countdown Card */}
+      {leaderDivertedPrompt && (
+        <div className={`w-full pointer-events-auto flex justify-center mt-2.5 px-4 animate-in slide-in-from-top-4 duration-300`}>
+          <div className="bg-gradient-to-r from-purple-950/95 via-slate-900/98 to-indigo-950/95 backdrop-blur-2xl border-2 border-purple-500/60 rounded-2xl sm:rounded-3xl p-3.5 sm:px-5 sm:py-4 shadow-[0_20px_50px_rgba(168,85,247,0.4)] flex flex-col gap-3 max-w-lg w-full relative overflow-hidden">
+            {/* 10-Second Auto-Sync Progress Bar */}
+            <div 
+              className="absolute top-0 left-0 h-1.5 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 transition-all duration-1000 ease-linear"
+              style={{ width: `${(leaderDivertedPrompt.timeRemainingSeconds / 10) * 100}%` }}
+            />
+
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-xl shrink-0 shadow-md animate-pulse">
+                  🔀
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-black text-purple-300 uppercase tracking-wider">
+                      Convoy Leader Diverted
+                    </span>
+                    <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-purple-500/30 text-purple-200 border border-purple-400/40 animate-pulse">
+                      Auto-sync in {leaderDivertedPrompt.timeRemainingSeconds}s
+                    </span>
+                  </div>
+                  <p className="text-xs font-bold text-slate-100 truncate mt-0.5">
+                    {leaderDivertedPrompt.leaderName} took new path: {leaderDivertedPrompt.reason}
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-medium">
+                    New ETA: {leaderDivertedPrompt.newRoute.totalTime} • {leaderDivertedPrompt.newRoute.totalDistance}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Decision Action Buttons */}
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
+              <button
+                type="button"
+                onClick={onFollowLeader}
+                className="py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-600/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>⚡ Follow Leader</span>
+              </button>
+              <button
+                type="button"
+                onClick={onKeepOriginalRoute}
+                className="py-2.5 px-3 bg-white/10 hover:bg-white/20 active:scale-95 text-slate-300 hover:text-white font-bold text-xs rounded-xl border border-white/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>🛑 Keep My Route</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Dynamic In-Drive Reroute Option Switcher Pill */}
       {betterRouteSuggestion && (

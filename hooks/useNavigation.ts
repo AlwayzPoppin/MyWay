@@ -27,6 +27,15 @@ export interface UpcomingTollAlert {
     stepIndex: number;
 }
 
+export interface LeaderDivertedPrompt {
+    leaderName: string;
+    leaderId: string;
+    newRoute: NavigationRoute;
+    reason: string;
+    timeRemainingSeconds: number;
+    timestamp: number;
+}
+
 export const useNavigation = (
     user: any,
     profile: any,
@@ -610,19 +619,23 @@ export const useNavigation = (
         }
     }, [isNavigating, navState.isOffRoute, activeRoute, handleStartNavigation, showNotification]);
 
-    // Hive-Mind Fleet Routing: Listen for Leader Reroutes when trailing in a Convoy
-    useEffect(() => {
-        const unsub = convoyService.onReroute((newRoute, event) => {
-            const activeConvoy = convoyService.getActiveConvoy();
-            const currentUid = user?.uid || members[0]?.id || 'self';
+    // Hive-Mind Fleet Routing: 10-Second Countdown Decision Engine
+    const [leaderDivertedPrompt, setLeaderDivertedPrompt] = useState<LeaderDivertedPrompt | null>(null);
+    const leaderPromptTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-            // Only apply automatic reroute if user is a follower in an active caravan
-            if (!activeConvoy || !activeConvoy.isActive || activeConvoy.leaderId === currentUid) {
-                return;
-            }
+    const clearLeaderPromptTimer = useCallback(() => {
+        if (leaderPromptTimerRef.current) {
+            clearInterval(leaderPromptTimerRef.current);
+            leaderPromptTimerRef.current = null;
+        }
+    }, []);
 
-            console.log('📡 [Convoy Follower] Auto-syncing route from Convoy Leader:', event.leaderId, newRoute);
-            setActiveRoute(newRoute);
+    const handleFollowLeader = useCallback(() => {
+        clearLeaderPromptTimer();
+        setLeaderDivertedPrompt((prev) => {
+            if (!prev) return null;
+            console.log('📡 [Convoy Follower] Following Convoy Leader Route:', prev.newRoute);
+            setActiveRoute(prev.newRoute);
             setNavState({
                 currentStepIndex: 0,
                 distanceToNextStep: 0,
@@ -630,19 +643,75 @@ export const useNavigation = (
                 hasArrived: false,
                 splitIndex: 0
             });
+            showNotification(`🔀 Following leader on route via ${prev.newRoute.summary || 'new path'}`, 5000);
+            speechService.speak(`Following leader onto updated route.`, { chime: 'turn' });
+            return null;
+        });
+    }, [showNotification, clearLeaderPromptTimer]);
 
-            showNotification(`🔀 Convoy Leader rerouted: Syncing path via ${newRoute.summary || 'updated route'}`, 5000);
-            speechService.speak(`Leader changed route. Updating caravan path.`, { chime: 'turn' });
+    const handleKeepOriginalRoute = useCallback(() => {
+        clearLeaderPromptTimer();
+        setLeaderDivertedPrompt(null);
+        showNotification(`🛑 Keeping original route`, 4000);
+        speechService.speak(`Keeping current route.`, { chime: 'turn' });
+    }, [showNotification, clearLeaderPromptTimer]);
 
-            if (newRoute.steps && newRoute.steps[0]) {
-                speechService.announceManeuver(newRoute.steps[0].instruction, 50, 'initial');
-                lastAnnouncedStepIndexRef.current = 0;
-                lastAnnouncedProximityRef.current = 'initial';
+    // Hive-Mind Fleet Routing: Listen for Leader Reroutes when trailing in a Convoy
+    useEffect(() => {
+        const unsub = convoyService.onReroute((newRoute, event) => {
+            const activeConvoy = convoyService.getActiveConvoy();
+            const currentUid = user?.uid || members[0]?.id || 'self';
+
+            // Only trigger prompt if user is a follower in an active caravan
+            if (!activeConvoy || !activeConvoy.isActive || activeConvoy.leaderId === currentUid) {
+                return;
             }
+
+            console.log('📡 [Convoy Follower] Received Leader Reroute:', event.leaderId, newRoute);
+
+            // Announce to driver
+            speechService.speak(`Convoy leader changed route. Syncing in ten seconds.`, { chime: 'turn' });
+
+            // Clear any existing timer
+            clearLeaderPromptTimer();
+
+            let seconds = 10;
+            setLeaderDivertedPrompt({
+                leaderName: activeConvoy.leaderName || 'Convoy Leader',
+                leaderId: event.leaderId,
+                newRoute,
+                reason: newRoute.summary ? `Recalculated via ${newRoute.summary}` : 'Alternative path selected',
+                timeRemainingSeconds: seconds,
+                timestamp: Date.now()
+            });
+
+            leaderPromptTimerRef.current = setInterval(() => {
+                seconds -= 1;
+                if (seconds <= 0) {
+                    clearLeaderPromptTimer();
+                    // Auto-sync after 10s window expires
+                    console.log('📡 [Convoy Follower] 10s timer expired: Auto-syncing to Leader route');
+                    setActiveRoute(newRoute);
+                    setNavState({
+                        currentStepIndex: 0,
+                        distanceToNextStep: 0,
+                        isOffRoute: false,
+                        hasArrived: false,
+                        splitIndex: 0
+                    });
+                    setLeaderDivertedPrompt(null);
+                    showNotification(`🔀 Convoy Leader path synced via ${newRoute.summary || 'updated route'}`, 4000);
+                } else {
+                    setLeaderDivertedPrompt(prev => prev ? { ...prev, timeRemainingSeconds: seconds } : null);
+                }
+            }, 1000);
         });
 
-        return unsub;
-    }, [user, members, showNotification]);
+        return () => {
+            unsub();
+            clearLeaderPromptTimer();
+        };
+    }, [user, members, showNotification, clearLeaderPromptTimer]);
 
     return {
         activeRoute,
@@ -653,6 +722,9 @@ export const useNavigation = (
         setNavState,
         betterRouteSuggestion,
         upcomingTollAlert,
+        leaderDivertedPrompt,
+        handleFollowLeader,
+        handleKeepOriginalRoute,
         handleSwitchRoute,
         handleDismissReroute,
         handleTakeTollFreeExit,

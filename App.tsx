@@ -286,6 +286,9 @@ const App: React.FC = () => {
     navState,
     betterRouteSuggestion,
     upcomingTollAlert,
+    leaderDivertedPrompt,
+    handleFollowLeader,
+    handleKeepOriginalRoute,
     handleSwitchRoute,
     handleDismissReroute,
     handleTakeTollFreeExit,
@@ -958,6 +961,9 @@ const App: React.FC = () => {
                 upcomingTollAlert={upcomingTollAlert}
                 onTakeTollFreeExit={handleTakeTollFreeExit}
                 onDismissTollAlert={handleDismissTollAlert}
+                leaderDivertedPrompt={leaderDivertedPrompt}
+                onFollowLeader={handleFollowLeader}
+                onKeepOriginalRoute={handleKeepOriginalRoute}
                 members={members}
                 userLocation={userLocation}
                 currentUserId={user?.uid || ''}
