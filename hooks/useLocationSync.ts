@@ -10,6 +10,7 @@ import { recordTripPoint, getActiveTrip } from '../services/tripHistoryService';
 import { bufferMessage } from '../services/offlineMessageBuffer';
 import { broadcastGeofencePushAlert } from '../services/pushNotificationService';
 import { speechService } from '../services/speechService';
+import { batteryService } from '../services/batteryService';
 import { getSafeAvatarUrl } from '../utils/avatar';
 
 export const useLocationSync = (
@@ -75,7 +76,7 @@ export const useLocationSync = (
                     avatar: getSafeAvatarUrl(profile?.photoURL || user.photoURL, profile?.displayName || user.displayName || user.uid),
                     location: userLocation,
                     status: 'Stationary',
-                    battery: 100,
+                    battery: batteryService.getBatteryLevel(),
                     membershipTier: profile?.membershipTier || 'free',
                     lastUpdated: new Date().toISOString(),
                     accuracy: 2500, // Large uncertainty circle until real GPS corrects it
@@ -92,6 +93,16 @@ export const useLocationSync = (
             setHasInjectedSelf(true);
         }
     }, [user?.uid, profile, userLocation, hasInjectedSelf]);
+
+    // Continuous Real-Time Battery Sync
+    useEffect(() => {
+        const unsubscribe = batteryService.subscribe((info) => {
+            if (user?.uid) {
+                setMembers(prev => prev.map(m => m.id === user.uid ? { ...m, battery: info.level } : m));
+            }
+        });
+        return () => unsubscribe();
+    }, [user?.uid]);
 
     // 1. WATCH POSITION (GPS) & UPLOAD
     useEffect(() => {
@@ -252,6 +263,7 @@ export const useLocationSync = (
 
                 setMembers(prev => {
                     const existing = prev.find(m => m.id === targetId);
+                    const currentBattery = batteryService.getBatteryLevel();
 
                     if (!existing) {
                         const newSelf: FamilyMember = {
@@ -260,7 +272,7 @@ export const useLocationSync = (
                             avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL, profile?.displayName || user?.displayName || targetId),
                             location: currentCoords,
                             status,
-                            battery: 100,
+                            battery: currentBattery,
                             membershipTier: profile?.membershipTier || 'free',
                             lastUpdated: new Date().toISOString(),
                             accuracy: location.accuracy,
@@ -279,6 +291,7 @@ export const useLocationSync = (
                         m.id === targetId ? {
                             ...m,
                             location: currentCoords,
+                            battery: currentBattery,
                             accuracy: location.accuracy,
                             speed: speedMph,
                             heading,
@@ -314,7 +327,7 @@ export const useLocationSync = (
                             heading: 0,
                             accuracy: location.accuracy || 0,
                             timestamp: Date.now(),
-                            battery: 100,
+                            battery: batteryService.getBatteryLevel(),
                             signalQuality: location.signalQuality,
                             status: '❄️ Location Paused (Frozen)',
                             privacyMode: 'frozen'
@@ -377,7 +390,7 @@ export const useLocationSync = (
                             heading: 0,
                             accuracy: 0,
                             timestamp: Date.now(),
-                            battery: 100,
+                            battery: batteryService.getBatteryLevel(),
                             signalQuality: 'unknown',
                             status: 'Pending Keys',
                             privacyMode
@@ -392,7 +405,7 @@ export const useLocationSync = (
                         heading: privacyMode === 'exact' ? (location.heading || 0) : 0,
                         accuracy: privacyMode === 'blurred' ? 2400 : (location.accuracy || 0),
                         timestamp: Date.now(),
-                        battery: 100,
+                        battery: batteryService.getBatteryLevel(),
                         signalQuality: location.signalQuality,
                         encryptedData: encrypted || undefined,
                         status: statusText,

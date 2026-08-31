@@ -16,6 +16,7 @@ import { ref, set, get, onValue, off, push, update } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { auth, googleProvider, database, storage } from './firebase';
 import { Geofence } from './geofenceService';
+import { batteryService } from './batteryService';
 import { bufferSosAlert, setupSosAutoFlush, BufferedSosAlert } from './offlineSosBuffer';
 import { bufferLocation, setupAutoFlush, BufferedLocation } from './offlineLocationBuffer';
 import {
@@ -455,7 +456,7 @@ export const updateMemberLocation = async (
         speed: location.speed ?? 0,
         heading: location.heading ?? 0,
         accuracy: location.accuracy || 10,
-        battery: location.battery || 100,
+        battery: location.battery ?? batteryService.getBatteryLevel(),
         signalQuality: location.signalQuality || 'medium',
         timestamp: location.timestamp || Date.now(),
         status: location.status || 'Moving',
@@ -476,7 +477,7 @@ export const updateMemberLocation = async (
             accuracy: location.accuracy || 10,
             speed: location.speed ?? null,
             heading: location.heading ?? null,
-            battery: location.battery || 100,
+            battery: location.battery ?? batteryService.getBatteryLevel(),
             signalQuality: location.signalQuality || 'medium',
             timestamp: location.timestamp || Date.now(),
             encryptedData: location.encryptedData ?? null
@@ -496,7 +497,7 @@ export const updateMemberLocation = async (
             accuracy: location.accuracy || 10,
             speed: location.speed ?? null,
             heading: location.heading ?? null,
-            battery: location.battery || 100,
+            battery: location.battery ?? batteryService.getBatteryLevel(),
             signalQuality: location.signalQuality || 'medium',
             timestamp: location.timestamp || Date.now(),
             encryptedData: location.encryptedData ?? null
@@ -547,7 +548,7 @@ export const triggerSOS = async (
                 speed: impact?.speed || 0,
                 heading: 0,
                 accuracy: 10,
-                battery: 100,
+                battery: batteryService.getBatteryLevel(),
                 timestamp: Date.now(),
                 sosActive: true,
                 impact: impact || null
@@ -603,7 +604,7 @@ setupSosAutoFlush(async (alert: BufferedSosAlert) => {
             speed: alert.impact?.speed || 0,
             heading: 0,
             accuracy: 10,
-            battery: 100,
+            battery: batteryService.getBatteryLevel(),
             timestamp: alert.timestamp,
             sosActive: alert.action === 'trigger',
             impact: alert.action === 'trigger' ? (alert.impact || null) : null
@@ -627,7 +628,7 @@ export const syncBufferedLocations = async (locations: BufferedLocation[]): Prom
             speed: loc.speed ?? 0,
             heading: loc.heading ?? 0,
             timestamp: loc.timestamp,
-            battery: loc.battery ?? 100,
+            battery: loc.battery ?? batteryService.getBatteryLevel(),
             signalQuality: loc.signalQuality ?? '4G',
             status: loc.status || 'Online'
         };
