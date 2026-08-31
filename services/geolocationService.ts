@@ -353,7 +353,7 @@ class GeolocationService {
 
         try {
             console.log('📡 Starting Native Background Geolocation Watcher...');
-            const distanceFilter = this.trackingTier === 'driving' ? 5 : this.trackingTier === 'transit' ? 10 : 25;
+            const distanceFilter = this.trackingTier === 'driving' ? 0 : this.trackingTier === 'transit' ? 5 : 15;
 
             const addPromise = BackgroundGeolocation.addWatcher(
                 {

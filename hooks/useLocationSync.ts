@@ -266,11 +266,12 @@ export const useLocationSync = (
             const speedDiff = Math.abs(speedMph - lastReactRenderRef.current.speed);
             const headingDiff = Math.abs(heading - lastReactRenderRef.current.heading);
 
-            const minDistanceM = (status === 'Driving') ? 3 : (status === 'Walking') ? 5 : 10;
+            const isDrivingMode = (status === 'Driving') || (speedMph > 3);
+            const minDistanceM = isDrivingMode ? 0.5 : (status === 'Walking') ? 3 : 8;
             const isSignificantMove = distMovedFromLastReact >= minDistanceM;
-            const isSignificantSpeedChange = speedDiff >= 3;
-            const isSignificantHeadingChange = (status === 'Driving') && (headingDiff >= 15);
-            const isTimeThrottled = timeSinceLastReactMs >= 1500;
+            const isSignificantSpeedChange = speedDiff >= 1;
+            const isSignificantHeadingChange = isDrivingMode && (headingDiff >= 5);
+            const isTimeThrottled = isDrivingMode ? (timeSinceLastReactMs >= 350) : (timeSinceLastReactMs >= 1500);
 
             const shouldTriggerReactRender = isFirstSignal || statusChanged || isSignificantMove || isSignificantSpeedChange || isSignificantHeadingChange || isTimeThrottled;
 

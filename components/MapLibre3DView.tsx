@@ -232,6 +232,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const userInteractedRef = useRef<number>(0); // Timestamp of last user drag/zoom
     const prevBearingRef = useRef<number>(0);     // Smoothed bearing for interpolation
     const wasNavigatingRef = useRef<boolean>(false); // Track nav exit for camera reset
+    const lastNavUpdateRef = useRef<number>(Date.now()); // Track GPS time delta for fluid continuous camera flight
 
     // Get the skin style URL
     // Respects Low Data Mode (minimal 2D vector) vs Warm Cream (Light) vs Muted Slate (Dark) vs Auto Dynamic
@@ -1733,6 +1734,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }
 
+            const now = Date.now();
+            const timeSinceLast = now - lastNavUpdateRef.current;
+            lastNavUpdateRef.current = now;
+            const dynamicDuration = isInitialNavStart 
+                ? 1200 
+                : Math.min(1800, Math.max(750, Math.round(timeSinceLast * 1.15)));
+
             // Fallback: Standard Single-Vehicle 3rd Person Perspective Chase View
             if (!isMultiVehicleConvoy) {
                 map.current.easeTo({
@@ -1746,7 +1754,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         left: isMobile ? 0 : 120,
                         right: 0
                     },
-                    duration: isInitialNavStart ? 1200 : 700,
+                    duration: dynamicDuration,
                     easing: (t: number) => t
                 });
             }
