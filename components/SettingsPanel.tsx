@@ -17,7 +17,7 @@ export interface UserSettings {
     mapStyle: 'standard' | 'satellite' | 'terrain';
     units: 'imperial' | 'metric';
     mapSkin: MapSkinId;
-    buildingScale?: 'flat' | 'realistic' | 'enhanced' | 'monumental';
+    buildingScale?: 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental';
     landmarkGlow?: boolean;
     avoidTolls?: boolean;
     avoidHighways?: boolean;
@@ -449,7 +449,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     id="map_visuals"
                     title="Map & 3D Visuals"
                     emoji="🗺️"
-                    subtitle={`${localSettings.buildingScale === 'flat' ? 'Flat 2D Mode' : localSettings.buildingScale === 'monumental' ? 'Metropolis Mode' : localSettings.buildingScale === 'realistic' ? 'Realistic Scale' : 'Enhanced Heights'} • ${localSettings.landmarkGlow ? 'Glow On' : 'Glow Off'}`}
+                    subtitle={`${localSettings.buildingScale === 'none' ? 'No Buildings (Clean)' : localSettings.buildingScale === 'flat' ? 'Flat 2D Mode' : localSettings.buildingScale === 'monumental' ? 'Metropolis Mode' : localSettings.buildingScale === 'realistic' ? 'Realistic Scale' : 'Enhanced Heights'} • ${localSettings.landmarkGlow ? 'Glow On' : 'Glow Off'}`}
                 >
                     <div className="space-y-4">
                         {/* 3D Building Scale */}
@@ -460,13 +460,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     <p className="text-[11px] text-slate-500">Scale skyline & downtown structures</p>
                                 </div>
                                 <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-400">
-                                    {localSettings.buildingScale === 'flat' ? 'Flat (0x)' : localSettings.buildingScale === 'monumental' ? '2.6x' : localSettings.buildingScale === 'realistic' ? '1.0x' : '1.8x'}
+                                    {localSettings.buildingScale === 'none' ? 'None (Clean)' : localSettings.buildingScale === 'flat' ? 'Flat (0x)' : localSettings.buildingScale === 'monumental' ? '2.6x' : localSettings.buildingScale === 'realistic' ? '1.0x' : '1.8x'}
                                 </span>
                             </div>
-                            <div className={`flex p-1 rounded-xl border gap-1 flex-wrap sm:flex-nowrap ${
+                            <div className={`grid grid-cols-2 sm:flex p-1 rounded-xl border gap-1 ${
                                 theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'
                             }`}>
                                 {[
+                                    { id: 'none', label: '🚫 None' },
                                     { id: 'flat', label: '🗺️ Flat' },
                                     { id: 'realistic', label: '🏢 Real (1x)' },
                                     { id: 'enhanced', label: '🏙️ Enhanced (1.8x)' },
@@ -475,7 +476,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     <button
                                         key={scale.id}
                                         onClick={() => updateSetting('buildingScale', scale.id as any)}
-                                        className={`flex-1 py-1.5 px-2 text-[10px] font-black uppercase rounded-lg transition-all min-w-[70px] ${
+                                        className={`flex-1 py-1.5 px-1.5 text-[9.5px] font-black uppercase rounded-lg transition-all min-w-0 text-center truncate ${
                                             (localSettings.buildingScale || 'enhanced') === scale.id
                                                 ? 'bg-indigo-600 text-white shadow-md'
                                                 : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
