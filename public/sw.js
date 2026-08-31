@@ -15,7 +15,7 @@ const TILE_PATTERNS = [
 
 const TILE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-// --- 1. FCM INITIALIZATION ---
+// --- 1. FCM & BACKGROUND PUSH DECRYPTION WORKER ---
 const firebaseConfig = {
     apiKey: "AIzaSyBCSoXNwWnnblKxB4JZF2ElKcwds7PIH2A",
     authDomain: "myway-gps.firebaseapp.com",
@@ -25,19 +25,112 @@ const firebaseConfig = {
     appId: "1:740093147434:web:5c4e12c11d1d47813ac653"
 };
 
+const DB_SECURITY_NAME = 'MyWaySecurity';
+const STORE_E2EE_NAME = 'E2EEKeys';
+
+const getSecureIDB = () => {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_SECURITY_NAME, 1);
+        request.onupgradeneeded = () => {
+            request.result.createObjectStore(STORE_E2EE_NAME);
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+};
+
+const getStoredFamilyKeyJWK = async (keyId = 'current_family_key') => {
+    try {
+        const db = await getSecureIDB();
+        const tx = db.transaction(STORE_E2EE_NAME, 'readonly');
+        const request = tx.objectStore(STORE_E2EE_NAME).get(keyId);
+        return new Promise((resolve) => {
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => resolve(null);
+        });
+    } catch (e) {
+        return null;
+    }
+};
+
+const decryptPushPayload = async (encryptedBase64, circleId) => {
+    if (!encryptedBase64 || typeof self.crypto === 'undefined' || !self.crypto.subtle) {
+        return null;
+    }
+    try {
+        let jwk = circleId ? await getStoredFamilyKeyJWK(circleId) : null;
+        if (!jwk) {
+            jwk = await getStoredFamilyKeyJWK('current_family_key');
+        }
+        if (!jwk) return null;
+
+        const cryptoKey = await self.crypto.subtle.importKey(
+            'jwk',
+            jwk,
+            { name: 'AES-GCM' },
+            false,
+            ['decrypt']
+        );
+
+        const combined = new Uint8Array(atob(encryptedBase64).split('').map(c => c.charCodeAt(0)));
+        const iv = combined.slice(0, 12);
+        const encrypted = combined.slice(12);
+
+        const decryptedBuffer = await self.crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv },
+            cryptoKey,
+            encrypted
+        );
+
+        const decryptedText = new TextDecoder().decode(decryptedBuffer);
+        try {
+            return JSON.parse(decryptedText);
+        } catch {
+            return decryptedText;
+        }
+    } catch (err) {
+        console.warn('[SW/Crypto] Push payload decryption error:', err);
+        return null;
+    }
+};
+
 try {
     if (!self.firebase.apps.length) {
         self.firebase.initializeApp(firebaseConfig);
     }
     const messaging = self.firebase.messaging();
-    messaging.onBackgroundMessage((payload) => {
+    messaging.onBackgroundMessage(async (payload) => {
         console.log('[SW/FCM] Background message received:', payload);
-        const notificationTitle = payload.notification?.title || 'MyWay Alert';
+        let notificationTitle = payload.notification?.title || payload.data?.title || 'MyWay Alert';
+        let notificationBody = payload.notification?.body || payload.data?.body || 'You have a new notification';
+
+        const data = payload.data || {};
+        const encryptedContent = data.encryptedText || data.encryptedLocation || data.encryptedData || data.encryptedPayload;
+
+        if (encryptedContent) {
+            const decrypted = await decryptPushPayload(encryptedContent, data.circleId);
+            if (decrypted) {
+                if (typeof decrypted === 'string') {
+                    notificationBody = decrypted;
+                } else if (decrypted.text) {
+                    notificationBody = decrypted.text;
+                } else if (decrypted.lat && decrypted.lng) {
+                    notificationBody = `📍 Live location update (${decrypted.lat.toFixed(4)}, ${decrypted.lng.toFixed(4)})`;
+                } else if (decrypted.message) {
+                    notificationBody = decrypted.message;
+                }
+                console.log('[SW/Crypto] ✅ Successfully decrypted background push message in worker');
+            }
+        }
+
         const notificationOptions = {
-            body: payload.notification?.body || 'You have a new notification',
+            body: notificationBody,
             icon: '/icon.png',
             badge: '/icon.png',
-            data: payload.data,
+            data: {
+                ...payload.data,
+                decrypted: true
+            },
             tag: payload.data?.type || 'default',
             renotify: true,
             requireInteraction: payload.data?.type === 'sos'

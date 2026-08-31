@@ -7,8 +7,19 @@
 // Global reference for the circle key (derived from shared secret in production flow)
 let familyKey: CryptoKey | null = null;
 
-export const setFamilyKey = (key: CryptoKey) => {
+export const setFamilyKey = (key: CryptoKey, circleId?: string) => {
     familyKey = key;
+    // Persist key to IndexedDB for Background Push Decryption Worker in Service Worker
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+        window.crypto.subtle.exportKey('jwk', key).then(jwk => {
+            saveKeyPairToSecureStorage('current_family_key', jwk);
+            if (circleId) {
+                saveKeyPairToSecureStorage(circleId, jwk);
+            }
+        }).catch(err => {
+            console.warn('🔒 Failed to persist family key for background worker:', err);
+        });
+    }
 };
 
 export const getFamilyKey = (): CryptoKey | null => familyKey;
