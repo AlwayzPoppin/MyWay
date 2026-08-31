@@ -1723,12 +1723,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 map.current.easeTo({
                     center: [driverLoc.lng, driverLoc.lat],
                     bearing: prevBearingRef.current,
-                    pitch: 58,
-                    zoom: isMobile ? 17.6 : 18.0,
+                    pitch: 62,
+                    zoom: isMobile ? 18.2 : 18.4,
                     padding: {
-                        top: isMobile ? 140 : 130,
-                        bottom: isMobile ? 250 : 190,
-                        left: isMobile ? 0 : 160,
+                        top: isMobile ? 40 : 30,
+                        bottom: isMobile ? 110 : 90,
+                        left: isMobile ? 0 : 120,
                         right: 0
                     },
                     duration: isInitialNavStart ? 1200 : 700,

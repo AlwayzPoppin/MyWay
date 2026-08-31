@@ -335,6 +335,13 @@ const App: React.FC = () => {
     setActivities(getNotifications());
   }, []);
 
+  // Whenever navigation starts, automatically lock chase camera
+  useEffect(() => {
+    if (isNavigating || isDriveMode) {
+      setIsCameraFree(false);
+    }
+  }, [isNavigating, isDriveMode]);
+
   // Listen for real-time Convoy & Caravan invites
   useEffect(() => {
     const unsub = convoyService.onInvite(invite => {
