@@ -824,247 +824,357 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // Track previous mapSkin to reset places and members markers on skin change
     const prevMapSkinRef = useRef(mapSkin);
 
-    // Update Places Markers
-    useEffect(() => {
-        if (!map.current) return;
-
-        // If skin changed, clear all place markers so they re-render with correct theme icons
-        if (prevMapSkinRef.current !== mapSkin) {
-            placesMarkersRef.current.forEach(m => m.remove());
-            placesMarkersRef.current.clear();
-            prevMapSkinRef.current = mapSkin;
-        }
-
-        places.forEach(place => {
-            if (!placesMarkersRef.current.has(place.id)) {
-                const el = document.createElement('div');
-                el.className = 'maplibre-place-marker group transition-transform hover:scale-110';
-                
-                if (mapSkin === 'gta_radar') {
-                    el.innerHTML = getGTAPlaceBlipHtml(place.type, place.name);
-                } else {
-                    const brand = getBrandMeta(place.name);
-                    if (brand) {
-                        el.innerHTML = `
-                            <div style="
-                                width: 38px;
-                                height: 38px;
-                                border-radius: 12px;
-                                background: ${brand.bg};
-                                border: 2px solid ${brand.border};
-                                box-shadow: 0 6px 16px rgba(0,0,0,0.5), 0 0 12px ${brand.border}55;
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                padding: 5px;
-                                cursor: pointer;
-                            ">
-                                ${brand.svg}
-                            </div>
-                        `;
-                    } else {
-                        el.innerHTML = `
-                            <div style="
-                                width: 36px;
-                                height: 36px;
-                                border-radius: 12px;
-                                background: rgba(15, 23, 42, 0.9);
-                                backdrop-filter: blur(8px);
-                                border: 2px solid rgba(255, 255, 255, 0.2);
-                                box-shadow: 0 6px 16px rgba(0,0,0,0.5);
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                font-size: 20px;
-                                cursor: pointer;
-                            ">
-                                ${place.icon || '📍'}
-                            </div>
-                        `;
-                    }
-                }
-                el.style.cursor = 'pointer';
-
-                // Click handler opens the PlaceDetailPanel (which has Navigate button)
-                el.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const latestPlace = placesRef.current.find(p => p.id === place.id) || place;
-                    onSelectPlace?.(latestPlace);
-                });
-
-                const marker = new maplibregl.Marker({ element: el })
-                    .setLngLat([place.location.lng, place.location.lat])
-                    .addTo(map.current!);
-
-                placesMarkersRef.current.set(place.id, marker);
-            }
-        });
-
-        // Cleanup
-        placesMarkersRef.current.forEach((marker, id) => {
-            if (!places.find(p => p.id === id)) {
-                marker.remove();
-                placesMarkersRef.current.delete(id);
-            }
-        });
-    }, [places, onSelectPlace, mapSkin]);
-
-    // Update Places Geofence Circles
+    // ==========================================
+    // WEBGL SYMBOL & CIRCLE LAYER CLUSTERING FOR PLACES
+    // ==========================================
     useEffect(() => {
         if (!map.current || !isMapReady) return;
 
-        places.forEach(place => {
-            const sourceId = `place-geofence-${place.id}`;
-            const radiusKm = place.radius || 0.3; // Default 300m
-            const coords = getCircleCoords(place.location, radiusKm, 64);
-            const geojson = {
-                'type': 'Feature',
-                'geometry': {
-                    'type': 'Polygon',
-                    'coordinates': [coords]
+        const sourceId = 'places-cluster-source';
+        const geojsonData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: places.map(p => ({
+                type: 'Feature',
+                id: p.id,
+                properties: {
+                    id: p.id,
+                    name: p.name || 'Place',
+                    type: p.type || 'home',
+                    icon: p.icon || '📍',
+                    color: p.color || (p.type === 'home' ? '#22c55e' : p.type === 'work' ? '#3b82f6' : p.type === 'school' ? '#f59e0b' : '#6366f1'),
                 },
-                'properties': {}
-            };
+                geometry: {
+                    type: 'Point',
+                    coordinates: [p.location.lng, p.location.lat]
+                }
+            }))
+        };
 
-            const source = map.current?.getSource(sourceId) as maplibregl.GeoJSONSource;
-            if (source) {
-                source.setData(geojson as any);
-            } else {
-                map.current?.addSource(sourceId, {
-                    'type': 'geojson',
-                    'data': geojson as any
+        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+        if (source) {
+            source.setData(geojsonData);
+        } else {
+            map.current.addSource(sourceId, {
+                type: 'geojson',
+                data: geojsonData,
+                cluster: true,
+                clusterMaxZoom: 14,
+                clusterRadius: 50
+            });
+
+            // 1. Cluster Circles (GPU-accelerated gradient by count)
+            map.current.addLayer({
+                id: 'places-clusters-glow',
+                type: 'circle',
+                source: sourceId,
+                filter: ['has', 'point_count'],
+                paint: {
+                    'circle-color': [
+                        'step', ['get', 'point_count'],
+                        '#6366f1', 5,
+                        '#8b5cf6', 15,
+                        '#ec4899'
+                    ],
+                    'circle-radius': [
+                        'step', ['get', 'point_count'],
+                        20, 5,
+                        26, 15,
+                        32
+                    ],
+                    'circle-opacity': 0.85,
+                    'circle-stroke-width': 2.5,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-stroke-opacity': 0.9
+                }
+            });
+
+            // 2. Cluster Count Text
+            map.current.addLayer({
+                id: 'places-cluster-count',
+                type: 'symbol',
+                source: sourceId,
+                filter: ['has', 'point_count'],
+                layout: {
+                    'text-field': '{point_count_abbreviated}',
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': 13,
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                },
+                paint: {
+                    'text-color': '#ffffff'
+                }
+            });
+
+            // 3. Unclustered Individual Places Outer Circle / Glow
+            map.current.addLayer({
+                id: 'places-unclustered-circle',
+                type: 'circle',
+                source: sourceId,
+                filter: ['!', ['has', 'point_count']],
+                paint: {
+                    'circle-color': ['get', 'color'],
+                    'circle-radius': [
+                        'interpolate', ['linear'], ['zoom'],
+                        10, 6,
+                        14, 10,
+                        17, 14
+                    ],
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-stroke-opacity': 0.95
+                }
+            });
+
+            // 4. Unclustered Place Text Label
+            map.current.addLayer({
+                id: 'places-unclustered-label',
+                type: 'symbol',
+                source: sourceId,
+                filter: ['!', ['has', 'point_count']],
+                layout: {
+                    'text-field': ['get', 'name'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': [
+                        'interpolate', ['linear'], ['zoom'],
+                        12, 10,
+                        16, 12
+                    ],
+                    'text-offset': [0, 1.3],
+                    'text-anchor': 'top',
+                    'text-optional': true
+                },
+                paint: {
+                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
+                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+                    'text-halo-width': 1.5
+                }
+            });
+
+            // Cluster click -> smooth zoom expansion
+            map.current.on('click', 'places-clusters-glow', (e) => {
+                const features = map.current?.queryRenderedFeatures(e.point, { layers: ['places-clusters-glow'] });
+                if (!features || !features[0]) return;
+                const clusterId = features[0].properties?.cluster_id;
+                const src = map.current?.getSource(sourceId) as maplibregl.GeoJSONSource;
+                src?.getClusterExpansionZoom(clusterId, (err, zoom) => {
+                    if (err || !map.current) return;
+                    map.current.easeTo({
+                        center: (features[0].geometry as any).coordinates,
+                        zoom: zoom + 0.5,
+                        duration: 600
+                    });
                 });
+            });
 
-                map.current?.addLayer({
-                    'id': `${sourceId}-fill`,
-                    'type': 'fill',
-                    'source': sourceId,
-                    'paint': {
-                        'fill-color': theme === 'dark' ? '#64748b' : '#4f46e5',
-                        'fill-opacity': theme === 'dark' ? 0.05 : 0.10
-                    }
-                });
+            // Unclustered place click -> select place
+            map.current.on('click', 'places-unclustered-circle', (e) => {
+                const feature = e.features?.[0];
+                if (feature?.properties?.id) {
+                    const place = placesRef.current.find(p => p.id === feature.properties.id);
+                    if (place) onSelectPlace?.(place);
+                }
+            });
 
-                map.current?.addLayer({
-                    'id': `${sourceId}-outline`,
-                    'type': 'line',
-                    'source': sourceId,
-                    'paint': {
-                        'line-color': theme === 'dark' ? '#94a3b8' : '#6366f1',
-                        'line-width': 1.2,
-                        'line-opacity': theme === 'dark' ? 0.22 : 0.35,
-                        'line-dasharray': [3, 3]
-                    }
-                });
-            }
-            renderedGeofenceIdsRef.current.add(place.id);
-        });
+            // Hover cursor styles
+            map.current.on('mouseenter', 'places-clusters-glow', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
+            map.current.on('mouseleave', 'places-clusters-glow', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
+            map.current.on('mouseenter', 'places-unclustered-circle', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
+            map.current.on('mouseleave', 'places-unclustered-circle', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
+        }
+    }, [places, onSelectPlace, isMapReady, styleVersion, theme]);
 
-        // Cleanup removed geofence circles
-        const currentPlaceIds = new Set(places.map(p => p.id));
-        renderedGeofenceIdsRef.current.forEach(id => {
-            if (!currentPlaceIds.has(id)) {
-                const sourceId = `place-geofence-${id}`;
-                if (map.current?.getLayer(`${sourceId}-fill`)) map.current.removeLayer(`${sourceId}-fill`);
-                if (map.current?.getLayer(`${sourceId}-outline`)) map.current.removeLayer(`${sourceId}-outline`);
-                if (map.current?.getSource(sourceId)) map.current.removeSource(sourceId);
-                renderedGeofenceIdsRef.current.delete(id);
-            }
-        });
-    }, [places, isMapReady, styleVersion]);
-
-    // Update Incident Markers
-    useEffect(() => {
-        if (!map.current) return;
-
-        incidents.forEach(incident => {
-            if (!incidentsMarkersRef.current.has(incident.id)) {
-                const el = document.createElement('div');
-                el.className = 'maplibre-incident-marker';
-                el.innerHTML = `<div style="font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5))">⚠️</div>`;
-                el.style.cursor = 'pointer';
-
-                const marker = new maplibregl.Marker({ element: el })
-                    .setLngLat([incident.location.lng, incident.location.lat])
-                    .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<b>${incident.type.toUpperCase()}</b>`))
-                    .addTo(map.current!);
-
-                incidentsMarkersRef.current.set(incident.id, marker);
-            }
-        });
-
-        // Cleanup
-        incidentsMarkersRef.current.forEach((marker, id) => {
-            if (!incidents.find(i => i.id === id)) {
-                marker.remove();
-                incidentsMarkersRef.current.delete(id);
-            }
-        });
-    }, [incidents]);
-
-    // Update Trip Safety Events (Historical Trip Inspection)
+    // ==========================================
+    // UNIFIED WEBGL GEOFENCE POLYGONS
+    // ==========================================
     useEffect(() => {
         if (!map.current || !isMapReady) return;
 
-        // Clear existing safety event markers
-        safetyEventMarkersRef.current.forEach(m => m.remove());
-        safetyEventMarkersRef.current = [];
-
-        if (!tripSafetyEvents || tripSafetyEvents.length === 0) return;
-
-        tripSafetyEvents.forEach(evt => {
-            if (!evt.location || typeof evt.location.lat !== 'number' || typeof evt.location.lng !== 'number') return;
-
-            const isHardBrake = evt.type === 'hard_brake';
-            const isRapidAccel = evt.type === 'rapid_accel';
-            const icon = isHardBrake ? '🛑' : isRapidAccel ? '🏎️' : '⚡';
-            const label = isHardBrake ? 'Hard Brake Detected' : isRapidAccel ? 'Rapid Acceleration' : 'Speeding Event';
-            const badgeBg = isHardBrake ? '#ef4444' : isRapidAccel ? '#f59e0b' : '#eab308';
-
-            const el = document.createElement('div');
-            el.className = 'safety-incident-marker';
-            el.style.cssText = `
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                width: 28px;
-                height: 28px;
-                background: ${badgeBg};
-                border: 2px solid white;
-                border-radius: 50%;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-                cursor: pointer;
-                font-size: 14px;
-                transition: transform 0.2s ease;
-            `;
-            el.innerHTML = `<span>${icon}</span>`;
-            el.onmouseenter = () => el.style.transform = 'scale(1.25)';
-            el.onmouseleave = () => el.style.transform = 'scale(1)';
-
-            const timeFormatted = evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
-            const popup = new maplibregl.Popup({ offset: 15, closeButton: false }).setHTML(`
-                <div style="font-family: system-ui, -apple-system, sans-serif; padding: 6px 8px; font-size: 11px; font-weight: bold; color: #0f172a;">
-                    <div style="display: flex; align-items: center; gap: 5px; color: ${badgeBg};">
-                        <span style="font-size: 14px;">${icon}</span>
-                        <span>${label}</span>
-                    </div>
-                    ${timeFormatted ? `<div style="font-size: 9px; color: #64748b; margin-top: 3px;">Logged at ${timeFormatted}</div>` : ''}
-                </div>
-            `);
-
-            const marker = new maplibregl.Marker({ element: el })
-                .setLngLat([evt.location.lng, evt.location.lat])
-                .setPopup(popup)
-                .addTo(map.current!);
-
-            safetyEventMarkersRef.current.push(marker);
+        const sourceId = 'places-geofences-source';
+        const features = places.map(place => {
+            const radiusKm = place.radius || 0.3;
+            const coords = getCircleCoords(place.location, radiusKm, 48);
+            return {
+                type: 'Feature' as const,
+                id: place.id,
+                properties: { id: place.id, name: place.name },
+                geometry: {
+                    type: 'Polygon' as const,
+                    coordinates: [coords]
+                }
+            };
         });
 
-        return () => {
-            safetyEventMarkersRef.current.forEach(m => m.remove());
-            safetyEventMarkersRef.current = [];
+        const geojsonData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features
         };
-    }, [tripSafetyEvents, isMapReady]);
+
+        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+        if (source) {
+            source.setData(geojsonData);
+        } else {
+            map.current.addSource(sourceId, {
+                type: 'geojson',
+                data: geojsonData
+            });
+
+            map.current.addLayer({
+                id: `${sourceId}-fill`,
+                type: 'fill',
+                source: sourceId,
+                paint: {
+                    'fill-color': theme === 'dark' ? '#64748b' : '#4f46e5',
+                    'fill-opacity': theme === 'dark' ? 0.06 : 0.10
+                }
+            });
+
+            map.current.addLayer({
+                id: `${sourceId}-outline`,
+                type: 'line',
+                source: sourceId,
+                paint: {
+                    'line-color': theme === 'dark' ? '#94a3b8' : '#6366f1',
+                    'line-width': 1.5,
+                    'line-opacity': theme === 'dark' ? 0.25 : 0.38,
+                    'line-dasharray': [3, 3]
+                }
+            });
+        }
+    }, [places, isMapReady, styleVersion, theme]);
+
+    // ==========================================
+    // UNIFIED WEBGL INCIDENTS LAYER
+    // ==========================================
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+
+        const sourceId = 'incidents-webgl-source';
+        const geojsonData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: incidents.map(inc => ({
+                type: 'Feature',
+                id: inc.id,
+                properties: {
+                    id: inc.id,
+                    type: inc.type || 'alert',
+                    title: (inc.type || 'hazard').toUpperCase(),
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: [inc.location.lng, inc.location.lat]
+                }
+            }))
+        };
+
+        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+        if (source) {
+            source.setData(geojsonData);
+        } else {
+            map.current.addSource(sourceId, {
+                type: 'geojson',
+                data: geojsonData
+            });
+
+            map.current.addLayer({
+                id: 'incidents-circle',
+                type: 'circle',
+                source: sourceId,
+                paint: {
+                    'circle-color': '#ef4444',
+                    'circle-radius': 12,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff'
+                }
+            });
+
+            map.current.addLayer({
+                id: 'incidents-symbol',
+                type: 'symbol',
+                source: sourceId,
+                layout: {
+                    'text-field': '⚠️',
+                    'text-size': 14,
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                }
+            });
+
+            map.current.on('click', 'incidents-circle', (e) => {
+                const feature = e.features?.[0];
+                if (feature) {
+                    const coords = (feature.geometry as any).coordinates.slice();
+                    new maplibregl.Popup({ offset: 15 })
+                        .setLngLat(coords)
+                        .setHTML(`<b>${feature.properties?.title || 'INCIDENT'}</b>`)
+                        .addTo(map.current!);
+                }
+            });
+
+            map.current.on('mouseenter', 'incidents-circle', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
+            map.current.on('mouseleave', 'incidents-circle', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
+        }
+    }, [incidents, isMapReady, styleVersion]);
+
+    // ==========================================
+    // UNIFIED WEBGL TRIP SAFETY EVENTS LAYER
+    // ==========================================
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+
+        const sourceId = 'trip-safety-events-source';
+        const geojsonData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: (tripSafetyEvents || []).filter(e => e.location && typeof e.location.lat === 'number' && typeof e.location.lng === 'number').map((evt, idx) => ({
+                type: 'Feature',
+                id: idx,
+                properties: {
+                    type: evt.type,
+                    color: evt.type === 'hard_brake' ? '#ef4444' : evt.type === 'rapid_accel' ? '#f59e0b' : '#eab308',
+                    icon: evt.type === 'hard_brake' ? '🛑' : evt.type === 'rapid_accel' ? '🏎️' : '⚡',
+                    label: evt.type === 'hard_brake' ? 'Hard Brake' : evt.type === 'rapid_accel' ? 'Rapid Acceleration' : 'Speeding Event'
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: [evt.location.lng, evt.location.lat]
+                }
+            }))
+        };
+
+        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+        if (source) {
+            source.setData(geojsonData);
+        } else {
+            map.current.addSource(sourceId, {
+                type: 'geojson',
+                data: geojsonData
+            });
+
+            map.current.addLayer({
+                id: 'safety-events-circle',
+                type: 'circle',
+                source: sourceId,
+                paint: {
+                    'circle-color': ['get', 'color'],
+                    'circle-radius': 11,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff'
+                }
+            });
+
+            map.current.addLayer({
+                id: 'safety-events-label',
+                type: 'symbol',
+                source: sourceId,
+                layout: {
+                    'text-field': ['get', 'icon'],
+                    'text-size': 11,
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true
+                }
+            });
+        }
+    }, [tripSafetyEvents, isMapReady, styleVersion]);
 
     // Update Privacy Zones
     useEffect(() => {
