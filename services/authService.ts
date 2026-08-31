@@ -671,6 +671,25 @@ export const getCircleMembers = async (circleId: string): Promise<UserProfile[]>
     return members;
 };
 
+export const subscribeToCircleMembers = (
+    circleId: string,
+    callback: (memberIds: string[]) => void
+): (() => void) => {
+    const circleMembersRef = ref(database, `circles/${circleId}/members`);
+
+    onValue(circleMembersRef, (snapshot) => {
+        if (snapshot.exists()) {
+            const val = snapshot.val();
+            const members = Array.isArray(val) ? val : Object.values(val);
+            callback(members as string[]);
+        } else {
+            callback([]);
+        }
+    });
+
+    return () => off(circleMembersRef);
+};
+
 // Geofence Management Functions
 export const addGeofence = async (circleId: string, geofence: Omit<Geofence, 'id'>): Promise<string> => {
     const geofencesRef = ref(database, `geofences/${circleId}`);

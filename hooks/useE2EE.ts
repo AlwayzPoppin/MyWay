@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
     getCircleMembers, 
+    subscribeToCircleMembers,
     getFamilyCircle, 
     deliverWrappedKey, 
     getWrappedKeyForUser, 
@@ -102,11 +103,13 @@ export const useE2EE = (
         initE2EE();
     }, [user?.uid, profile?.familyCircleId, isOwner, !!currentCircle]);
 
-    // Auto Key-Sync: Any member with the key can help onboard new members
-    useEffect(() => {
-        if (!currentCircle || !ecdhKeyPair) return;
+    // Auto Key-Sync: Targeted Realtime Listener on Circle Members (Eliminates aggressive 30s polling)
+    const lastSyncedMembersSignatureRef = useRef<string>('');
 
-        const syncKeysToNewMembers = async () => {
+    useEffect(() => {
+        if (!currentCircle || !ecdhKeyPair || !currentCircle.id) return;
+
+        const syncKeysToNewMembers = async (memberIds?: string[]) => {
             try {
                 const familyKey = getFamilyKey();
                 if (!familyKey) return;
@@ -122,7 +125,7 @@ export const useE2EE = (
                     });
 
                     if (!hasKey) {
-                        console.log(`🔑 E2EE: Asynchronously delivering circle key to ${member.displayName || member.uid}`);
+                        console.log(`🔑 E2EE: Delivering circle key to new member ${member.displayName || member.uid}`);
                         const memberPubKey = await importPublicKey(member.ecdhPublicKey);
                         const sharedSecret = await deriveSharedSecretKey(ecdhKeyPair.privateKey, memberPubKey);
                         const wrapped = await wrapCircleKey(familyKey, sharedSecret);
@@ -130,13 +133,23 @@ export const useE2EE = (
                     }
                 }
             } catch (err) {
-                console.warn('⚠️ Auto key-sync error:', err);
+                console.warn('⚠️ Targeted key-sync error:', err);
             }
         };
 
-        syncKeysToNewMembers();
-        const interval = setInterval(syncKeysToNewMembers, 30000);
-        return () => clearInterval(interval);
+        // Targeted Realtime Listener: triggers only when circle membership changes
+        const unsubscribe = subscribeToCircleMembers(currentCircle.id, (memberIds) => {
+            const signature = [...memberIds].sort().join(',');
+            if (signature === lastSyncedMembersSignatureRef.current) return;
+            lastSyncedMembersSignatureRef.current = signature;
+
+            console.log(`🔑 E2EE: Circle members changed (${memberIds.length} members), triggering targeted key-sync`);
+            syncKeysToNewMembers(memberIds);
+        });
+
+        return () => {
+            unsubscribe();
+        };
     }, [currentCircle?.id, ecdhKeyPair, user?.uid]);
 
     return { ecdhKeyPair, initE2EE };
