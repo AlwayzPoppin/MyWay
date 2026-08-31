@@ -44,6 +44,14 @@ export const useLocationSync = (
         membersRef.current = members;
     }, [members]);
     const lastSyncRef = useRef<{ lat: number, lng: number, time: number }>({ lat: 0, lng: 0, time: 0 });
+    const lastReactRenderRef = useRef<{
+        lat: number;
+        lng: number;
+        speed: number;
+        heading: number;
+        status: string;
+        time: number;
+    }>({ lat: 0, lng: 0, speed: -1, heading: -1, status: '', time: 0 });
     const hasReceivedRealSignalRef = useRef(false);
 
     // Haversine distance — delegated to shared utils/geo.ts
@@ -181,87 +189,111 @@ export const useLocationSync = (
             // Driving: sync every 2.5m or 5s (responsive tracking)
             // Moving/Walking: sync every 5m or 15s (balanced)
             // Stationary: sync every 10m or 60s (battery saver)
-            const speedMph = location.speed || 0;
-            const isStationary = speedMph < 1;
-            const isDriving = speedMph > 5;
-            
-            // AUDIT FIX: Low-Data Mode Throttling
-            const dataMultiplier = isLowDataMode ? 6 : 1; 
-            const DIST_THRESHOLD = (isDriving ? 5 : isStationary ? 20 : 10) * dataMultiplier;
-            const TIME_THRESHOLD = (isDriving ? 5 : isStationary ? 60 : 15) * dataMultiplier;
-
-            const distMoved = getDistanceMeters(
-                lastSyncRef.current.lat, lastSyncRef.current.lng,
-                location.latitude, location.longitude
-            );
-            const timeElapsed = (Date.now() - lastSyncRef.current.time) / 1000;
+            const speedMph = Math.round(location.speed || 0);
+            const heading = location.heading || 0;
+            const status: 'Driving' | 'Moving' | 'Stationary' = (speedMph > 5) ? 'Driving' : (speedMph > 0.5) ? 'Moving' : 'Stationary';
             const currentCoords = { lat: location.latitude, lng: location.longitude };
 
-            // IMMEDIATELY update local UI state for responsive navigation
-            setLocationError(null);
-            setUserLocation(currentCoords);
+            // 1. MUTATE REF IN-PLACE FOR ZERO-LATENCY NON-REACT CONSUMERS (MapLibre 3D, Audio, Crash Telemetry)
+            const selfInRef = membersRef.current.find(m => m.id === targetId);
+            if (selfInRef) {
+                selfInRef.location = currentCoords;
+                selfInRef.speed = speedMph;
+                selfInRef.heading = heading;
+                selfInRef.accuracy = location.accuracy;
+                selfInRef.status = status;
+                selfInRef.signalQuality = location.signalQuality;
+                selfInRef.lastUpdated = new Date().toISOString();
+            }
 
-            // Record trip telemetry if an active trip (manual nav or background auto-drive) is running
+            // 2. RECORD TRIP TELEMETRY
             if (getActiveTrip()) {
                 recordTripPoint(
                     location.latitude,
                     location.longitude,
-                    Math.round(location.speed || 0),
-                    location.heading || 0
+                    speedMph,
+                    heading
                 );
             }
 
-            // Debounce check for Firebase sync only (adaptive thresholds)
-            if (lastSyncRef.current.lat !== 0 && distMoved < DIST_THRESHOLD && timeElapsed < TIME_THRESHOLD) {
-                return; // Skip Firebase sync (but UI is already updated above)
-            }
-
-            lastSyncRef.current = { ...currentCoords, time: Date.now() };
-
-            // PERSIST: Last Known Location
+            // 3. PERSIST LAST KNOWN LOCATION
             localStorage.setItem('myway_last_known_location', JSON.stringify(currentCoords));
 
-            // Update local state for "You"
-            setMembers(prev => {
-                const existing = prev.find(m => m.id === targetId);
+            // 4. EVALUATE LOGICAL RECONCILIATION GATE (High-Frequency GPS Debounce)
+            const distMovedFromLastReact = getDistanceMeters(
+                lastReactRenderRef.current.lat, lastReactRenderRef.current.lng,
+                location.latitude, location.longitude
+            );
+            const timeSinceLastReactMs = Date.now() - lastReactRenderRef.current.time;
+            const statusChanged = status !== lastReactRenderRef.current.status;
+            const speedDiff = Math.abs(speedMph - lastReactRenderRef.current.speed);
+            const headingDiff = Math.abs(heading - lastReactRenderRef.current.heading);
 
-                if (!existing) {
-                    // Inject real "You" marker as soon as location arrives
-                    const newSelf: FamilyMember = {
-                        id: targetId,
-                        name: profile?.displayName || user?.displayName || 'You',
-                        avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL, profile?.displayName || user?.displayName || targetId),
-                        location: currentCoords,
-                        status: (location.speed && location.speed > 5) ? 'Driving' : 'Stationary',
-                        battery: 100,
-                        membershipTier: profile?.membershipTier || 'free',
-                        lastUpdated: new Date().toISOString(),
-                        accuracy: location.accuracy,
-                        isGhostMode: false,
-                        speed: Math.round(location.speed || 0),
-                        heading: location.heading || 0,
-                        role: 'Primary',
-                        safetyScore: 100,
-                        pathHistory: [],
-                        driveEvents: []
-                    };
-                    return [newSelf, ...prev.filter(m => m.id !== targetId && m.id !== 'demo-you')];
-                }
+            const minDistanceM = (status === 'Driving') ? 3 : (status === 'Moving') ? 5 : 10;
+            const isSignificantMove = distMovedFromLastReact >= minDistanceM;
+            const isSignificantSpeedChange = speedDiff >= 3;
+            const isSignificantHeadingChange = (status === 'Driving') && (headingDiff >= 15);
+            const isTimeThrottled = timeSinceLastReactMs >= 1500;
 
-                return prev.map(m =>
-                    m.id === targetId ? {
-                        ...m,
-                        location: currentCoords,
-                        accuracy: location.accuracy,
-                        speed: Math.round(location.speed || 0),
-                        heading: location.heading || 0,
-                        lastUpdated: new Date().toISOString(),
-                        status: (location.speed && location.speed > 5) ? 'Driving' :
-                            (location.speed && location.speed > 0.5) ? 'Moving' : 'Stationary',
-                        signalQuality: location.signalQuality
-                    } : m
-                );
-            });
+            const shouldTriggerReactRender = isFirstSignal || statusChanged || isSignificantMove || isSignificantSpeedChange || isSignificantHeadingChange || isTimeThrottled;
+
+            if (shouldTriggerReactRender) {
+                lastReactRenderRef.current = {
+                    lat: location.latitude,
+                    lng: location.longitude,
+                    speed: speedMph,
+                    heading,
+                    status,
+                    time: Date.now()
+                };
+
+                setLocationError(null);
+                setUserLocation(currentCoords);
+
+                setMembers(prev => {
+                    const existing = prev.find(m => m.id === targetId);
+
+                    if (!existing) {
+                        const newSelf: FamilyMember = {
+                            id: targetId,
+                            name: profile?.displayName || user?.displayName || 'You',
+                            avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL, profile?.displayName || user?.displayName || targetId),
+                            location: currentCoords,
+                            status,
+                            battery: 100,
+                            membershipTier: profile?.membershipTier || 'free',
+                            lastUpdated: new Date().toISOString(),
+                            accuracy: location.accuracy,
+                            isGhostMode: false,
+                            speed: speedMph,
+                            heading,
+                            role: 'Primary',
+                            safetyScore: 100,
+                            pathHistory: [],
+                            driveEvents: []
+                        };
+                        return [newSelf, ...prev.filter(m => m.id !== targetId && m.id !== 'demo-you')];
+                    }
+
+                    return prev.map(m =>
+                        m.id === targetId ? {
+                            ...m,
+                            location: currentCoords,
+                            accuracy: location.accuracy,
+                            speed: speedMph,
+                            heading,
+                            lastUpdated: new Date().toISOString(),
+                            status,
+                            signalQuality: location.signalQuality
+                        } : m
+                    );
+                });
+            }
+
+            // 5. DEBOUNCE CHECK FOR FIREBASE SYNC (Adaptive Network Thresholds)
+            if (lastSyncRef.current.lat !== 0 && distMoved < DIST_THRESHOLD && timeElapsed < TIME_THRESHOLD) {
+                return; // Skip network sync
+            }
 
             // Sync to Firebase if in a circle
             if (user && currentCircleId && profile) {
