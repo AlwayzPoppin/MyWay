@@ -379,22 +379,50 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             } catch (e) {}
         }
 
-        // AUDIT #6: Improve Map Label Readability with Harmonious Halos
+        // ==========================================
+        // 3D STREET LABEL LEGIBILITY & VIEWPORT ORIENTATION ENGINE
+        // ==========================================
         const isWarmLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+        const isGTARadar = mapSkin === 'gta_radar';
+
         layers.forEach((layer: any) => {
             if (layer.type === 'symbol') {
                 try {
-                    map.current!.setPaintProperty(
-                        layer.id, 
-                        'text-halo-color', 
-                        isWarmLightSkin ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.85)'
-                    );
-                    map.current!.setPaintProperty(layer.id, 'text-halo-width', 2);
-                    map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
+                    // 1. Force viewport-aligned billboarding so street text never squashes, skews, or foreshortens when camera is pitched/tilted
+                    if (map.current!.getLayoutProperty(layer.id, 'text-pitch-alignment') !== 'viewport') {
+                        map.current!.setLayoutProperty(layer.id, 'text-pitch-alignment', 'viewport');
+                    }
+                    
+                    // Allow road labels to bend naturally around curves without vanishing
+                    try {
+                        map.current!.setLayoutProperty(layer.id, 'text-max-angle', 45);
+                    } catch {}
 
-                    // Ensure street and highway names use soft modern slate instead of harsh dark pills
-                    if (isWarmLightSkin && (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway'))) {
-                        map.current!.setPaintProperty(layer.id, 'text-color', '#475569');
+                    // 2. High-contrast typography colors & protective backdrop halos
+                    if (isWarmLightSkin) {
+                        // Light Mode / Warm Cream: Deep Charcoal text with brilliant crisp white halos
+                        map.current!.setPaintProperty(layer.id, 'text-color', '#0f172a');
+                        map.current!.setPaintProperty(layer.id, 'text-halo-color', 'rgba(255, 255, 255, 0.98)');
+                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.5);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
+                    } else if (isGTARadar) {
+                        // GTA Radar: Golden Amber / Crisp White typography with deep midnight outline
+                        const isRoad = layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway');
+                        map.current!.setPaintProperty(layer.id, 'text-color', isRoad ? '#fef08a' : '#f8fafc');
+                        map.current!.setPaintProperty(layer.id, 'text-halo-color', '#000000');
+                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.5);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 0.8);
+                    } else {
+                        // Dark Mode / Muted Slate: High-contrast pure white/light-slate text with deep obsidian halos
+                        map.current!.setPaintProperty(layer.id, 'text-color', '#f8fafc');
+                        map.current!.setPaintProperty(layer.id, 'text-halo-color', 'rgba(9, 13, 22, 0.98)');
+                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.5);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
+                    }
+
+                    // 3. Ensure full opacity for road names across all camera angles
+                    if (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway') || layer.id.includes('path')) {
+                        map.current!.setPaintProperty(layer.id, 'text-opacity', 1.0);
                     }
                 } catch (e) {
                     // Some layers might not support these paint properties
