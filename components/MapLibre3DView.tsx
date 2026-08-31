@@ -1559,7 +1559,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
                             <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
                         </div>
-                        ${isSelf ? `<span style="position: absolute; bottom: -2px; right: -2px; font-size: 8px; font-weight: 900; background: #4f46e5; color: #ffffff; padding: 1.5px 5px; border-radius: 9999px; border: 1.5px solid #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">YOU</span>` : ''}
                         ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${displayBearing}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
                     </div>
                 `;
