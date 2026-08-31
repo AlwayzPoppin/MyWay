@@ -1074,11 +1074,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 el.style.cursor = 'pointer';
                 el.style.transform = 'translate3d(0,0,0)';
                 el.innerHTML = `
-                    <div style="width: 36px; height: 36px; border-radius: 50%; background: ${placeColor}; border: 2.5px solid #ffffff; box-shadow: 0 4px 14px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; font-size: 17px; transition: transform 0.15s ease;">
+                    <div style="width: 38px; height: 38px; border-radius: 50%; background: ${placeColor}; border: 2.5px solid #ffffff; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; font-size: 18px; transition: transform 0.15s ease;">
                         ${icon}
-                    </div>
-                    <div style="margin-top: 3px; font-size: 11px; font-weight: 800; color: ${theme === 'dark' ? '#f8fafc' : '#0f172a'}; text-shadow: 0 1px 4px ${theme === 'dark' ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)'}; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis; padding: 2px 7px; border-radius: 6px; background: ${theme === 'dark' ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.9)'}; border: 1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}; box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
-                        ${place.name}
                     </div>
                 `;
 
@@ -1564,9 +1561,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         </div>
                         ${isSelf ? `<span style="position: absolute; bottom: -2px; right: -2px; font-size: 8px; font-weight: 900; background: #4f46e5; color: #ffffff; padding: 1.5px 5px; border-radius: 9999px; border: 1.5px solid #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">YOU</span>` : ''}
                         ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${displayBearing}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
-                    </div>
-                    <div style="margin-top: 2px; font-size: 11px; font-weight: 800; color: ${theme === 'dark' ? '#f8fafc' : '#0f172a'}; text-shadow: 0 1px 4px ${theme === 'dark' ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)'}; white-space: nowrap; padding: 2px 7px; border-radius: 6px; background: ${theme === 'dark' ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.9)'}; border: 1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}; box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
-                        ${member.name || 'Member'}
                     </div>
                 `;
 
