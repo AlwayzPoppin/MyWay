@@ -315,51 +315,6 @@ export function generateParkingDirectRoute(
     };
 }
 
-/**
- * Generates an instantaneous straight-line fallback route for offline or failover scenarios.
- */
-export function generateStraightLineRoute(
-    start: Location,
-    endName: string,
-    endLocation: Location
-): NavigationRoute {
-    const distMeters = getDistanceMeters(start, endLocation);
-    const estDurationSec = (distMeters / 1609.34) * 90; // ~40mph avg → 90s per mile
-
-    return {
-        destinationName: endName,
-        destinationLoc: endLocation,
-        startLoc: start,
-        steps: [
-            {
-                instruction: `Head toward ${endName}`,
-                distance: formatDistance(distMeters * 0.5),
-                speedLimit: 35,
-                hasCamera: false,
-                endLocation: {
-                    lat: (start.lat + endLocation.lat) / 2,
-                    lng: (start.lng + endLocation.lng) / 2
-                }
-            },
-            {
-                instruction: `Arrive at ${endName}`,
-                distance: formatDistance(distMeters * 0.5),
-                speedLimit: 35,
-                hasCamera: false,
-                endLocation: endLocation
-            }
-        ],
-        totalDistance: formatDistance(distMeters),
-        totalTime: formatDuration(estDurationSec),
-        routeGeometry: [
-            [start.lng, start.lat],
-            [(start.lng + endLocation.lng) / 2, (start.lat + endLocation.lat) / 2],
-            [endLocation.lng, endLocation.lat]
-        ]
-    };
-}
-
-export const generateStraightLineFallback = generateStraightLineRoute;
 
 /**
  * Fetches a route from a single OSRM provider
@@ -485,10 +440,10 @@ export async function fetchRouteOptions(
 
     const straightLineDist = getDistanceMeters(start, endLocation);
 
-    // Offline fast path
+    // Offline fast path: Prevent generating artificial 2-point straight lines that trigger off-route recalculation loops
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        const direct = generateStraightLineFallback(start, endName, endLocation);
-        return direct ? [{ ...direct, routeType: 'fastest', routeLabel: 'Direct Offline Route', savingsLabel: 'Direct Line' }] : [];
+        console.warn('⚠️ [OSRM] Network is offline, skipping straight-line fallback to preserve navigation engine state');
+        return [];
     }
 
     const parsedRoutes: NavigationRoute[] = [];

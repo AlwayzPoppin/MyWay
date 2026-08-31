@@ -100,16 +100,8 @@ const InviteShareModal: React.FC<InviteShareModalProps> = ({
             setCopied(true);
             showNotification?.('📋 Invite link copied!', 2000);
             setTimeout(() => setCopied(false), 2000);
-        } catch {
-            // Fallback for older browsers
-            const input = document.createElement('input');
-            input.value = shareUrl;
-            document.body.appendChild(input);
-            input.select();
-            document.execCommand('copy');
-            document.body.removeChild(input);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+            console.warn('[InviteShareModal] Clipboard write failed:', err);
         }
     }, [shareUrl, showNotification]);
 
