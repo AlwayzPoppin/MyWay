@@ -264,22 +264,29 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     // Prepare route polyline coordinates for map rendering
     const routeCoords = useMemo<Location[]>(() => {
-        if (!activeRoute || !activeRoute.steps || activeRoute.steps.length === 0) return [];
+        if (!activeRoute) return [];
         
         // Use the full road-following geometry from OSRM if available
         if (activeRoute.routeGeometry && activeRoute.routeGeometry.length > 0) {
-            return activeRoute.routeGeometry.map((coord: [number, number]) => ({
-                lng: coord[0],
-                lat: coord[1]
-            }));
+            return activeRoute.routeGeometry.map((coord: any) => {
+                if (Array.isArray(coord)) {
+                    return { lng: Number(coord[0]), lat: Number(coord[1]) };
+                }
+                if (typeof coord === 'object' && coord !== null) {
+                    return { lng: Number(coord.lng ?? coord.lon ?? coord[0]), lat: Number(coord.lat ?? coord[1]) };
+                }
+                return { lng: 0, lat: 0 };
+            }).filter((c: Location) => typeof c.lat === 'number' && typeof c.lng === 'number' && !(c.lat === 0 && c.lng === 0));
         }
 
         // Fallback: connect step endpoints (straight lines)
         const coords: Location[] = [];
         if (activeRoute.startLoc) coords.push(activeRoute.startLoc);
-        activeRoute.steps.forEach((step: any) => {
-            if (step.endLocation) coords.push(step.endLocation);
-        });
+        if (Array.isArray(activeRoute.steps)) {
+            activeRoute.steps.forEach((step: any) => {
+                if (step.endLocation) coords.push(step.endLocation);
+            });
+        }
         if (activeRoute.destinationLoc) coords.push(activeRoute.destinationLoc);
         
         return coords;
@@ -825,14 +832,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         const updateGeoJsonSources = () => {
             if (!map.current || !map.current.isStyleLoaded()) return;
 
+            const isLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
             const routeColorExpression: any = [
                 'match',
                 ['get', 'congestion'],
                 'severe', '#dc2626',
                 'heavy', '#ea580c',
                 'moderate', '#eab308',
-                'low', mapSkin === 'gta_radar' ? '#facc15' : '#4f46e5',
-                mapSkin === 'gta_radar' ? '#facc15' : '#6366f1'
+                'low', mapSkin === 'gta_radar' ? '#facc15' : isLightSkin ? '#0284c7' : '#4f46e5',
+                mapSkin === 'gta_radar' ? '#facc15' : isLightSkin ? '#0284c7' : '#6366f1'
             ];
 
             const routeGlowExpression: any = [
@@ -841,62 +849,71 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 'severe', '#ef4444',
                 'heavy', '#fb923c',
                 'moderate', '#fde047',
-                'low', mapSkin === 'gta_radar' ? '#f59e0b' : '#818cf8',
-                '#818cf8'
+                'low', mapSkin === 'gta_radar' ? '#f59e0b' : isLightSkin ? '#38bdf8' : '#818cf8',
+                isLightSkin ? '#38bdf8' : '#818cf8'
             ];
 
             // --- RENDER REMAINING (Live Traffic Polyline) ---
-            if (map.current.getSource(routeId)) {
-                (map.current.getSource(routeId) as maplibregl.GeoJSONSource).setData(remainingGeoJSON as any);
-                if (map.current.getLayer(`${routeId}-glow`)) {
-                    map.current.setPaintProperty(`${routeId}-glow`, 'line-color', routeGlowExpression);
-                }
-                if (map.current.getLayer(routeId)) {
-                    map.current.setPaintProperty(routeId, 'line-color', routeColorExpression);
-                }
+            const existingRouteSrc = map.current.getSource(routeId) as maplibregl.GeoJSONSource | undefined;
+            if (existingRouteSrc) {
+                existingRouteSrc.setData(remainingGeoJSON as any);
             } else {
                 map.current.addSource(routeId, { 'type': 'geojson', 'data': remainingGeoJSON as any });
+            }
 
-                // Contrast Casing Layer (dark background outline)
+            // Contrast Casing Layer (dark background outline)
+            if (!map.current.getLayer(`${routeId}-casing`)) {
                 map.current.addLayer({
                     'id': `${routeId}-casing`,
                     'type': 'line',
                     'source': routeId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': '#0f172a', 'line-width': 11, 'line-opacity': 0.75 }
+                    'paint': { 'line-color': isLightSkin ? '#0f172a' : '#020617', 'line-width': 12, 'line-opacity': 0.8 }
                 });
-                
-                // Glow layer
+            }
+            
+            // Glow layer
+            if (!map.current.getLayer(`${routeId}-glow`)) {
                 map.current.addLayer({
                     'id': `${routeId}-glow`,
                     'type': 'line',
                     'source': routeId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': routeGlowExpression, 'line-width': 15, 'line-opacity': 0.35 }
+                    'paint': { 'line-color': routeGlowExpression, 'line-width': 16, 'line-opacity': 0.4 }
                 });
+            } else {
+                map.current.setPaintProperty(`${routeId}-glow`, 'line-color', routeGlowExpression);
+            }
 
-                // Main traffic line layer
+            // Main traffic line layer
+            if (!map.current.getLayer(routeId)) {
                 map.current.addLayer({
                     'id': routeId,
                     'type': 'line',
                     'source': routeId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': routeColorExpression, 'line-width': 8, 'line-opacity': 0.95 }
+                    'paint': { 'line-color': routeColorExpression, 'line-width': 8, 'line-opacity': 1.0 }
                 });
+            } else {
+                map.current.setPaintProperty(routeId, 'line-color', routeColorExpression);
             }
 
             // --- RENDER COMPLETED (Dimmed Grey Line) ---
-            if (map.current.getSource(completedId)) {
-                (map.current.getSource(completedId) as maplibregl.GeoJSONSource).setData(staticCompletedRouteGeoJSON as any);
+            const existingCompSrc = map.current.getSource(completedId) as maplibregl.GeoJSONSource | undefined;
+            if (existingCompSrc) {
+                existingCompSrc.setData(staticCompletedRouteGeoJSON as any);
             } else {
                 map.current.addSource(completedId, { 'type': 'geojson', 'data': staticCompletedRouteGeoJSON as any });
+            }
+
+            if (!map.current.getLayer(completedId)) {
                 map.current.addLayer({
                     'id': completedId,
                     'type': 'line',
                     'source': completedId,
                     'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': theme === 'dark' ? '#475569' : '#94a3b8', 'line-width': 6, 'line-opacity': 0.4 }
-                }, `${routeId}-casing`); // Add below the active route casing
+                    'paint': { 'line-color': theme === 'dark' ? '#475569' : '#94a3b8', 'line-width': 6, 'line-opacity': 0.45 }
+                }, `${routeId}-casing`);
             }
         };
 

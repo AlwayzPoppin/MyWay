@@ -124,13 +124,13 @@ export const updateNavigationState = (
     const { steps, startLoc } = route;
     const { currentStepIndex } = currentState;
 
-    // Split logic: Find nearest polyline point (bounded window around currentStepIndex)
+    // Split logic: Find nearest polyline point (bounded window around splitIndex)
     let splitIndex = currentState.splitIndex ?? 0;
     if (route.routeGeometry && route.routeGeometry.length >= 2) {
         let minDist = Infinity;
-        const startIdx = Math.max(0, currentStepIndex - 1);
-        const endIdx = Math.min(route.routeGeometry.length - 1, currentStepIndex + 3);
-        for (let i = startIdx; i < endIdx; i++) {
+        const searchStart = Math.max(0, splitIndex - 10);
+        const searchEnd = Math.min(route.routeGeometry.length - 1, Math.max(searchStart + 80, splitIndex + 80));
+        for (let i = searchStart; i < searchEnd; i++) {
             const a = { lat: route.routeGeometry[i][1], lng: route.routeGeometry[i][0] };
             const b = { lat: route.routeGeometry[i + 1][1], lng: route.routeGeometry[i + 1][0] };
             const p = getPointOnSegmentNearestTo(currentLocation, a, b);
