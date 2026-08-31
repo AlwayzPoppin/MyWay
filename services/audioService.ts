@@ -11,6 +11,9 @@ class AudioService {
     private enabled: boolean = true;
     private isSpeaking: boolean = false;
     private voiceReadyPromise: Promise<void> | null = null;
+    private audioCtx: AudioContext | null = null;
+    private suspendTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly IDLE_SUSPEND_DELAY_MS = 5000;
 
     constructor() {
         if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -21,6 +24,15 @@ class AudioService {
                     this.initVoices();
                 };
             }
+        }
+
+        // Hardware Audio Thread Management: Suspend idle audio context when app is backgrounded
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden && this.audioCtx && this.audioCtx.state === 'running') {
+                    this.audioCtx.suspend().catch(() => {});
+                }
+            });
         }
     }
 
@@ -209,31 +221,91 @@ class AudioService {
     }
 
     /**
+     * Lazy-instantiate or retrieve existing AudioContext with automatic state management.
+     */
+    private getAudioContext(): AudioContext | null {
+        if (typeof window === 'undefined') return null;
+        try {
+            if (!this.audioCtx) {
+                const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                if (!AudioContextClass) return null;
+                this.audioCtx = new AudioContextClass();
+            }
+            if (this.audioCtx.state === 'suspended') {
+                this.audioCtx.resume().catch(() => {});
+            }
+            return this.audioCtx;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Schedules hardware audio context suspension when idle to prevent audio thread leakage and battery drain.
+     */
+    private scheduleIdleSuspension(): void {
+        if (this.suspendTimer) {
+            clearTimeout(this.suspendTimer);
+        }
+        this.suspendTimer = setTimeout(() => {
+            if (this.audioCtx && this.audioCtx.state === 'running') {
+                this.audioCtx.suspend().catch(() => {});
+            }
+            this.suspendTimer = null;
+        }, this.IDLE_SUSPEND_DELAY_MS);
+    }
+
+    /**
      * Play a synthesized audio chirp (e.g. for action abort/cancellation)
+     * Reuses the managed AudioContext and schedules suspension upon completion.
      */
     public playChirp(frequency = 520, durationMs = 120): void {
         if (!this.enabled || typeof window === 'undefined') return;
         try {
-            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-            if (!AudioCtx) return;
-            const ctx = new AudioCtx();
+            const ctx = this.getAudioContext();
+            if (!ctx) return;
+
+            const now = ctx.currentTime;
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
 
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(frequency, ctx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(frequency * 0.5, ctx.currentTime + durationMs / 1000);
+            osc.frequency.setValueAtTime(frequency, now);
+            osc.frequency.exponentialRampToValueAtTime(frequency * 0.5, now + durationMs / 1000);
 
-            gain.gain.setValueAtTime(0.2, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + durationMs / 1000);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + durationMs / 1000);
 
             osc.connect(gain);
             gain.connect(ctx.destination);
 
-            osc.start();
-            osc.stop(ctx.currentTime + durationMs / 1000);
+            osc.start(now);
+            osc.stop(now + durationMs / 1000);
+
+            // Clean up WebAudio graph nodes when sound finishes to release memory
+            osc.onended = () => {
+                try {
+                    osc.disconnect();
+                    gain.disconnect();
+                } catch {
+                    // Ignore already disconnected nodes
+                }
+            };
+
+            this.scheduleIdleSuspension();
         } catch (e) {
             // AudioContext not allowed before user gesture or unavailable
+        }
+    }
+
+    public dispose(): void {
+        if (this.suspendTimer) {
+            clearTimeout(this.suspendTimer);
+            this.suspendTimer = null;
+        }
+        if (this.audioCtx) {
+            this.audioCtx.close().catch(() => {});
+            this.audioCtx = null;
         }
     }
 }

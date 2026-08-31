@@ -13,12 +13,23 @@ class SpeechService {
     private lastSpokenText: string = '';
     private lastSpokenTime: number = 0;
     private audioCtx: AudioContext | null = null;
+    private suspendTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly IDLE_SUSPEND_DELAY_MS = 5000;
     private listeners: Array<(muted: boolean) => void> = [];
 
     constructor() {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('myway_voice_muted');
             this.isMuted = saved === 'true';
+
+            // Hardware Audio Thread Management: Suspend idle audio context when app is backgrounded
+            if (typeof document !== 'undefined') {
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden && this.audioCtx && this.audioCtx.state === 'running') {
+                        this.audioCtx.suspend().catch(() => {});
+                    }
+                });
+            }
         }
     }
 
@@ -59,20 +70,39 @@ class SpeechService {
     }
 
     /**
-     * Initialize Web Audio Context for low-latency chimes
+     * Initialize or reuse Web Audio Context for low-latency chimes with automatic state management
      */
     private getAudioContext(): AudioContext | null {
         if (typeof window === 'undefined') return null;
-        if (!this.audioCtx) {
-            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-            if (AudioContextClass) {
-                this.audioCtx = new AudioContextClass();
+        try {
+            if (!this.audioCtx) {
+                const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                if (AudioContextClass) {
+                    this.audioCtx = new AudioContextClass();
+                }
             }
+            if (this.audioCtx && this.audioCtx.state === 'suspended') {
+                this.audioCtx.resume().catch(() => {});
+            }
+            return this.audioCtx;
+        } catch {
+            return null;
         }
-        if (this.audioCtx && this.audioCtx.state === 'suspended') {
-            this.audioCtx.resume().catch(() => {});
+    }
+
+    /**
+     * Schedules hardware audio context suspension when idle to prevent audio thread leakage and battery drain.
+     */
+    private scheduleIdleSuspension(): void {
+        if (this.suspendTimer) {
+            clearTimeout(this.suspendTimer);
         }
-        return this.audioCtx;
+        this.suspendTimer = setTimeout(() => {
+            if (this.audioCtx && this.audioCtx.state === 'running') {
+                this.audioCtx.suspend().catch(() => {});
+            }
+            this.suspendTimer = null;
+        }, this.IDLE_SUSPEND_DELAY_MS);
     }
 
     /**
@@ -107,8 +137,17 @@ class SpeechService {
                 osc1.stop(now + 0.1);
                 osc2.start(now + 0.1);
                 osc2.stop(now + 0.35);
+
+                osc2.onended = () => {
+                    try {
+                        osc1.disconnect();
+                        osc2.disconnect();
+                        gain.disconnect();
+                    } catch {}
+                };
             } else if (type === 'arrival') {
                 // Celebratory chord chime (C5 ➔ E5 ➔ G5)
+                const oscs: OscillatorNode[] = [];
                 [523.25, 659.25, 783.99].forEach((freq, i) => {
                     const osc = ctx.createOscillator();
                     osc.type = 'sine';
@@ -116,9 +155,19 @@ class SpeechService {
                     osc.connect(gain);
                     osc.start(now + i * 0.12);
                     osc.stop(now + 0.6);
+                    oscs.push(osc);
                 });
                 gain.gain.setValueAtTime(0.25, now);
                 gain.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
+
+                if (oscs.length > 0) {
+                    oscs[oscs.length - 1].onended = () => {
+                        try {
+                            oscs.forEach(o => o.disconnect());
+                            gain.disconnect();
+                        } catch {}
+                    };
+                }
             } else if (type === 'reroute') {
                 // Subtle descending alert (520Hz ➔ 380Hz)
                 const osc = ctx.createOscillator();
@@ -130,6 +179,13 @@ class SpeechService {
                 osc.connect(gain);
                 osc.start(now);
                 osc.stop(now + 0.25);
+
+                osc.onended = () => {
+                    try {
+                        osc.disconnect();
+                        gain.disconnect();
+                    } catch {}
+                };
             } else if (type === 'alert') {
                 // Double high-pitch warning beep (880Hz)
                 const osc = ctx.createOscillator();
@@ -141,9 +197,29 @@ class SpeechService {
                 osc.connect(gain);
                 osc.start(now);
                 osc.stop(now + 0.28);
+
+                osc.onended = () => {
+                    try {
+                        osc.disconnect();
+                        gain.disconnect();
+                    } catch {}
+                };
             }
+
+            this.scheduleIdleSuspension();
         } catch (e) {
             console.warn('[SpeechService] Chime audio error:', e);
+        }
+    }
+
+    public dispose(): void {
+        if (this.suspendTimer) {
+            clearTimeout(this.suspendTimer);
+            this.suspendTimer = null;
+        }
+        if (this.audioCtx) {
+            this.audioCtx.close().catch(() => {});
+            this.audioCtx = null;
         }
     }
 
