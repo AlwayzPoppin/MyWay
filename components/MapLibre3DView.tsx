@@ -301,6 +301,19 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             (layer: any) => layer.id.includes('building') && layer.type === 'fill'
         );
 
+        // Hide all 2D flat building and shadow layers so only the clean 3D extrusion renders
+        layers.forEach((layer: any) => {
+            if (
+                layer.id !== 'buildings-3d' &&
+                (layer.id.includes('building') || layer.id.includes('structure') || layer.id.includes('roof')) &&
+                (layer.type === 'fill' || layer.type === 'line')
+            ) {
+                try {
+                    map.current!.setLayoutProperty(layer.id, 'visibility', 'none');
+                } catch {}
+            }
+        });
+
         // Low Data Mode: Suppress heavy 3D building extrusions, tessellation, and complex lighting to conserve bandwidth & CPU
         if (isLowDataMode) {
             if (map.current.getLayer('buildings-3d')) {
@@ -322,32 +335,30 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 (layer: any) => layer.type === 'symbol' && layer.layout?.['text-field']
             )?.id;
 
-            map.current.setLayoutProperty(buildingLayer.id, 'visibility', 'none');
-
             const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
             const baseHeight = Math.round(14 * heightMultiplier);
             const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
 
             const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
 
-            // 3D Architectural Lighting & Balanced Sun Shading (Anchor: map, gentle intensity to prevent washout)
+            // 3D Architectural Lighting & Balanced Sun Shading (Viewport anchor prevents harsh shadow skewing on light themes)
             try {
                 map.current.setLight({
-                    anchor: 'map',
+                    anchor: 'viewport',
                     color: '#ffffff',
-                    intensity: isWarmLight ? 0.32 : 0.38,
-                    position: [1.4, 210, 30]
+                    intensity: isWarmLight ? 0.24 : 0.36,
+                    position: [1.15, 210, 45]
                 });
             } catch (e) {
                 console.warn('[MapLibre] setLight:', e);
             }
 
             const isGTARadar = mapSkin === 'gta_radar';
-            // Solid, rich architectural limestone & sandstone contrast for warm/light skins
+            // Crisp, solid volumetric architectural contrast for both light and dark themes
             const extrusionColor = [
                 'interpolate', ['linear'], ['zoom'],
-                14, isWarmLight ? '#d2c6b4' : isGTARadar ? '#202936' : '#1e293b',
-                16, isWarmLight ? '#c4b7a2' : isGTARadar ? '#2a3647' : '#243044'
+                14, isWarmLight ? '#cbd5e1' : isGTARadar ? '#202936' : '#1e293b',
+                16, isWarmLight ? '#b8c4d4' : isGTARadar ? '#2a3647' : '#243044'
             ];
 
             // 100% Solid opaque buildings for authentic WebGL depth testing (no see-through artifacts)
