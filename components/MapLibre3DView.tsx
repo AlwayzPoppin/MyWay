@@ -328,9 +328,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             return;
         }
 
-        if (buildingLayer) {
-            const source = (buildingLayer as any).source;
-            const sourceLayer = (buildingLayer as any)['source-layer'];
+        const sources = map.current.getStyle()?.sources || {};
+        const source = (buildingLayer as any)?.source || (map.current.getSource('carto') ? 'carto' : map.current.getSource('openmaptiles') ? 'openmaptiles' : Object.keys(sources)[0]);
+        const sourceLayer = (buildingLayer as any)?.['source-layer'] || 'building';
+
+        if (source) {
             const labelLayerId = layers.find(
                 (layer: any) => layer.type === 'symbol' && layer.layout?.['text-field']
             )?.id;
@@ -394,19 +396,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 map.current.setPaintProperty('buildings-3d', 'fill-extrusion-base', baseExpr);
                 map.current.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', opacityExpr);
             } else {
-                map.current.addLayer({
-                    'id': 'buildings-3d',
-                    'source': source,
-                    'source-layer': sourceLayer,
-                    'type': 'fill-extrusion',
-                    'minzoom': 13.5,
-                    'paint': {
-                        'fill-extrusion-color': extrusionColor as any,
-                        'fill-extrusion-height': heightExpr,
-                        'fill-extrusion-base': baseExpr,
-                        'fill-extrusion-opacity': opacityExpr
-                    }
-                }, labelLayerId);
+                try {
+                    map.current.addLayer({
+                        'id': 'buildings-3d',
+                        'source': source,
+                        'source-layer': sourceLayer,
+                        'type': 'fill-extrusion',
+                        'minzoom': 13.5,
+                        'paint': {
+                            'fill-extrusion-color': extrusionColor as any,
+                            'fill-extrusion-height': heightExpr,
+                            'fill-extrusion-base': baseExpr,
+                            'fill-extrusion-opacity': opacityExpr
+                        }
+                    }, labelLayerId);
+                } catch (e) {
+                    console.warn('[MapLibre] Failed to add buildings-3d layer:', e);
+                }
             }
         }
 
@@ -579,7 +585,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }
         };
-        document.addEventListener('visibilitychange', handleVisibilityChange);
+        const handleStyleLoaded = () => {
+            if (mapInstance.isStyleLoaded()) {
+                apply3DBuildingLayer();
+            }
+        };
 
         mapInstance.on('load', () => {
             currentStyleUrlRef.current = styleUrl;
@@ -588,11 +598,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             onMapReady?.();
         });
 
-        // Audit Fix: Handle style background updates reactively
-        // Increment styleVersion to trigger re-render of dynamic layers (routes, privacy zones)
-        mapInstance.on('style.load', () => {
+        mapInstance.on('styledata', handleStyleLoaded);
+        mapInstance.on('style.load', handleStyleLoaded);
+        mapInstance.once('idle', () => {
             apply3DBuildingLayer();
-            setStyleVersion(v => v + 1);
         });
 
         // Track user interaction — suppress auto-camera for 5s after manual pan/zoom
