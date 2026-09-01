@@ -24,6 +24,7 @@ import SettingsPanel from './components/SettingsPanel';
 import BentoSidebar from './components/BentoSidebar';
 import HoldToActivate from './components/HoldToActivate';
 import EmergencySOSModal from './components/EmergencySOSModal';
+import EditPlaceModal from './components/EditPlaceModal';
 import { incidentService } from './services/incidentService';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
@@ -211,6 +212,7 @@ const App: React.FC = () => {
   const [incidents, setIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
   const [insights, setInsights] = useState<DailyInsight[]>([]);
   const [isSOSModalOpen, setIsSOSModalOpen] = useState(false);
+  const [editingPlace, setEditingPlace] = useState<Place | null>(null);
 
   // Real-time Road Incidents sync across all drivers & circle members
   useEffect(() => {
@@ -641,6 +643,19 @@ const App: React.FC = () => {
     }
   }, [profile, showNotification]);
 
+  const handleUpdatePlace = useCallback(async (placeId: string, updates: Partial<Place>) => {
+    setUserPlaces(prev => prev.map(p => p.id === placeId ? { ...p, ...updates } : p));
+    showNotification(`✅ Updated "${updates.name || 'Place'}"`, 3000);
+
+    if (profile?.familyCircleId) {
+      try {
+        await updateUserPlace(profile.familyCircleId, placeId, updates);
+      } catch (e) {
+        console.warn('⚠️ Failed to sync place update to Firebase:', e);
+      }
+    }
+  }, [profile, showNotification]);
+
   const handleSelectMember = useCallback((id: string) => {
     setSelectedMemberId(id);
     setMapCenter(undefined);
@@ -787,6 +802,7 @@ const App: React.FC = () => {
             onSelectPlace={handleSelectPlace}
             onAddPlace={handleAddPlace}
             onDeletePlace={handleDeletePlace}
+            onEditPlace={(place: Place) => setEditingPlace(place)}
             onNavigatePlace={(place: Place) => handleStartNavigation(place.name, place.location)}
             userLocation={userLocation}
             onOpenMaintenance={() => setActiveModal('maintenance')}
@@ -1219,6 +1235,7 @@ const App: React.FC = () => {
                       isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
                       onAddPlace={handleAddPlace}
                       onDeletePlace={handleDeletePlace}
+                      onEditPlace={(place) => setEditingPlace(place)}
                       members={liveMembers}
                       currentUserId={user?.uid}
                     />
@@ -1385,6 +1402,16 @@ const App: React.FC = () => {
             onCancelSOS={handleCancelSOS}
             theme={theme}
             userLocation={userLocation}
+          />
+
+          {/* Edit Saved Place & Geofence Modal */}
+          <EditPlaceModal
+            place={editingPlace}
+            isOpen={!!editingPlace}
+            onClose={() => setEditingPlace(null)}
+            onSave={handleUpdatePlace}
+            onDelete={handleDeletePlace}
+            theme={theme}
           />
 
           {/* Settings Panel */}
@@ -1687,6 +1714,7 @@ const App: React.FC = () => {
             }}
             onAddPlace={handleAddPlace}
             onDeletePlace={handleDeletePlace}
+            onEditPlace={(place: Place) => setEditingPlace(place)}
             onNavigatePlace={(place: Place) => handleStartNavigation(place.name, place.location)}
             userLocation={userLocation}
           />
@@ -1718,6 +1746,7 @@ const App: React.FC = () => {
               isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
               onAddPlace={handleAddPlace}
               onDeletePlace={handleDeletePlace}
+              onEditPlace={(place) => setEditingPlace(place)}
               members={liveMembers}
               currentUserId={user?.uid}
             />

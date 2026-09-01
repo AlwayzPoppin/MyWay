@@ -32,6 +32,7 @@ interface BottomSheetProps {
     onSelectPlace?: (place: Place) => void;
     onAddPlace?: (place: Omit<Place, 'id'>) => void;
     onDeletePlace?: (placeId: string) => void;
+    onEditPlace?: (place: Place) => void;
     onNavigatePlace?: (place: Place) => void;
     userLocation?: Location | null;
     isExpanded?: boolean;
@@ -63,6 +64,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     onSelectPlace,
     onAddPlace,
     onDeletePlace,
+    onEditPlace,
     onNavigatePlace,
     userLocation,
     isExpanded: controlledExpanded,
@@ -776,6 +778,19 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
                                                         >
                                                             <span>🚀</span> Navigate Here
+                                                        </button>
+                                                    )}
+                                                    {onEditPlace && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onEditPlace(place);
+                                                            }}
+                                                            className="p-1.5 px-2.5 rounded-xl border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 text-xs font-bold active:scale-95 transition-all cursor-pointer"
+                                                            title="Edit Place & Geofence"
+                                                        >
+                                                            ✏️
                                                         </button>
                                                     )}
                                                     {onDeletePlace && (

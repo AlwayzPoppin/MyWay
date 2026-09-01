@@ -17,6 +17,7 @@ interface PlaceDetailPanelProps {
     isSaved?: boolean;
     onAddPlace?: (place: Omit<Place, 'id'>) => void;
     onDeletePlace?: (placeId: string) => void;
+    onEditPlace?: (place: Place) => void;
     onSelectRoutePreview?: (route: NavigationRoute) => void;
     candidatePlaces?: Place[];
     onSelectCandidate?: (place: Place) => void;
@@ -52,6 +53,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     isSaved = false,
     onAddPlace,
     onDeletePlace,
+    onEditPlace,
     onSelectRoutePreview,
     candidatePlaces = [],
     onSelectCandidate,
@@ -351,6 +353,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             )}
                         </div>
 
+                        {/* Edit Place Button (Only for Saved Places) */}
+                        {isSaved && onEditPlace && (
+                            <button
+                                type="button"
+                                onClick={() => onEditPlace(place)}
+                                className={`p-2 rounded-full shrink-0 transition-all text-base flex items-center justify-center cursor-pointer ${
+                                    theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                }`}
+                                title="Edit Place & Geofence"
+                            >
+                                ✏️
+                            </button>
+                        )}
+
                         {/* Save / Unsave Star Button */}
                         <button
                             onClick={() => {
@@ -595,11 +611,23 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             setIsSavingPlace(true);
                         }
                     }}
-                    className="absolute top-4 left-4 p-2 bg-black/20 hover:bg-black/40 rounded-full text-white backdrop-blur-md transition-all text-lg flex items-center justify-center animate-in fade-in"
+                    className="absolute top-4 left-4 p-2 bg-black/20 hover:bg-black/40 rounded-full text-white backdrop-blur-md transition-all text-lg flex items-center justify-center animate-in fade-in cursor-pointer"
                     title={isSaved ? "Remove from Saved Places" : "Save Place"}
                 >
                     {isSaved ? '⭐' : '☆'}
                 </button>
+
+                {/* Edit Place Button (Desktop) */}
+                {isSaved && onEditPlace && (
+                    <button
+                        type="button"
+                        onClick={() => onEditPlace(place)}
+                        className="absolute top-4 left-16 p-2 bg-black/20 hover:bg-black/40 rounded-full text-white backdrop-blur-md transition-all text-base flex items-center justify-center animate-in fade-in cursor-pointer"
+                        title="Edit Place & Geofence"
+                    >
+                        ✏️
+                    </button>
+                )}
 
                 <button
                     onClick={onClose}

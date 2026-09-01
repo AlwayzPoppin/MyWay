@@ -31,6 +31,7 @@ interface BentoSidebarProps {
     onSelectPlace?: (place: Place) => void;
     onAddPlace?: (place: Omit<Place, 'id'>) => void;
     onDeletePlace?: (placeId: string) => void;
+    onEditPlace?: (place: Place) => void;
     onNavigatePlace?: (place: Place) => void;
     userLocation?: Location | null;
     onOpenMaintenance?: () => void;
@@ -60,6 +61,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     onSelectPlace,
     onAddPlace,
     onDeletePlace,
+    onEditPlace,
     onNavigatePlace,
     userLocation,
     onOpenMaintenance
@@ -753,6 +755,19 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                     className="flex-1 py-1 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 transition-all active:scale-95"
                                                                 >
                                                                     <span>🚀</span> Navigate
+                                                                </button>
+                                                            )}
+                                                            {onEditPlace && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        onEditPlace(place);
+                                                                    }}
+                                                                    className="p-1 px-2 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 text-[10px] font-bold transition-all cursor-pointer"
+                                                                    title="Edit Place & Geofence"
+                                                                >
+                                                                    ✏️
                                                                 </button>
                                                             )}
                                                             {onDeletePlace && (
