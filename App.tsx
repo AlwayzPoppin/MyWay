@@ -65,7 +65,7 @@ import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceS
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from './utils/avatar';
 // Audit #3: rewardsService removed
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText } from './services/placesService';
-import { subscribeToUserPlaces, UserPlace, addUserPlace, deleteUserPlace, updateUserPlace } from './services/userPlacesService';
+import { subscribeToUserPlaces, subscribeToUserPlacesMulti, UserPlace, addUserPlace, deleteUserPlace, updateUserPlace } from './services/userPlacesService';
 // Audit #3: sponsoredPlacesService removed
 import { updateNavigationState, NavigationState } from './services/navigationEngine';
 import {
@@ -553,17 +553,23 @@ const App: React.FC = () => {
     setIsOwner(currentCircle?.ownerId === user?.uid);
   }, [currentCircle?.ownerId, user?.uid]);
 
-  // Places Sync
+  // Places Sync across all circles and personal storage
   useEffect(() => {
-    if (!user || !profile?.familyCircleId) {
-      setUserPlaces([]);
-      return;
-    }
-    const unsubscribe = subscribeToUserPlaces(profile.familyCircleId, (places) => {
-      setUserPlaces(places);
+    if (!user) return;
+    const targetCircleIds = Array.from(new Set([
+      ...(userCircles.map(c => c.id)),
+      ...(profile?.familyCircleId ? [profile.familyCircleId] : [])
+    ].filter(Boolean)));
+
+    const unsubscribe = subscribeToUserPlacesMulti(targetCircleIds, user.uid, (places) => {
+      if (places.length > 0) {
+        setUserPlaces(places);
+      } else if (targetCircleIds.length === 0) {
+        setUserPlaces([]);
+      }
     });
     return () => unsubscribe();
-  }, [user?.uid, profile?.familyCircleId]);
+  }, [user?.uid, profile?.familyCircleId, userCircles]);
 
   // Synchronize userPlaces with discoveredPlaces without blowing away search results
   useEffect(() => {
@@ -626,9 +632,10 @@ const App: React.FC = () => {
   }, []);
 
   const handleAddPlace = useCallback((place: Omit<Place, 'id'>) => {
-    if (user && profile?.familyCircleId) {
-      addUserPlace(profile.familyCircleId, { ...place, createdBy: user.uid }, user.uid);
-      showNotification(`⭐ Saved "${place.name}" to Circle Geofences!`, 3000);
+    const targetCircleId = currentCircle?.id || profile?.familyCircleId || (userCircles[0]?.id) || '';
+    if (user) {
+      addUserPlace(targetCircleId, { ...place, createdBy: user.uid }, user.uid);
+      showNotification(`⭐ Saved "${place.name}" to Geofences!`, 3000);
     } else {
       const newPlaceWithId: UserPlace = {
         ...place,
@@ -637,32 +644,29 @@ const App: React.FC = () => {
         createdBy: 'demo'
       };
       setUserPlaces(prev => [...prev, newPlaceWithId]);
-      showNotification(`⭐ Saved "${place.name}" to Circle Geofences!`, 3000);
+      showNotification(`⭐ Saved "${place.name}" to Geofences!`, 3000);
     }
-  }, [user, profile, showNotification]);
+  }, [user, profile, currentCircle, userCircles, showNotification]);
 
   const handleDeletePlace = useCallback((placeId: string) => {
-    if (profile?.familyCircleId) {
-      deleteUserPlace(profile.familyCircleId, placeId);
-      showNotification(`Removed place from circle`, 2500);
-    } else {
-      setUserPlaces(prev => prev.filter(p => p.id !== placeId));
-      showNotification(`Removed place from circle`, 2500);
-    }
-  }, [profile, showNotification]);
+    const targetCircleId = currentCircle?.id || profile?.familyCircleId || '';
+    const allCircleIds = userCircles.map(c => c.id);
+    deleteUserPlace(targetCircleId, placeId, user?.uid, allCircleIds);
+    setUserPlaces(prev => prev.filter(p => p.id !== placeId));
+    showNotification(`Removed place`, 2500);
+  }, [profile, currentCircle, userCircles, user, showNotification]);
 
   const handleUpdatePlace = useCallback(async (placeId: string, updates: Partial<Place>) => {
     setUserPlaces(prev => prev.map(p => p.id === placeId ? { ...p, ...updates } : p));
     showNotification(`✅ Updated "${updates.name || 'Place'}"`, 3000);
 
-    if (profile?.familyCircleId) {
-      try {
-        await updateUserPlace(profile.familyCircleId, placeId, updates);
-      } catch (e) {
-        console.warn('⚠️ Failed to sync place update to Firebase:', e);
-      }
+    const targetCircleId = currentCircle?.id || profile?.familyCircleId || '';
+    try {
+      await updateUserPlace(targetCircleId, placeId, updates, user?.uid);
+    } catch (e) {
+      console.warn('⚠️ Failed to sync place update to Firebase:', e);
     }
-  }, [profile, showNotification]);
+  }, [profile, currentCircle, user, showNotification]);
 
   const handleSelectMember = useCallback((id: string) => {
     setSelectedMemberId(id);
