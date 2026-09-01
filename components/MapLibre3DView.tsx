@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { FamilyMember, Place, CircleTask, Location, TrafficSegment } from '../types';
-import { MapSkinId, getMapSkin, applySkinOverrides, SATELLITE_STYLE, TERRAIN_STYLE } from '../services/mapSkinService';
+import { MapSkinId, getMapSkin, resolveMapSkinId, applySkinOverrides, SATELLITE_STYLE, TERRAIN_STYLE } from '../services/mapSkinService';
+import { solarService, SolarInfo } from '../services/solarService';
 import { getDistanceMeters, getDistanceMiles, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { getBrandMeta } from '../services/brandLogoService';
@@ -239,34 +240,48 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const wasNavigatingRef = useRef<boolean>(false); // Track nav exit for camera reset
     const lastNavUpdateRef = useRef<number>(Date.now()); // Track GPS time delta for fluid continuous camera flight
 
+    // ==========================================
+    // ASTRONOMICAL SOLAR DAY/NIGHT TRACKING
+    // ==========================================
+    const [solarInfo, setSolarInfo] = React.useState<SolarInfo>(() => solarService.getSolarInfo());
+
+    // Update solar calculator with live driver GPS location
+    useEffect(() => {
+        if (userLocation) {
+            solarService.updateLocation(userLocation);
+        }
+    }, [userLocation?.lat, userLocation?.lng]);
+
+    // Live subscription to day/night solar transitions
+    useEffect(() => {
+        return solarService.subscribe(setSolarInfo);
+    }, []);
+
+    // Resolve dynamic skin ID: 'default' automatically resolves to 'warm_cream' (Day) or 'muted_slate' (Night)
+    const effectiveSkin = useMemo<MapSkinId>(() => {
+        return resolveMapSkinId(mapSkin as MapSkinId, solarInfo.isDaylight);
+    }, [mapSkin, solarInfo.isDaylight]);
+
     // Get the skin style URL
-    // Respects Low Data Mode (minimal 2D vector) vs Warm Cream (Light) vs Muted Slate (Dark) vs Auto Dynamic
+    // Respects Low Data Mode vs Warm Cream (Day) vs Muted Slate (Night) vs Auto Solar Transition
     const styleUrl = useMemo(() => {
         if (isLowDataMode) {
-            // Low Data Mode: Minimal vector 2D basemap, avoids heavy raster tiles and complex layers
-            return theme === 'dark'
-                ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
-                : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+            // Low Data Mode: Minimal vector 2D basemap
+            return effectiveSkin === 'warm_cream'
+                ? 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'
+                : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
         }
 
-        const skin = getMapSkin(mapSkin as MapSkinId);
-        let url: any = skin.styleUrl;
- 
         if (mapStyle === 'satellite') {
-            url = SATELLITE_STYLE;
-        } else if (mapStyle === 'terrain') {
-            url = TERRAIN_STYLE;
-        } else if (mapSkin === 'default') {
-            url = theme === 'dark'
-                ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
-                : 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
-        } else if (mapSkin === 'warm_cream') {
-            url = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
-        } else if (mapSkin === 'muted_slate') {
-            url = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+            return SATELLITE_STYLE;
         }
-        return url;
-    }, [mapSkin, mapStyle, theme, isLowDataMode]);
+        if (mapStyle === 'terrain') {
+            return TERRAIN_STYLE;
+        }
+
+        const skin = getMapSkin(effectiveSkin);
+        return skin.styleUrl;
+    }, [effectiveSkin, mapStyle, isLowDataMode]);
 
     // Prepare route polyline coordinates for map rendering
     const routeCoords = useMemo<Location[]>(() => {
@@ -306,7 +321,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         // Apply skin-specific color overrides
         if (mapStyle === 'standard' && !isLowDataMode) {
-            applySkinOverrides(map.current, mapSkin as MapSkinId, theme);
+            applySkinOverrides(map.current, effectiveSkin, theme);
         }
 
         const layers = map.current.getStyle()?.layers || [];
@@ -386,7 +401,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const baseHeight = Math.round(14 * heightMultiplier);
             const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
 
-            const isWarmLight = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+            const isWarmLight = effectiveSkin === 'warm_cream';
 
             // 3D Architectural Lighting & Balanced Sun Shading (Viewport anchor prevents harsh shadow skewing on light themes)
             try {
@@ -400,7 +415,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 console.warn('[MapLibre] setLight:', e);
             }
 
-            const isGTARadar = mapSkin === 'gta_radar';
+            const isGTARadar = effectiveSkin === 'gta_radar';
             // Crisp, solid volumetric architectural contrast for both light and dark themes
             const extrusionColor = [
                 'interpolate', ['linear'], ['zoom'],
@@ -462,7 +477,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
 
         // GTA Los Santos Radar Vector Styling (Freeway Yellow, Bright White Arterials, Sage Parks, Deep Ocean)
-        if (mapSkin === 'gta_radar') {
+        if (effectiveSkin === 'gta_radar') {
             try {
                 const motLayers = ['road_mot_fill_noramp', 'road_mot_fill_ramp', 'bridge_mot_fill', 'tunnel_mot_fill'];
                 motLayers.forEach(id => {
@@ -485,8 +500,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         // ==========================================
         // 3D STREET LABEL LEGIBILITY & VIEWPORT ORIENTATION ENGINE
         // ==========================================
-        const isWarmLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
-        const isGTARadar = mapSkin === 'gta_radar';
+        const isWarmLightSkin = effectiveSkin === 'warm_cream';
+        const isGTARadar = effectiveSkin === 'gta_radar';
 
         layers.forEach((layer: any) => {
             if (layer.type === 'symbol') {
@@ -782,8 +797,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             return;
         }
 
-        const isLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
-        const isGTARadar = mapSkin === 'gta_radar';
+        const isLightSkin = effectiveSkin === 'warm_cream';
+        const isGTARadar = effectiveSkin === 'gta_radar';
 
         // Full coordinates array [[lng, lat], ...]
         const fullCoordinates: [number, number][] = routeCoords.map(c => [c.lng, c.lat]);
@@ -963,7 +978,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 type: 'Feature',
                 properties: {
                     name: activeRoute.destinationName || 'Destination',
-                    isGTARadar: mapSkin === 'gta_radar'
+                    isGTARadar: effectiveSkin === 'gta_radar'
                 },
                 geometry: {
                     type: 'Point',
@@ -1783,7 +1798,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const isStale = ageMinutes >= 5;
             const isBlurred = member.privacyMode === 'blurred' || member.isGhostMode;
             const isFrozen = member.privacyMode === 'frozen';
-            const isGTARadar = mapSkin === 'gta_radar';
+            const isGTARadar = effectiveSkin === 'gta_radar';
             const isDriving = member.status === 'Driving' || (member.speed && member.speed > 5);
             const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
 
@@ -1802,7 +1817,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const initials = (member.name || 'M').charAt(0).toUpperCase();
 
             const isSelfNavigating = isNavigating && isSelf;
-            const isLightSkin = mapSkin === 'warm_cream' || (mapSkin === 'default' && theme === 'light');
+            const isLightSkin = effectiveSkin === 'warm_cream';
             const markerHtml = isSelfNavigating ? `
                 <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
                     <!-- Dynamic Forward Vision Headlight Beam -->

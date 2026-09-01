@@ -1,9 +1,11 @@
 /**
  * Map Skin Service
  * 
- * Provides premium map themes (skins) for Platinum subscribers.
+ * Provides map themes (skins) with automatic day/night solar transitions.
  * These are vector tile style URLs compatible with MapLibre GL.
  */
+
+import { solarService } from './solarService';
 
 export type MapSkinId = 'default' | 'warm_cream' | 'muted_slate' | 'gta_radar';
 
@@ -16,9 +18,6 @@ export interface MapSkin {
     isPremium: boolean;
 }
 
-// CartoCSS-based free styles + custom color overrides
-// For true custom skins, these would point to self-hosted style.json files
- 
 export const SATELLITE_STYLE = {
     version: 8,
     sources: {
@@ -66,18 +65,19 @@ export const TERRAIN_STYLE = {
         }
     ]
 };
+
 export const MAP_SKINS: MapSkin[] = [
     {
         id: 'default',
-        name: 'Auto / Dynamic',
-        description: 'Warm Cream by day, Muted Slate by night',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        name: 'Auto Solar Transition',
+        description: 'Warm Cream by day, Muted Slate by night (synced to sunrise/sunset)',
+        styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
         preview: '🌓',
         isPremium: false
     },
     {
         id: 'warm_cream',
-        name: 'Warm Cream',
+        name: 'Warm Cream (Day)',
         description: 'Bright warm daylight with soft cream & off-white ivory tones',
         styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
         preview: '☀️',
@@ -85,7 +85,7 @@ export const MAP_SKINS: MapSkin[] = [
     },
     {
         id: 'muted_slate',
-        name: 'Muted Slate',
+        name: 'Muted Slate (Night)',
         description: 'Sleek matte graphite & deep charcoal dark theme',
         styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
         preview: '🌑',
@@ -102,10 +102,22 @@ export const MAP_SKINS: MapSkin[] = [
 ];
 
 /**
- * Get a skin by ID
+ * Resolves dynamic skin ID to a concrete theme
  */
-export const getMapSkin = (id: MapSkinId): MapSkin => {
-    return MAP_SKINS.find(s => s.id === id) || MAP_SKINS[0];
+export const resolveMapSkinId = (id: MapSkinId, isDaylight?: boolean): MapSkinId => {
+    if (id !== 'default') return id;
+    if (typeof isDaylight === 'boolean') {
+        return isDaylight ? 'warm_cream' : 'muted_slate';
+    }
+    return solarService.getSolarInfo().isDaylight ? 'warm_cream' : 'muted_slate';
+};
+
+/**
+ * Get a skin by ID with automatic solar day/night resolution
+ */
+export const getMapSkin = (id: MapSkinId, isDaylight?: boolean): MapSkin => {
+    const resolvedId = resolveMapSkinId(id, isDaylight);
+    return MAP_SKINS.find(s => s.id === resolvedId) || MAP_SKINS[1];
 };
 
 /**
@@ -117,12 +129,12 @@ export const getAvailableSkins = (isPlatinum: boolean): MapSkin[] => {
 };
 
 /**
- * Apply dynamic color overrides to a skin (kept for backward compatibility)
+ * Apply dynamic color overrides to a skin
  */
 export const applySkinOverrides = (
     _map: any,
     _skinId: MapSkinId,
     _theme: 'light' | 'dark' = 'dark'
 ): void => {
-    // Styles are cleanly and natively handled by the vector styleUrl (Voyager for Warm Cream, Dark Matter for Muted Slate)
+    // Handled natively by vector tile styles
 };

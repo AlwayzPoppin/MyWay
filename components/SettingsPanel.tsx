@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { MapSkinId, MAP_SKINS } from '../services/mapSkinService';
+import { solarService, SolarInfo } from '../services/solarService';
 import StorageManager from './StorageManager';
 import { PrivacyMode } from '../types';
 import { useUI } from '../contexts/UIContext';
@@ -63,6 +64,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
     const { isLowDataMode, setIsLowDataMode } = useUI();
     const [localSettings, setLocalSettings] = useState(settings);
+    const [solarInfo, setSolarInfo] = useState<SolarInfo>(() => solarService.getSolarInfo());
+
+    useEffect(() => {
+        return solarService.subscribe(setSolarInfo);
+    }, []);
  
     // Profile Edit State
     const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -510,6 +516,41 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 onChange={(v) => updateSetting('showTrafficControls', v)}
                             />
                         </SettingRow>
+
+                        {/* Astronomical Solar Status Widget */}
+                        <div className={`p-3 rounded-2xl border flex items-center justify-between gap-3 ${
+                            solarInfo.isDaylight 
+                                ? 'bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 border-amber-500/30' 
+                                : 'bg-gradient-to-r from-indigo-950/40 via-purple-950/30 to-slate-900/40 border-indigo-500/30'
+                        }`}>
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <span className="text-2xl filter drop-shadow">
+                                    {solarInfo.solarPhase === 'day' ? '☀️' : solarInfo.solarPhase === 'golden_hour' ? '🌅' : solarInfo.solarPhase === 'twilight' ? '🌇' : '🌙'}
+                                </span>
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <h5 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                            {solarInfo.isDaylight ? 'Solar Daylight Active' : 'Solar Night Active'}
+                                        </h5>
+                                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
+                                            solarInfo.isDaylight ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                        }`}>
+                                            {solarInfo.sunElevationDeg > 0 ? `+${solarInfo.sunElevationDeg}°` : `${solarInfo.sunElevationDeg}°`} Sun
+                                        </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                                        🌅 Rise: {solarInfo.sunriseTime} • 🌇 Set: {solarInfo.sunsetTime}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                                <span className="text-[9px] uppercase font-bold text-slate-400 block">Auto Skin</span>
+                                <span className="text-xs font-black text-emerald-400">
+                                    {solarInfo.isDaylight ? 'Warm Cream' : 'Muted Slate'}
+                                </span>
+                            </div>
+                        </div>
 
                         {/* Map Skin Selector */}
                         <div>
