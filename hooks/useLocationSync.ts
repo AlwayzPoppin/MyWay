@@ -439,49 +439,57 @@ export const useLocationSync = (
                         }
                     }
 
-                    // PRIVACY FIX: Encrypt the chosen target location with background key auto-restoration
-                    const encrypted = (targetLat !== 0 && targetLng !== 0) 
-                        ? await encryptLocation(targetLat, targetLng, currentCircleId) 
-                        : null;
+                    const targetCircleIds = (userCircles && userCircles.length > 0)
+                        ? Array.from(new Set(userCircles.map(c => c.id)))
+                        : (currentCircleId ? [currentCircleId] : []);
 
-                    // If encryption is pending
-                    if (!encrypted && (targetLat !== 0 && targetLng !== 0)) {
-                        await updateMemberLocation(currentCircleId, user.uid, {
-                            lat: 0,
-                            lng: 0,
-                            speed: 0,
-                            heading: 0,
-                            accuracy: 0,
+                    if (targetCircleIds.length === 0) return;
+
+                    for (const cId of targetCircleIds) {
+                        // PRIVACY FIX: Encrypt the chosen target location with background key auto-restoration
+                        const encrypted = (targetLat !== 0 && targetLng !== 0) 
+                            ? await encryptLocation(targetLat, targetLng, cId) 
+                            : null;
+
+                        // If encryption is pending
+                        if (!encrypted && (targetLat !== 0 && targetLng !== 0)) {
+                            await updateMemberLocation(cId, user.uid, {
+                                lat: 0,
+                                lng: 0,
+                                speed: 0,
+                                heading: 0,
+                                accuracy: 0,
+                                timestamp: Date.now(),
+                                battery: batteryService.getBatteryLevel(),
+                                signalQuality: 'unknown',
+                                status: 'Pending Keys',
+                                privacyMode
+                            });
+                            continue;
+                        }
+
+                        await updateMemberLocation(cId, user.uid, {
+                            lat: encrypted ? 0 : targetLat,
+                            lng: encrypted ? 0 : targetLng,
+                            speed: privacyMode === 'exact' ? (location.speed || 0) : 0,
+                            heading: privacyMode === 'exact' ? (location.heading || 0) : 0,
+                            accuracy: privacyMode === 'blurred' ? 2400 : (location.accuracy || 0),
                             timestamp: Date.now(),
                             battery: batteryService.getBatteryLevel(),
-                            signalQuality: 'unknown',
-                            status: 'Pending Keys',
-                            privacyMode
+                            signalQuality: location.signalQuality,
+                            encryptedData: encrypted || undefined,
+                            status: statusText,
+                            privacyMode,
+                            blurredRadiusMeters: blurredRadius
                         });
-                        return;
                     }
-
-                    await updateMemberLocation(currentCircleId, user.uid, {
-                        lat: encrypted ? 0 : targetLat,
-                        lng: encrypted ? 0 : targetLng,
-                        speed: privacyMode === 'exact' ? (location.speed || 0) : 0,
-                        heading: privacyMode === 'exact' ? (location.heading || 0) : 0,
-                        accuracy: privacyMode === 'blurred' ? 2400 : (location.accuracy || 0),
-                        timestamp: Date.now(),
-                        battery: batteryService.getBatteryLevel(),
-                        signalQuality: location.signalQuality,
-                        encryptedData: encrypted || undefined,
-                        status: statusText,
-                        privacyMode,
-                        blurredRadiusMeters: blurredRadius
-                    });
                 };
                 syncLocation();
             }
         });
 
         return () => geolocationService.stopWatching();
-    }, [user, currentCircleId, profile, geofences]);
+    }, [user, currentCircleId, userCircles, profile, geofences]);
 
     // Track geofence status per member ID -> Set<geofenceId>
     const memberInsideGeofencesRef = useRef<Map<string, Set<string>>>(new Map());

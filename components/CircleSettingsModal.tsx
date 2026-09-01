@@ -344,7 +344,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                     </div>
                                 ) : (
                                     userCircles.map((circle) => {
-                                        const isActive = currentCircle?.id === circle.id;
+                                        const isAllMode = activeFilterCircleId === 'all';
+                                        const isSingleFocused = !isAllMode && (activeFilterCircleId === circle.id || (!activeFilterCircleId && currentCircle?.id === circle.id));
+                                        const isPrimary = currentCircle?.id === circle.id;
+                                        const isCardInView = isAllMode || isSingleFocused;
                                         const circleMemberCount = circle.members?.length || 1;
                                         const circleColorInfo = getCircleColor(circle.id, circle.color);
                                         const circleHex = circle.color || circleColorInfo.hex;
@@ -353,14 +356,16 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             <div
                                                 key={circle.id}
                                                 onClick={() => {
-                                                    if (!isActive) onSwitchCircle(circle.id);
+                                                    if (!isPrimary) {
+                                                        onSwitchCircle(circle.id);
+                                                    }
                                                 }}
                                                 style={{
-                                                    borderColor: isActive ? circleHex : undefined,
-                                                    boxShadow: isActive ? `0 0 16px ${circleHex}33` : undefined
+                                                    borderColor: isCardInView ? circleHex : undefined,
+                                                    boxShadow: isCardInView ? `0 0 16px ${circleHex}33` : undefined
                                                 }}
                                                 className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer ${
-                                                    isActive
+                                                    isCardInView
                                                         ? 'bg-white/10 ring-1 shadow-md'
                                                         : isDark
                                                             ? 'bg-white/5 border-white/10 hover:bg-white/10'
@@ -395,17 +400,39 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                 </div>
 
                                                 <div className="shrink-0">
-                                                    {isActive ? (
+                                                    {isAllMode ? (
+                                                        <div className="flex items-center gap-1.5">
+                                                            {isPrimary && (
+                                                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/15">
+                                                                    Primary
+                                                                </span>
+                                                            )}
+                                                            <span
+                                                                style={{ color: circleHex, backgroundColor: `${circleHex}22`, borderColor: `${circleHex}44` }}
+                                                                className="text-xs font-black flex items-center gap-1 px-2.5 py-1 rounded-lg border shadow-sm"
+                                                            >
+                                                                <span>✓</span> In View
+                                                            </span>
+                                                        </div>
+                                                    ) : isSingleFocused ? (
                                                         <span
                                                             style={{ color: circleHex, backgroundColor: `${circleHex}22`, borderColor: `${circleHex}44` }}
-                                                            className="text-xs font-black flex items-center gap-1 px-2 py-1 rounded-lg border"
+                                                            className="text-xs font-black flex items-center gap-1 px-2.5 py-1 rounded-lg border shadow-sm"
                                                         >
-                                                            <span>✓</span> Active
+                                                            <span>✓</span> Focused
                                                         </span>
                                                     ) : (
-                                                        <span className="text-[10px] font-bold text-slate-400 hover:text-white transition-colors">
-                                                            Switch ➔
-                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onSelectFilterCircle?.(circle.id);
+                                                                onSwitchCircle(circle.id);
+                                                            }}
+                                                            className="text-[10px] font-bold text-slate-400 hover:text-white px-2 py-1 rounded-lg hover:bg-white/10 transition-all flex items-center gap-1 cursor-pointer"
+                                                        >
+                                                            <span>Focus</span> ➔
+                                                        </button>
                                                     )}
                                                 </div>
                                             </div>
