@@ -502,56 +502,101 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
 
         // ==========================================
-        // 3D STREET LABEL LEGIBILITY & VIEWPORT ORIENTATION ENGINE
+        // WAZE-STYLE STREET NAME & POI TYPOGRAPHY ENGINE
         // ==========================================
         const isWarmLightSkin = effectiveSkin === 'warm_cream';
         const isGTARadar = effectiveSkin === 'gta_radar';
 
         layers.forEach((layer: any) => {
             if (layer.type === 'symbol') {
+                const id = layer.id.toLowerCase();
+                const isRoadName = id.includes('road') || id.includes('street') || id.includes('highway') || 
+                                   id.includes('transportation') || id.includes('motorway') || id.includes('path') || id.includes('way');
+                const isPlaceOrPoi = id.includes('poi') || id.includes('place') || id.includes('park') || 
+                                     id.includes('school') || id.includes('hospital') || id.includes('suburb') || id.includes('neighborhood');
+
                 try {
-                    // 1. Force viewport-aligned billboarding so street text never squashes, skews, or foreshortens when camera is pitched/tilted
-                    if (map.current!.getLayoutProperty(layer.id, 'text-pitch-alignment') !== 'viewport') {
-                        map.current!.setLayoutProperty(layer.id, 'text-pitch-alignment', 'viewport');
-                    }
-                    
-                    // Allow road labels to bend naturally around curves without vanishing
-                    try {
-                        map.current!.setLayoutProperty(layer.id, 'text-max-angle', 45);
-                    } catch {}
+                    if (isRoadName) {
+                        // 1. Road Line Alignment: Follow road geometry smoothly without squashing
+                        try {
+                            map.current!.setLayoutProperty(layer.id, 'text-pitch-alignment', 'map');
+                            map.current!.setLayoutProperty(layer.id, 'text-rotation-alignment', 'map');
+                            map.current!.setLayoutProperty(layer.id, 'text-max-angle', 38);
+                            // Dense Waze-style padding so all neighborhood streets show names
+                            map.current!.setLayoutProperty(layer.id, 'text-padding', 2);
+                            map.current!.setLayoutProperty(layer.id, 'symbol-spacing', 220);
+                            map.current!.setLayoutProperty(layer.id, 'text-letter-spacing', 0.04);
+                            map.current!.setLayoutProperty(layer.id, 'text-size', [
+                                'interpolate', ['linear'], ['zoom'],
+                                11, 10,
+                                13, 12,
+                                15, 14,
+                                17, 16.5,
+                                19, 18.5
+                            ]);
+                        } catch {}
 
-                    // 2. High-contrast typography colors & protective backdrop halos
-                    if (isWarmLightSkin) {
-                        // Light Mode / Warm Cream: Deep Charcoal text with brilliant crisp white halos
-                        map.current!.setPaintProperty(layer.id, 'text-color', '#0f172a');
-                        map.current!.setPaintProperty(layer.id, 'text-halo-color', 'rgba(255, 255, 255, 0.98)');
-                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.5);
-                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
-                    } else if (isGTARadar) {
-                        // GTA Radar: Golden Amber / Crisp White typography with deep midnight outline
-                        const isRoad = layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway');
-                        map.current!.setPaintProperty(layer.id, 'text-color', isRoad ? '#fef08a' : '#f8fafc');
-                        map.current!.setPaintProperty(layer.id, 'text-halo-color', '#000000');
-                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.5);
-                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 0.8);
+                        // 2. High-Contrast Waze Paint Palette
+                        if (isWarmLightSkin) {
+                            // Light Mode / Warm Cream: Deep Charcoal text with brilliant crisp white halos
+                            map.current!.setPaintProperty(layer.id, 'text-color', '#0f172a');
+                            map.current!.setPaintProperty(layer.id, 'text-halo-color', 'rgba(255, 255, 255, 0.98)');
+                            map.current!.setPaintProperty(layer.id, 'text-halo-width', 3.2);
+                            map.current!.setPaintProperty(layer.id, 'text-halo-blur', 0.4);
+                            map.current!.setPaintProperty(layer.id, 'text-opacity', 1.0);
+                        } else if (isGTARadar) {
+                            // GTA Radar: Golden Amber / Crisp White typography with deep midnight outline
+                            map.current!.setPaintProperty(layer.id, 'text-color', '#fef08a');
+                            map.current!.setPaintProperty(layer.id, 'text-halo-color', '#000000');
+                            map.current!.setPaintProperty(layer.id, 'text-halo-width', 3.0);
+                            map.current!.setPaintProperty(layer.id, 'text-halo-blur', 0.5);
+                            map.current!.setPaintProperty(layer.id, 'text-opacity', 1.0);
+                        } else {
+                            // Dark Mode / Muted Slate: Ultra-bright luminous white text with deep obsidian halos (Waze style)
+                            map.current!.setPaintProperty(layer.id, 'text-color', '#f8fafc');
+                            map.current!.setPaintProperty(layer.id, 'text-halo-color', 'rgba(5, 8, 17, 0.98)');
+                            map.current!.setPaintProperty(layer.id, 'text-halo-width', 3.2);
+                            map.current!.setPaintProperty(layer.id, 'text-halo-blur', 0.4);
+                            map.current!.setPaintProperty(layer.id, 'text-opacity', 1.0);
+                        }
+                    } else if (isPlaceOrPoi) {
+                        // POI / Landmark Billboard Alignment
+                        try {
+                            map.current!.setLayoutProperty(layer.id, 'text-pitch-alignment', 'viewport');
+                            map.current!.setLayoutProperty(layer.id, 'text-rotation-alignment', 'viewport');
+                            map.current!.setLayoutProperty(layer.id, 'text-padding', 3);
+                            map.current!.setLayoutProperty(layer.id, 'text-size', [
+                                'interpolate', ['linear'], ['zoom'],
+                                12, 10,
+                                15, 12,
+                                18, 14
+                            ]);
+                        } catch {}
+
+                        const poiColor = isWarmLightSkin ? '#334155' : '#cbd5e1';
+                        const poiHalo = isWarmLightSkin ? 'rgba(255, 255, 255, 0.95)' : 'rgba(10, 15, 26, 0.95)';
+                        map.current!.setPaintProperty(layer.id, 'text-color', poiColor);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-color', poiHalo);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.2);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 0.5);
+                        map.current!.setPaintProperty(layer.id, 'text-opacity', 0.92);
                     } else {
-                        // Dark Mode / Muted Slate: High-contrast pure white/light-slate text with deep obsidian halos
-                        map.current!.setPaintProperty(layer.id, 'text-color', '#f8fafc');
-                        map.current!.setPaintProperty(layer.id, 'text-halo-color', 'rgba(9, 13, 22, 0.98)');
+                        // General symbols fallback
+                        try {
+                            map.current!.setLayoutProperty(layer.id, 'text-pitch-alignment', 'viewport');
+                        } catch {}
+                        const generalColor = isWarmLightSkin ? '#0f172a' : '#f8fafc';
+                        const generalHalo = isWarmLightSkin ? 'rgba(255, 255, 255, 0.98)' : 'rgba(5, 8, 17, 0.98)';
+                        map.current!.setPaintProperty(layer.id, 'text-color', generalColor);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-color', generalHalo);
                         map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.5);
-                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 1);
-                    }
-
-                    // 3. Ensure full opacity for road names across all camera angles
-                    if (layer.id.includes('road') || layer.id.includes('street') || layer.id.includes('highway') || layer.id.includes('path')) {
-                        map.current!.setPaintProperty(layer.id, 'text-opacity', 1.0);
                     }
                 } catch (e) {
-                    // Some layers might not support these paint properties
+                    // Ignore layers that don't accept paint properties
                 }
             }
 
-            // 4. Enhanced Railroad & Train Track Styling
+            // Enhanced Railroad & Train Track Styling
             if (layer.id.includes('rail') || layer.id.includes('railway') || layer.id.includes('train')) {
                 try {
                     map.current!.setLayoutProperty(layer.id, 'visibility', 'visible');
