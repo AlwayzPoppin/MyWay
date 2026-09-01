@@ -1,6 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { geolocationService } from '../services/geolocationService';
-import { updateMemberLocation, subscribeToFamilyLocations, MemberLocation } from '../services/authService';
+import {
+    updateMemberLocation,
+    subscribeToFamilyLocations,
+    subscribeToMultipleCirclesLocations,
+    getCircleColor,
+    FamilyCircle,
+    MemberLocation
+} from '../services/authService';
 import { encryptLocation, decryptLocation, getFuzzyLocation, getNeighborhoodCentroid } from '../services/cryptoService';
 import { detectTransition } from '../services/geofenceService';
 import { getDistanceFromCoords } from '../utils/geo';
@@ -11,7 +18,7 @@ import { bufferMessage } from '../services/offlineMessageBuffer';
 import { broadcastGeofencePushAlert } from '../services/pushNotificationService';
 import { speechService } from '../services/speechService';
 import { batteryService } from '../services/batteryService';
-import { getSafeAvatarUrl } from '../utils/avatar';
+import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { registerDeadZone } from '../services/offlineLocationBuffer';
 import { backgroundKeySyncService } from '../services/backgroundKeySyncService';
 
@@ -20,7 +27,9 @@ export const useLocationSync = (
     profile: any,
     currentCircleId: string | undefined,
     geofences: any[] = [],
-    onTransition?: (transition: any) => void
+    onTransition?: (transition: any) => void,
+    userCircles: FamilyCircle[] = [],
+    activeFilterCircleId: string | 'all' = 'all'
 ) => {
     const [members, setMembers] = useState<FamilyMember[]>([]);
     const [hasInjectedSelf, setHasInjectedSelf] = useState(false);
@@ -477,31 +486,69 @@ export const useLocationSync = (
     // Track geofence status per member ID -> Set<geofenceId>
     const memberInsideGeofencesRef = useRef<Map<string, Set<string>>>(new Map());
 
-    // 2. SUBSCRIBE TO CIRCLE MEMBERS & DECRYPT
+    // 2. SUBSCRIBE TO CIRCLE MEMBERS & DECRYPT (MULTI-CIRCLE ENABLED)
     useEffect(() => {
-        if (!currentCircleId || !user) return;
+        if (!user) return;
 
-        const unsubscribe = subscribeToFamilyLocations(currentCircleId, async (locations) => {
-                const current = membersRef.current.filter(m => 
-                    m.id !== 'demo-you' && 
-                    m.id !== 'current_user' && 
-                    (user?.uid ? m.id !== 'local-user' : true)
-                );
+        const targetCircleIds = activeFilterCircleId === 'all'
+            ? (userCircles && userCircles.length > 0 ? userCircles.map(c => c.id) : (currentCircleId ? [currentCircleId] : []))
+            : [activeFilterCircleId];
 
-                // Collect unique member IDs from both current state and Firebase locations
-                const allMemberIds = Array.from(new Set([
-                    ...current.map(m => m.id),
-                    ...Object.keys(locations || {})
-                ])).filter(id => 
-                    id !== 'demo-you' && 
-                    id !== 'current_user' && 
-                    (user?.uid ? id !== 'local-user' : true)
-                );
+        if (targetCircleIds.length === 0) return;
 
-                const updatedMembers = await Promise.all(allMemberIds.map(async (id) => {
-                    const existing = current.find(m => m.id === id);
-                    if (id === user.uid) {
-                        return existing || {
+        const circleLocationsMap: Record<string, Record<string, MemberLocation>> = {};
+
+        const unsubscribe = subscribeToMultipleCirclesLocations(targetCircleIds, async (cId, locations) => {
+            circleLocationsMap[cId] = locations;
+
+            const allLocations: Record<string, { loc: MemberLocation; circleId: string; circleName?: string; circleColor?: string }> = {};
+
+            targetCircleIds.forEach(targetId => {
+                const cObj = userCircles?.find(c => c.id === targetId);
+                const cName = cObj?.name || 'Family';
+                const cColor = cObj?.color || getCircleColor(targetId).hex;
+                const locs = circleLocationsMap[targetId] || {};
+
+                Object.keys(locs).forEach(memberId => {
+                    allLocations[memberId] = {
+                        loc: locs[memberId],
+                        circleId: targetId,
+                        circleName: cName,
+                        circleColor: cColor
+                    };
+                });
+            });
+
+            const current = membersRef.current.filter(m => 
+                m.id !== 'demo-you' && 
+                m.id !== 'current_user' && 
+                (user?.uid ? m.id !== 'local-user' : true)
+            );
+
+            // Collect unique member IDs from both current state and Firebase locations
+            const allMemberIds = Array.from(new Set([
+                ...current.map(m => m.id),
+                ...Object.keys(allLocations)
+            ])).filter(id => 
+                id !== 'demo-you' && 
+                id !== 'current_user' && 
+                (user?.uid ? id !== 'local-user' : true)
+            );
+
+            const activeCircleObj = userCircles?.find(c => c.id === currentCircleId);
+            const defaultCircleName = activeCircleObj?.name || 'Family';
+            const defaultCircleColor = activeCircleObj?.color || getCircleColor(currentCircleId || '').hex;
+
+            const updatedMembers = await Promise.all(allMemberIds.map(async (id) => {
+                const existing = current.find(m => m.id === id);
+                const locInfo = allLocations[id];
+                const memberCircleId = locInfo?.circleId || existing?.circleId || currentCircleId;
+                const memberCircleName = locInfo?.circleName || existing?.circleName || defaultCircleName;
+                const memberCircleColor = locInfo?.circleColor || existing?.circleColor || defaultCircleColor;
+
+                if (id === user.uid) {
+                    return {
+                        ...(existing || {
                             id: user.uid,
                             name: profile?.displayName || user.displayName || 'You',
                             avatar: getSafeAvatarUrl(profile?.photoURL || user.photoURL, profile?.displayName || user.displayName || user.uid),
@@ -518,123 +565,135 @@ export const useLocationSync = (
                             safetyScore: 100,
                             pathHistory: [],
                             driveEvents: []
-                        };
-                    }
-
-                    const member: FamilyMember = existing || {
-                        id,
-                        name: 'Circle Member',
-                        avatar: getDefaultAvatarDataUri(id),
-                        location: { lat: 0, lng: 0 },
-                        status: 'Stationary',
-                        battery: 100,
-                        membershipTier: 'free',
-                        lastUpdated: new Date().toISOString(),
-                        accuracy: 15,
-                        isGhostMode: false,
-                        speed: 0,
-                        heading: 0,
-                        role: 'Member',
-                        safetyScore: 100,
-                        pathHistory: [],
-                        driveEvents: []
+                        }),
+                        circleId: memberCircleId,
+                        circleName: memberCircleName,
+                        circleColor: memberCircleColor
                     };
+                }
 
-                    const loc = locations[id];
-                    if (!loc) return member;
+                const member: FamilyMember = existing || {
+                    id,
+                    name: 'Circle Member',
+                    avatar: getDefaultAvatarDataUri(id),
+                    location: { lat: 0, lng: 0 },
+                    status: 'Stationary',
+                    battery: 100,
+                    membershipTier: 'free',
+                    lastUpdated: new Date().toISOString(),
+                    accuracy: 15,
+                    isGhostMode: false,
+                    speed: 0,
+                    heading: 0,
+                    role: 'Member',
+                    safetyScore: 100,
+                    pathHistory: [],
+                    driveEvents: [],
+                    circleId: memberCircleId,
+                    circleName: memberCircleName,
+                    circleColor: memberCircleColor
+                };
 
-                    let lat = loc.lat;
-                    let lng = loc.lng;
+                member.circleId = memberCircleId;
+                member.circleName = memberCircleName;
+                member.circleColor = memberCircleColor;
 
-                    if (loc.encryptedData) {
-                        const decrypted = await decryptLocation(loc.encryptedData);
-                        if (decrypted) {
-                            lat = decrypted.lat;
-                            lng = decrypted.lng;
-                        }
+                const loc = locInfo?.loc;
+                if (!loc) return member;
+
+                let lat = loc.lat;
+                let lng = loc.lng;
+
+                if (loc.encryptedData) {
+                    const decrypted = await decryptLocation(loc.encryptedData);
+                    if (decrypted) {
+                        lat = decrypted.lat;
+                        lng = decrypted.lng;
+                    }
+                }
+
+                // Circle Member Geofence Arrival / Departure Tracking
+                let memberPlaceName: string | undefined = undefined;
+                if (geofences && geofences.length > 0 && lat && lng && lat !== 0) {
+                    let currentInside = memberInsideGeofencesRef.current.get(member.id);
+                    const isFirstTracking = !currentInside;
+                    if (!currentInside) {
+                        currentInside = new Set<string>();
+                        memberInsideGeofencesRef.current.set(member.id, currentInside);
                     }
 
-                    // Circle Member Geofence Arrival / Departure Tracking
-                    let memberPlaceName: string | undefined = undefined;
-                    if (geofences && geofences.length > 0 && lat && lng && lat !== 0) {
-                        let currentInside = memberInsideGeofencesRef.current.get(member.id);
-                        const isFirstTracking = !currentInside;
-                        if (!currentInside) {
-                            currentInside = new Set<string>();
-                            memberInsideGeofencesRef.current.set(member.id, currentInside);
-                        }
+                    geofences.forEach((gf) => {
+                        const gfLat = gf?.location?.lat ?? (gf as any)?.lat;
+                        const gfLng = gf?.location?.lng ?? (gf as any)?.lng;
+                        if (typeof gfLat === 'number' && typeof gfLng === 'number') {
+                            const distance = getDistanceFromCoords(lat, lng, gfLat, gfLng);
+                            const radius = gf.radius || 150;
+                            const isInsideNow = distance <= radius;
+                            const wasInside = currentInside!.has(gf.id);
 
-                        geofences.forEach((gf) => {
-                            const gfLat = gf?.location?.lat ?? (gf as any)?.lat;
-                            const gfLng = gf?.location?.lng ?? (gf as any)?.lng;
-                            if (typeof gfLat === 'number' && typeof gfLng === 'number') {
-                                const distance = getDistanceFromCoords(lat, lng, gfLat, gfLng);
-                                const radius = gf.radius || 150;
-                                const isInsideNow = distance <= radius;
-                                const wasInside = currentInside!.has(gf.id);
+                            if (isInsideNow) {
+                                memberPlaceName = gf.name;
+                            }
 
-                                if (isInsideNow) {
-                                    memberPlaceName = gf.name;
+                            if (isInsideNow && !wasInside) {
+                                currentInside!.add(gf.id);
+                                if (!isFirstTracking) {
+                                    const arrivalTitle = `📍 Arrival: ${member.name}`;
+                                    const arrivalBody = `${member.name} has arrived at ${gf.name}`;
+                                    broadcastGeofencePushAlert('arrival', member.name, gf.name);
+                                    speechService.speak(arrivalBody);
                                 }
-
-                                if (isInsideNow && !wasInside) {
-                                    currentInside!.add(gf.id);
-                                    if (!isFirstTracking) {
-                                        speechService.speak(`${member.name} arrived at ${gf.name}`, { chime: 'arrival' });
-                                        useUI.getState().addActivity({
-                                            id: `act_${Date.now()}_${Math.random()}`,
-                                            type: 'arrival',
-                                            message: `${member.name} arrived at ${gf.name}`,
-                                            member: member,
-                                            timestamp: Date.now()
-                                        });
-                                    }
-                                } else if (!isInsideNow && wasInside) {
-                                    currentInside!.delete(gf.id);
-                                    if (!isFirstTracking) {
-                                        speechService.speak(`${member.name} left ${gf.name}`, { chime: 'turn' });
-                                        useUI.getState().addActivity({
-                                            id: `act_${Date.now()}_${Math.random()}`,
-                                            type: 'departure',
-                                            message: `${member.name} left ${gf.name}`,
-                                            member: member,
-                                            timestamp: Date.now()
-                                        });
-                                    }
+                            } else if (!isInsideNow && wasInside) {
+                                currentInside!.delete(gf.id);
+                                if (!isFirstTracking) {
+                                    const departureTitle = `🚶 Departure: ${member.name}`;
+                                    const departureBody = `${member.name} left ${gf.name}`;
+                                    broadcastGeofencePushAlert('departure', member.name, gf.name);
+                                    speechService.speak(departureBody);
                                 }
                             }
-                        });
-                    }
+                        }
+                    });
+                }
 
-                    const memberSpeed = Math.round(loc.speed || 0);
-                    const memberStatus: 'Driving' | 'Walking' | 'Stationary' = (memberSpeed > 5) ? 'Driving' : (memberSpeed > 0.6) ? 'Walking' : 'Stationary';
+                let memberStatus: 'Moving' | 'Stationary' | 'Driving' | 'Walking' | 'Offline' = 'Stationary';
+                const speed = loc.speed || 0;
+                if (speed > 25) {
+                    memberStatus = 'Driving';
+                } else if (speed > 3) {
+                    memberStatus = 'Walking';
+                } else if (speed > 0.5) {
+                    memberStatus = 'Moving';
+                }
 
-                    return {
-                        ...member,
-                        name: member.name || 'Circle Member',
-                        avatar: getSafeAvatarUrl(member.avatar, member.name || member.id),
-                        location: { lat, lng },
-                        accuracy: loc.accuracy,
-                        speed: memberSpeed,
-                        heading: loc.heading,
-                        battery: loc.battery,
-                        lastUpdated: new Date(loc.timestamp).toISOString(),
-                        status: loc.status || memberStatus,
-                        currentPlace: memberPlaceName,
-                        signalQuality: loc.signalQuality,
-                        sosActive: !!loc.sosActive,
-                        impact: loc.impact || undefined,
-                        privacyMode: loc.privacyMode || (loc.status?.includes('Blurred') ? 'blurred' : loc.status?.includes('Status Only') ? 'status_only' : loc.status?.includes('Frozen') ? 'frozen' : 'exact'),
-                        blurredRadiusMeters: loc.blurredRadiusMeters,
-                        isGhostMode: loc.privacyMode === 'blurred' || loc.privacyMode === 'frozen' || !!loc.status?.includes('Blurred'),
-                        currentTrip: loc.currentTrip || null
-                    };
-                }));
+                return {
+                    ...member,
+                    location: { lat, lng },
+                    battery: loc.battery !== undefined ? loc.battery : member.battery,
+                    speed: loc.speed !== undefined ? loc.speed : member.speed,
+                    heading: loc.heading !== undefined ? loc.heading : member.heading,
+                    accuracy: loc.accuracy !== undefined ? loc.accuracy : member.accuracy,
+                    lastUpdated: new Date(loc.timestamp).toISOString(),
+                    status: loc.status || memberStatus,
+                    currentPlace: memberPlaceName,
+                    signalQuality: loc.signalQuality,
+                    sosActive: !!loc.sosActive,
+                    impact: loc.impact || undefined,
+                    privacyMode: loc.privacyMode || (loc.status?.includes('Blurred') ? 'blurred' : loc.status?.includes('Status Only') ? 'status_only' : loc.status?.includes('Frozen') ? 'frozen' : 'exact'),
+                    blurredRadiusMeters: loc.blurredRadiusMeters,
+                    isGhostMode: loc.privacyMode === 'blurred' || loc.privacyMode === 'frozen' || !!loc.status?.includes('Blurred'),
+                    currentTrip: loc.currentTrip || null,
+                    circleId: memberCircleId,
+                    circleName: memberCircleName,
+                    circleColor: memberCircleColor
+                };
+            }));
 
-                setMembers(updatedMembers);
+            setMembers(updatedMembers);
         });
+
         return () => unsubscribe();
-    }, [currentCircleId, user, geofences]);
+    }, [currentCircleId, user, geofences, userCircles, activeFilterCircleId]);
 
     // 3. SYNC PROFILE CHANGES TO LOCAL SELF
     useEffect(() => {

@@ -6,6 +6,7 @@ import HoldToActivate from './HoldToActivate';
 import ActivityLog from './ActivityLog';
 import CircleManager from './CircleManager';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
+import { FamilyCircle, getCircleColor } from '../services/authService';
 
 interface BottomSheetProps {
     members: FamilyMember[];
@@ -17,6 +18,9 @@ interface BottomSheetProps {
     onCreateCircle?: (name: string) => Promise<any>;
     onJoinCircle?: (code: string) => Promise<any>;
     circleName?: string;
+    userCircles?: FamilyCircle[];
+    activeFilterCircleId?: string | 'all';
+    onSelectFilterCircle?: (circleId: string | 'all') => void;
     onOpenCircleSettings?: (tab?: 'circles' | 'invite' | 'manage') => void;
     avgGasPrice?: string;
     showNotification?: (msg: string, duration?: number) => void;
@@ -49,6 +53,9 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     hasCircle = true,
     inviteCode,
     circleName,
+    userCircles = [],
+    activeFilterCircleId = 'all',
+    onSelectFilterCircle,
     onOpenCircleSettings,
     onCreateCircle,
     onJoinCircle,
@@ -439,9 +446,55 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                     </div>
                                 </div>
 
+                                {/* Quick Circle Filter Chips (When multiple circles exist) */}
+                                {userCircles.length > 1 && (
+                                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => onSelectFilterCircle?.('all')}
+                                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                                                activeFilterCircleId === 'all'
+                                                    ? 'bg-gradient-to-r from-blue-600 via-purple-600 to-emerald-600 text-white shadow-md'
+                                                    : isDark ? 'bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300' : 'bg-slate-100 border border-slate-200 text-slate-700'
+                                            }`}
+                                        >
+                                            <span>✨</span>
+                                            <span>All Groups ({members.length})</span>
+                                        </button>
+                                        {userCircles.map(c => {
+                                            const cColor = c.color || getCircleColor(c.id).hex;
+                                            const isSelected = activeFilterCircleId === c.id;
+                                            const count = members.filter(m => m.circleId === c.id).length;
+                                            return (
+                                                <button
+                                                    key={c.id}
+                                                    type="button"
+                                                    onClick={() => onSelectFilterCircle?.(c.id)}
+                                                    style={{
+                                                        borderColor: isSelected ? cColor : undefined,
+                                                        backgroundColor: isSelected ? `${cColor}2b` : undefined,
+                                                        color: isSelected ? '#ffffff' : undefined
+                                                    }}
+                                                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 flex items-center gap-1.5 border cursor-pointer ${
+                                                        isSelected
+                                                            ? 'ring-1 shadow-sm'
+                                                            : isDark ? 'bg-white/5 border-white/10 text-slate-300 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-700'
+                                                    }`}
+                                                >
+                                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cColor }} />
+                                                    <span>{c.name}</span>
+                                                    {count > 0 && <span className="opacity-75 text-[10px]">({count})</span>}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
                                 {/* Members List */}
                                 <div className="space-y-2">
-                                    {members.map(member => (
+                                    {members.map(member => {
+                                        const memberCircleHex = member.circleColor || '#6366f1';
+                                        return (
                                         <div
                                             key={member.id}
                                             onClick={() => onSelect(member.id)}
@@ -462,7 +515,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name || member.id);
                                                         }}
                                                         alt={member.name}
-                                                        className={`w-11 h-11 rounded-xl object-cover ${isDark ? 'bg-slate-800' : 'bg-slate-100'} ${
+                                                        style={{ borderColor: memberCircleHex }}
+                                                        className={`w-11 h-11 rounded-xl object-cover border-2 ${isDark ? 'bg-slate-800' : 'bg-slate-100'} ${
                                                             selectedId === member.id ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-900' : ''
                                                         } ${member.isGhostMode ? 'blur-[1.5px] grayscale opacity-75' : ''}`}
                                                     />
@@ -477,10 +531,25 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                 {/* Info */}
                                                 <div className="flex-1 text-left min-w-0">
                                                     <div className="flex items-center justify-between gap-1">
-                                                        <h4 className={`font-black text-sm truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                                                            {member.name}
-                                                            {member.name === 'You' && <span className="ml-1.5 text-xs text-indigo-400 font-bold">(You)</span>}
-                                                        </h4>
+                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                            <h4 className={`font-black text-sm truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                                                                {member.name}
+                                                                {member.name === 'You' && <span className="ml-1 text-xs text-indigo-400 font-bold">(You)</span>}
+                                                            </h4>
+                                                            {member.circleName && (
+                                                                <span
+                                                                    style={{
+                                                                        backgroundColor: `${memberCircleHex}22`,
+                                                                        borderColor: `${memberCircleHex}44`,
+                                                                        color: memberCircleHex
+                                                                    }}
+                                                                    className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
+                                                                >
+                                                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: memberCircleHex }} />
+                                                                    <span className="truncate max-w-[70px]">{member.circleName}</span>
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0 ${
                                                             member.battery <= 20 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
                                                         }`}>
@@ -546,7 +615,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                 </div>
                                             )}
                                         </div>
-                                    ))}
+                                    );
+                                })}
                                 </div>
 
                                 {/* ─── HISTORY & ACCESS SECTION (MOBILE BENTO GRID) ─── */}

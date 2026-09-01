@@ -21,7 +21,8 @@ import {
     switchActiveCircle,
     leaveCircle,
     renameFamilyCircle,
-    deleteFamilyCircle
+    deleteFamilyCircle,
+    updateCircleColor as updateCircleColorService
 } from '../services/authService';
 
 interface AuthContextType {
@@ -39,11 +40,12 @@ interface AuthContextType {
     completeMagicLinkSignIn: (email?: string) => Promise<void>;
     logout: () => Promise<void>;
     clearError: () => void;
-    createCircle: (name: string) => Promise<FamilyCircle>;
+    createCircle: (name: string, color?: string) => Promise<FamilyCircle>;
     joinCircle: (code: string) => Promise<FamilyCircle | null>;
     switchCircle: (circleId: string) => Promise<void>;
     leaveCurrentCircle: (circleId: string) => Promise<void>;
     renameCircle: (circleId: string, name: string) => Promise<void>;
+    updateCircleColor: (circleId: string, color: string) => Promise<void>;
     deleteCircle: (circleId: string) => Promise<void>;
     refreshCircles: () => Promise<void>;
 }
@@ -230,9 +232,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     const clearError = () => setError(null);
 
-    const handleCreateCircle = async (name: string) => {
+    const handleCreateCircle = async (name: string, color?: string) => {
         if (!user) throw new Error('Must be logged in');
-        const circle = await createFamilyCircle(name, user.uid);
+        const circle = await createFamilyCircle(name, user.uid, color);
         setProfile(prev => prev ? { ...prev, familyCircleId: circle.id } : prev);
         setCurrentCircle(circle);
         await refreshCircles();
@@ -273,6 +275,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         await refreshCircles();
     };
 
+    const handleUpdateCircleColor = async (circleId: string, color: string) => {
+        await updateCircleColorService(circleId, color);
+        await refreshCircles();
+    };
+
     const handleDeleteCircle = async (circleId: string) => {
         await deleteFamilyCircle(circleId);
         if (profile?.familyCircleId === circleId && user) {
@@ -303,6 +310,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         switchCircle: handleSwitchCircle,
         leaveCurrentCircle: handleLeaveCurrentCircle,
         renameCircle: handleRenameCircle,
+        updateCircleColor: handleUpdateCircleColor,
         deleteCircle: handleDeleteCircle,
         refreshCircles
     };

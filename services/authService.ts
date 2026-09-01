@@ -48,6 +48,42 @@ export interface UserProfile {
     ecdhPublicKey?: string;
 }
 
+export interface CircleColorInfo {
+    id: string;
+    name: string;
+    hex: string;
+    border: string;
+    bg: string;
+    text: string;
+}
+
+export const CIRCLE_COLORS: CircleColorInfo[] = [
+    { id: 'blue', name: 'Ocean Blue', hex: '#3B82F6', border: '#60A5FA', bg: 'rgba(59, 130, 246, 0.2)', text: 'text-blue-400' },
+    { id: 'purple', name: 'Neon Purple', hex: '#8B5CF6', border: '#A78BFA', bg: 'rgba(139, 92, 246, 0.2)', text: 'text-purple-400' },
+    { id: 'emerald', name: 'Emerald Green', hex: '#10B981', border: '#34D399', bg: 'rgba(16, 185, 129, 0.2)', text: 'text-emerald-400' },
+    { id: 'amber', name: 'Sunset Amber', hex: '#F59E0B', border: '#FBBF24', bg: 'rgba(245, 158, 11, 0.2)', text: 'text-amber-400' },
+    { id: 'pink', name: 'Rose Pink', hex: '#EC4899', border: '#F472B6', bg: 'rgba(236, 72, 153, 0.2)', text: 'text-pink-400' },
+    { id: 'cyan', name: 'Electric Cyan', hex: '#06B6D4', border: '#22D3EE', bg: 'rgba(6, 182, 212, 0.2)', text: 'text-cyan-400' },
+    { id: 'orange', name: 'Blaze Orange', hex: '#F97316', border: '#FB923C', bg: 'rgba(249, 115, 22, 0.2)', text: 'text-orange-400' },
+    { id: 'indigo', name: 'Royal Indigo', hex: '#6366F1', border: '#818CF8', bg: 'rgba(99, 102, 241, 0.2)', text: 'text-indigo-400' },
+];
+
+export const getCircleColor = (circleId?: string, explicitColor?: string): CircleColorInfo => {
+    if (explicitColor) {
+        const found = CIRCLE_COLORS.find(c => c.hex.toLowerCase() === explicitColor.toLowerCase() || c.id === explicitColor.toLowerCase());
+        if (found) return found;
+        return { id: 'custom', name: 'Custom', hex: explicitColor, border: explicitColor, bg: `${explicitColor}33`, text: 'text-indigo-400' };
+    }
+    if (!circleId) return CIRCLE_COLORS[0];
+    let hash = 0;
+    for (let i = 0; i < circleId.length; i++) {
+        hash = (hash << 5) - hash + circleId.charCodeAt(i);
+        hash |= 0;
+    }
+    const idx = Math.abs(hash) % CIRCLE_COLORS.length;
+    return CIRCLE_COLORS[idx];
+};
+
 export interface FamilyCircle {
     id: string;
     name: string;
@@ -55,6 +91,7 @@ export interface FamilyCircle {
     members: string[];
     inviteCode: string;
     createdAt: number;
+    color?: string;
 }
 
 // Auth Functions
@@ -222,10 +259,11 @@ export const uploadProfileImage = async (uid: string, file: File): Promise<strin
 };
 
 // Family Circle Functions
-export const createFamilyCircle = async (name: string, ownerId: string): Promise<FamilyCircle> => {
-    console.log('Creating family circle:', { name, ownerId });
+export const createFamilyCircle = async (name: string, ownerId: string, color?: string): Promise<FamilyCircle> => {
+    console.log('Creating family circle:', { name, ownerId, color });
     const circleId = `circle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const inviteCode = Math.random().toString(36).substr(2, 8).toUpperCase();
+    const assignedColor = color || getCircleColor(circleId).hex;
 
     const circle: FamilyCircle = {
         id: circleId,
@@ -233,13 +271,23 @@ export const createFamilyCircle = async (name: string, ownerId: string): Promise
         ownerId,
         members: [ownerId],
         inviteCode,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        color: assignedColor
     };
 
     await set(ref(database, `circles/${circleId}`), circle);
     await updateUserProfile(ownerId, { familyCircleId: circleId });
 
     return circle;
+};
+
+export const updateCircleColor = async (circleId: string, color: string): Promise<void> => {
+    const circleRef = ref(database, `circles/${circleId}`);
+    const snapshot = await get(circleRef);
+    if (snapshot.exists()) {
+        const circle = snapshot.val();
+        await set(circleRef, { ...circle, color });
+    }
 };
 
 export const joinFamilyCircle = async (inviteCode: string, userId: string): Promise<FamilyCircle | null> => {
@@ -712,6 +760,27 @@ export const subscribeToFamilyLocations = (
     });
 
     return () => off(locationsRef);
+};
+
+/**
+ * Subscribes to multiple circles' live locations simultaneously.
+ */
+export const subscribeToMultipleCirclesLocations = (
+    circleIds: string[],
+    callback: (circleId: string, locations: Record<string, MemberLocation>) => void
+): (() => void) => {
+    const unsubs: (() => void)[] = [];
+    circleIds.forEach(cId => {
+        const locationsRef = ref(database, `locations/${cId}`);
+        onValue(locationsRef, (snapshot) => {
+            callback(cId, snapshot.exists() ? snapshot.val() : {});
+        });
+        unsubs.push(() => off(locationsRef));
+    });
+
+    return () => {
+        unsubs.forEach(unsub => unsub());
+    };
 };
 export const getCircleMembers = async (circleId: string): Promise<UserProfile[]> => {
     const circle = await getFamilyCircle(circleId);

@@ -147,6 +147,7 @@ const App: React.FC = () => {
     switchCircle,
     leaveCurrentCircle,
     renameCircle,
+    updateCircleColor,
     deleteCircle,
     refreshCircles,
     logout
@@ -163,6 +164,7 @@ const App: React.FC = () => {
 
   const [activeModal, setActiveModal] = useState<ActiveModal | null>(null);
   const [circleSettingsTab, setCircleSettingsTab] = useState<'circles' | 'invite' | 'manage'>('circles');
+  const [activeFilterCircleId, setActiveFilterCircleId] = useState<string | 'all'>('all');
 
   const [isSearching, startSearchTransition] = React.useTransition();
   const [showOnboarding, setShowOnboarding] = useState(() => {
@@ -293,7 +295,9 @@ const App: React.FC = () => {
           user?.uid
         );
       }
-    }
+    },
+    userCircles,
+    activeFilterCircleId
   );
 
   const members = liveMembers;
@@ -789,6 +793,9 @@ const App: React.FC = () => {
             theme={theme}
             hasCircle={!!profile?.familyCircleId}
             circleName={currentCircle?.name}
+            userCircles={userCircles}
+            activeFilterCircleId={activeFilterCircleId}
+            onSelectFilterCircle={setActiveFilterCircleId}
             onOpenCircleSettings={(tab) => {
               setCircleSettingsTab(tab || 'circles');
               setActiveModal('circle_settings');
@@ -1434,6 +1441,8 @@ const App: React.FC = () => {
             userCircles={userCircles}
             members={members}
             currentUserId={user?.uid}
+            activeFilterCircleId={activeFilterCircleId}
+            onSelectFilterCircle={setActiveFilterCircleId}
             onSwitchCircle={async (id) => {
               await switchCircle(id);
               showNotification('✅ Switched active circle', 2500);
@@ -1441,6 +1450,10 @@ const App: React.FC = () => {
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
             onRenameCircle={renameCircle}
+            onUpdateCircleColor={async (circleId, color) => {
+              await updateCircleColor(circleId, color);
+              showNotification('🎨 Circle color theme updated!', 2500);
+            }}
             onLeaveCircle={async (id) => {
               await leaveCurrentCircle(id);
             }}
@@ -1713,6 +1726,9 @@ const App: React.FC = () => {
             theme={theme}
             hasCircle={!!profile?.familyCircleId}
             circleName={currentCircle?.name}
+            userCircles={userCircles}
+            activeFilterCircleId={activeFilterCircleId}
+            onSelectFilterCircle={setActiveFilterCircleId}
             onOpenCircleSettings={(tab) => {
               setIsBottomSheetExpanded(false);
               setCircleSettingsTab(tab || 'circles');

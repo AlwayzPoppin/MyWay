@@ -146,6 +146,9 @@ export interface FamilyMember {
   impact?: CrashImpactMetadata;
   locationStale?: boolean; // Audit Fix: Flag for E2EE key exchange pending (shows last known location)
   membershipTier: 'free' | 'gold' | 'platinum';
+  circleId?: string;
+  circleName?: string;
+  circleColor?: string;
 }
 
 export interface Place {

@@ -1848,6 +1848,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const isDriving = member.status === 'Driving' || (member.speed && member.speed > 5);
             const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
 
+            const circleColor = member.circleColor || '#6366f1';
             const borderColor = isGTARadar
                 ? '#facc15'
                 : isBlurred 
@@ -1858,7 +1859,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             ? '#9ca3af' 
                             : isDriving 
                                 ? '#6366f1' 
-                                : '#22c55e';
+                                : circleColor;
 
             const initials = (member.name || 'M').charAt(0).toUpperCase();
 
@@ -1870,25 +1871,32 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     <div style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${visualRotation}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, rgba(56, 189, 248, 0.45) 0%, rgba(56, 189, 248, 0.12) 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
                     
                     <!-- Radar Pulse Beacon -->
-                    <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isGTARadar ? '#facc15' : isLightSkin ? '#0284c7' : '#6366f1'}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+                    <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isGTARadar ? '#facc15' : isLightSkin ? '#0284c7' : circleColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
                     
                     <!-- 3D Navigation Vehicle Arrow Puck -->
                     <div style="position: relative; width: 46px; height: 46px; transform: rotate(${visualRotation}deg); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.6));">
                         <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
                             <path d="M22 3 L39 39 L22 30 L5 39 Z" fill="${isGTARadar ? '#f59e0b' : isLightSkin ? '#0284c7' : '#4f46e5'}" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" />
-                            <path d="M22 6 L35 36 L22 28 L9 36 Z" fill="${isGTARadar ? '#facc15' : isLightSkin ? '#38bdf8' : '#818cf8'}" />
+                            <path d="M22 6 L35 36 L22 28 L9 36 Z" fill="${isGTARadar ? '#facc15' : isLightSkin ? '#38bdf8' : circleColor}" />
                             <circle cx="22" cy="22" r="4.5" fill="#ffffff" />
                         </svg>
                     </div>
                 </div>
             ` : `
-                <div class="myway-member-avatar-container select-none" style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
-                    ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${borderColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
-                    <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3.5px solid #ffffff; background: ${borderColor}; box-shadow: 0 6px 18px rgba(0,0,0,0.45); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
-                        ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
-                        <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
+                <div class="myway-member-avatar-container select-none" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                    <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
+                        ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${circleColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
+                        <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3px solid ${circleColor}; background: #0f172a; box-shadow: 0 6px 18px rgba(0,0,0,0.5); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
+                            ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
+                            <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
+                        </div>
+                        ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${circleColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                        ${member.circleName ? `<div style="position: absolute; bottom: -1px; right: -1px; width: 13px; height: 13px; border-radius: 50%; background: ${circleColor}; border: 2px solid #0f172a; box-shadow: 0 2px 6px rgba(0,0,0,0.5);"></div>` : ''}
                     </div>
-                    ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${borderColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                    <div style="margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); border: 1px solid ${circleColor}88; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
+                        <span style="width: 5px; height: 5px; border-radius: 50%; background: ${circleColor}; shrink: 0;"></span>
+                        <span>${member.name || 'Member'}</span>
+                    </div>
                 </div>
             `;
 

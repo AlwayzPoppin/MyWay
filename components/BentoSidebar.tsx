@@ -6,6 +6,7 @@ import ActivityLog from './ActivityLog';
 import { getDistanceMeters, getDistanceMiles } from '../utils/geo';
 import { convoyService } from '../services/convoyService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
+import { FamilyCircle, getCircleColor } from '../services/authService';
 
 interface BentoSidebarProps {
     members: FamilyMember[];
@@ -14,6 +15,9 @@ interface BentoSidebarProps {
     theme: 'light' | 'dark';
     hasCircle: boolean;
     circleName?: string;
+    userCircles?: FamilyCircle[];
+    activeFilterCircleId?: string | 'all';
+    onSelectFilterCircle?: (circleId: string | 'all') => void;
     onOpenCircleSettings?: (tab?: 'circles' | 'invite' | 'manage') => void;
     inviteCode?: string;
     onCreateCircle: (name: string) => Promise<any>;
@@ -46,6 +50,9 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     theme,
     hasCircle,
     circleName,
+    userCircles = [],
+    activeFilterCircleId = 'all',
+    onSelectFilterCircle,
     onOpenCircleSettings,
     inviteCode,
     onCreateCircle,
@@ -262,12 +269,58 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                     </div>
                                 )}
 
+                                {/* Quick Circle Filter Chips (When multiple circles exist & not collapsed) */}
+                                {!isCollapsed && userCircles.length > 1 && (
+                                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 px-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => onSelectFilterCircle?.('all')}
+                                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                                                activeFilterCircleId === 'all'
+                                                    ? 'bg-gradient-to-r from-blue-600 via-purple-600 to-emerald-600 text-white shadow-md'
+                                                    : theme === 'dark' ? 'bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300' : 'bg-slate-100 border border-slate-200 text-slate-700'
+                                            }`}
+                                        >
+                                            <span>✨</span>
+                                            <span>All Groups ({members.length})</span>
+                                        </button>
+                                        {userCircles.map(c => {
+                                            const cColor = c.color || getCircleColor(c.id).hex;
+                                            const isSelected = activeFilterCircleId === c.id;
+                                            const count = members.filter(m => m.circleId === c.id).length;
+                                            return (
+                                                <button
+                                                    key={c.id}
+                                                    type="button"
+                                                    onClick={() => onSelectFilterCircle?.(c.id)}
+                                                    style={{
+                                                        borderColor: isSelected ? cColor : undefined,
+                                                        backgroundColor: isSelected ? `${cColor}2b` : undefined,
+                                                        color: isSelected ? '#ffffff' : undefined
+                                                    }}
+                                                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 flex items-center gap-1.5 border cursor-pointer ${
+                                                        isSelected
+                                                            ? 'ring-1 shadow-sm'
+                                                            : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-700'
+                                                    }`}
+                                                >
+                                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cColor }} />
+                                                    <span>{c.name}</span>
+                                                    {count > 0 && <span className="opacity-75 text-[10px]">({count})</span>}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
                                 {/* Divider */}
                                 {!isCollapsed && <div className={`h-px mx-4 ${theme === 'dark' ? 'bg-white/5' : 'bg-slate-200/50'}`} />}
 
                                 {/* Member Grid/List */}
                                 <div className={`grid gap-3 ${isCollapsed ? 'grid-cols-1' : 'grid-cols-1'}`}>
-                                    {members.map(member => (
+                                    {members.map(member => {
+                                        const memberCircleHex = member.circleColor || '#6366f1';
+                                        return (
                                         <div
                                             key={member.id}
                                             onClick={() => onSelect(member.id)}
@@ -290,7 +343,8 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name || member.id);
                                                     }}
                                                     alt={member.name}
-                                                    className={`rounded-xl object-cover transition-all ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-100'}
+                                                    style={{ borderColor: memberCircleHex }}
+                                                    className={`rounded-xl object-cover transition-all border-2 ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-100'}
                                                       ${isCollapsed ? 'w-10 h-10' : 'w-12 h-12'}
                                                       ${selectedId === member.id ? `ring-2 ring-indigo-500 ring-offset-2 ${theme === 'dark' ? 'ring-offset-slate-900' : 'ring-offset-white'}` : ''}
                                                       ${member.isGhostMode ? 'blur-sm grayscale opacity-70' : ''}
@@ -314,9 +368,24 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                             {!isCollapsed && (
                                                 <div className="flex-1 text-left min-w-0 animate-in fade-in slide-in-from-left-2">
                                                     <div className="flex items-center justify-between gap-1">
-                                                        <h3 className={`font-black text-sm tracking-tight truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                                            {member.name}
-                                                        </h3>
+                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                            <h3 className={`font-black text-sm tracking-tight truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                                                {member.name}
+                                                            </h3>
+                                                            {member.circleName && (
+                                                                <span
+                                                                    style={{
+                                                                        backgroundColor: `${memberCircleHex}22`,
+                                                                        borderColor: `${memberCircleHex}44`,
+                                                                        color: memberCircleHex
+                                                                    }}
+                                                                    className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
+                                                                >
+                                                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: memberCircleHex }} />
+                                                                    <span className="truncate max-w-[70px]">{member.circleName}</span>
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0
                                                             ${member.battery <= 20 ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
                                                             {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
@@ -399,7 +468,8 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 </div>
                                             )}
                                         </div>
-                                    ))}
+                                    );
+                                })}
                                 </div>
 
                                 {/* Divider */}
