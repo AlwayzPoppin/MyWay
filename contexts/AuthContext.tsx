@@ -1,5 +1,5 @@
-// Auth Context - React Context for authentication state
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+// Auth Context - React Context for authentication and multi-circle state
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { User } from 'firebase/auth';
 import {
     onAuthChange,
@@ -15,12 +15,20 @@ import {
     FamilyCircle,
     createFamilyCircle,
     joinFamilyCircle,
-    subscribeToUserProfile
+    subscribeToUserProfile,
+    getFamilyCircle,
+    getUserCircles,
+    switchActiveCircle,
+    leaveCircle,
+    renameFamilyCircle,
+    deleteFamilyCircle
 } from '../services/authService';
 
 interface AuthContextType {
     user: User | null;
     profile: UserProfile | null;
+    currentCircle: FamilyCircle | null;
+    userCircles: FamilyCircle[];
     loading: boolean;
     error: string | null;
     emailLinkSent: boolean;
@@ -33,6 +41,11 @@ interface AuthContextType {
     clearError: () => void;
     createCircle: (name: string) => Promise<FamilyCircle>;
     joinCircle: (code: string) => Promise<FamilyCircle | null>;
+    switchCircle: (circleId: string) => Promise<void>;
+    leaveCurrentCircle: (circleId: string) => Promise<void>;
+    renameCircle: (circleId: string, name: string) => Promise<void>;
+    deleteCircle: (circleId: string) => Promise<void>;
+    refreshCircles: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -52,9 +65,36 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
+    const [userCircles, setUserCircles] = useState<FamilyCircle[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [emailLinkSent, setEmailLinkSent] = useState(false);
+
+    const refreshCircles = useCallback(async () => {
+        if (!user) {
+            setUserCircles([]);
+            setCurrentCircle(null);
+            return;
+        }
+        try {
+            const circles = await getUserCircles(user.uid);
+            setUserCircles(circles);
+
+            if (profile?.familyCircleId) {
+                const active = circles.find(c => c.id === profile.familyCircleId) || await getFamilyCircle(profile.familyCircleId);
+                setCurrentCircle(active);
+            } else if (circles.length > 0) {
+                await switchActiveCircle(user.uid, circles[0].id);
+                setCurrentCircle(circles[0]);
+                setProfile(prev => prev ? { ...prev, familyCircleId: circles[0].id } : prev);
+            } else {
+                setCurrentCircle(null);
+            }
+        } catch (e) {
+            console.warn('⚠️ Error refreshing circles:', e);
+        }
+    }, [user, profile?.familyCircleId]);
 
     useEffect(() => {
         // Check if returning from email link sign-in
@@ -83,6 +123,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 });
             } else {
                 setProfile(null);
+                setCurrentCircle(null);
+                setUserCircles([]);
             }
             setLoading(false);
         });
@@ -92,6 +134,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             if (profileUnsubscribe) profileUnsubscribe();
         };
     }, []);
+
+    useEffect(() => {
+        refreshCircles();
+    }, [refreshCircles]);
  
     // Side Effect: Auto-join circle from pending invite
     useEffect(() => {
@@ -103,10 +149,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             joinFamilyCircle(pendingInvite, user.uid)
                 .then(() => {
                     localStorage.removeItem('myway_pending_invite');
+                    refreshCircles();
                 })
                 .catch(err => console.error('Auto-join failed:', err));
         }
-    }, [user?.uid, profile?.familyCircleId]);
+    }, [user?.uid, profile?.familyCircleId, refreshCircles]);
 
     const handleSignInWithGoogle = async () => {
         try {
@@ -174,6 +221,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         try {
             setError(null);
             await signOut();
+            setCurrentCircle(null);
+            setUserCircles([]);
         } catch (err: any) {
             setError(err.message || 'Failed to sign out');
         }
@@ -181,9 +230,64 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     const clearError = () => setError(null);
 
+    const handleCreateCircle = async (name: string) => {
+        if (!user) throw new Error('Must be logged in');
+        const circle = await createFamilyCircle(name, user.uid);
+        setProfile(prev => prev ? { ...prev, familyCircleId: circle.id } : prev);
+        setCurrentCircle(circle);
+        await refreshCircles();
+        return circle;
+    };
+
+    const handleJoinCircle = async (code: string) => {
+        if (!user) throw new Error('Must be logged in');
+        const circle = await joinFamilyCircle(code, user.uid);
+        if (circle) {
+            const updatedProfile = await getUserProfile(user.uid);
+            setProfile(updatedProfile);
+            setCurrentCircle(circle);
+            await refreshCircles();
+        }
+        return circle;
+    };
+
+    const handleSwitchCircle = async (circleId: string) => {
+        if (!user) return;
+        await switchActiveCircle(user.uid, circleId);
+        setProfile(prev => prev ? { ...prev, familyCircleId: circleId } : prev);
+        const target = userCircles.find(c => c.id === circleId) || await getFamilyCircle(circleId);
+        setCurrentCircle(target);
+        await refreshCircles();
+    };
+
+    const handleLeaveCurrentCircle = async (circleId: string) => {
+        if (!user) return;
+        await leaveCircle(circleId, user.uid);
+        const updatedProfile = await getUserProfile(user.uid);
+        setProfile(updatedProfile);
+        await refreshCircles();
+    };
+
+    const handleRenameCircle = async (circleId: string, name: string) => {
+        await renameFamilyCircle(circleId, name);
+        await refreshCircles();
+    };
+
+    const handleDeleteCircle = async (circleId: string) => {
+        await deleteFamilyCircle(circleId);
+        if (profile?.familyCircleId === circleId && user) {
+            await updateUserProfile(user.uid, { familyCircleId: null });
+            const updatedProfile = await getUserProfile(user.uid);
+            setProfile(updatedProfile);
+        }
+        await refreshCircles();
+    };
+
     const value: AuthContextType = {
         user,
         profile,
+        currentCircle,
+        userCircles,
         loading,
         error,
         emailLinkSent,
@@ -194,44 +298,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         completeMagicLinkSignIn: handleCompleteMagicLinkSignIn,
         logout: handleLogout,
         clearError,
-        createCircle: async (name: string) => {
-            if (!user) throw new Error('Must be logged in');
-            const circle = await createFamilyCircle(name, user.uid);
-            // Update the profile state with the new circle ID
-            // If profile is null, create a minimal profile object
-            setProfile(prev => {
-                if (prev) {
-                    return { ...prev, familyCircleId: circle.id };
-                }
-                // Create a minimal profile if none exists
-                return {
-                    uid: user.uid,
-                    email: user.email,
-                    displayName: user.displayName,
-                    photoURL: user.photoURL,
-                    phoneNumber: user.phoneNumber,
-                    familyCircleId: circle.id,
-                    createdAt: Date.now(),
-                    lastSeen: Date.now(),
-                    settings: {
-                        theme: 'dark',
-                        notifications: true,
-                        locationSharing: true
-                    }
-                };
-            });
-            console.log('Profile updated with new circleId:', circle.id);
-            return circle;
-        },
-        joinCircle: async (code: string) => {
-            if (!user) throw new Error('Must be logged in');
-            const circle = await joinFamilyCircle(code, user.uid);
-            if (circle) {
-                const updatedProfile = await getUserProfile(user.uid);
-                setProfile(updatedProfile);
-            }
-            return circle;
-        }
+        createCircle: handleCreateCircle,
+        joinCircle: handleJoinCircle,
+        switchCircle: handleSwitchCircle,
+        leaveCurrentCircle: handleLeaveCurrentCircle,
+        renameCircle: handleRenameCircle,
+        deleteCircle: handleDeleteCircle,
+        refreshCircles
     };
 
     return (

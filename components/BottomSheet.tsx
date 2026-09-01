@@ -16,6 +16,8 @@ interface BottomSheetProps {
     inviteCode?: string;
     onCreateCircle?: (name: string) => Promise<any>;
     onJoinCircle?: (code: string) => Promise<any>;
+    circleName?: string;
+    onOpenCircleSettings?: (tab?: 'circles' | 'invite' | 'manage') => void;
     avgGasPrice?: string;
     showNotification?: (msg: string, duration?: number) => void;
     onOpenSettings?: () => void;
@@ -46,6 +48,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     theme,
     hasCircle = true,
     inviteCode,
+    circleName,
+    onOpenCircleSettings,
     onCreateCircle,
     onJoinCircle,
     avgGasPrice = '$3.45',
@@ -302,32 +306,23 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 
                         {/* Quick Header Actions */}
                         <div className="flex items-center gap-2">
-                            {hasCircle && inviteCode && (
+                            {hasCircle && (
                                 <button
                                     onClick={() => {
-                                        if (onOpenInviteShare) {
+                                        if (onOpenCircleSettings) {
+                                            onOpenCircleSettings('invite');
+                                        } else if (onOpenInviteShare) {
                                             onOpenInviteShare();
-                                        } else {
+                                        } else if (inviteCode) {
                                             navigator.clipboard.writeText(inviteCode);
                                             if (showNotification) showNotification(`📋 Invite code copied: ${inviteCode}`, 3000);
                                         }
                                     }}
-                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer ${
                                         isDark ? 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 border border-indigo-500/30' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200'
                                     }`}
                                 >
                                     + Add
-                                </button>
-                            )}
-                            {onOpenSettings && (
-                                <button
-                                    onClick={onOpenSettings}
-                                    className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all active:scale-90 ${
-                                        isDark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
-                                    }`}
-                                    title="Settings"
-                                >
-                                    <span className="text-xs">⚙️</span>
                                 </button>
                             )}
                             <button
@@ -342,43 +337,48 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                         </div>
                     </div>
 
-                    {/* Segmented Tab Controls */}
-                    {hasCircle && (
-                        <div className={`flex p-1 rounded-xl border gap-1 my-2.5 shrink-0 ${
-                            isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'
+                    {/* Navigation Tabs Bar */}
+                    <div className="py-2.5 flex items-center justify-between gap-1.5 shrink-0">
+                        <div className={`p-1 rounded-2xl border flex gap-1 flex-1 ${
+                            isDark ? 'bg-white/5 border-white/5' : 'bg-slate-100 border-slate-200'
                         }`}>
                             <button
                                 onClick={() => setActiveTab('members')}
-                                className={`flex-1 py-1.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
+                                className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
                                     activeTab === 'members'
                                         ? 'bg-indigo-600 text-white shadow-md'
-                                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
+                                        : 'text-slate-400 hover:text-white'
                                 }`}
                             >
-                                👥 Circle ({members.length})
+                                <span>👥</span>
+                                <span>CIRCLE ({members.length})</span>
                             </button>
+
                             <button
                                 onClick={() => setActiveTab('places')}
-                                className={`flex-1 py-1.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
+                                className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
                                     activeTab === 'places'
                                         ? 'bg-indigo-600 text-white shadow-md'
-                                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
+                                        : 'text-slate-400 hover:text-white'
                                 }`}
                             >
-                                📍 Places ({userPlaces.length})
+                                <span>📍</span>
+                                <span>PLACES ({userPlaces.length})</span>
                             </button>
+
                             <button
-                                onClick={() => setActiveTab('log')}
-                                className={`flex-1 py-1.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
-                                    activeTab === 'log'
+                                onClick={() => setActiveTab('activity')}
+                                className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
+                                    activeTab === 'activity'
                                         ? 'bg-indigo-600 text-white shadow-md'
-                                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
+                                        : 'text-slate-400 hover:text-white'
                                 }`}
                             >
-                                📜 Log {activities.length > 0 ? `(${activities.length})` : ''}
+                                <span>📜</span>
+                                <span>LOG ({activities.length})</span>
                             </button>
                         </div>
-                    )}
+                    </div>
 
                     {/* ─── TAB CONTENT (SCROLLABLE) ─── */}
                     <div className="flex-1 overflow-y-auto no-scrollbar space-y-3.5 pb-6">
@@ -392,28 +392,50 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                             ) : null
                         ) : activeTab === 'members' ? (
                             <>
-                                {/* Live Status Summary Bar */}
-                                <div className={`px-3.5 py-2.5 rounded-2xl border flex items-center justify-between ${
+                                {/* Live Status & Circle Management Bar */}
+                                <div className={`px-3.5 py-2.5 rounded-2xl border flex items-center justify-between gap-3 ${
                                     isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100 shadow-sm'
                                 }`}>
-                                    <div>
-                                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Live Status</p>
-                                        <h3 className={`text-sm font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                                    <div
+                                        onClick={() => onOpenCircleSettings && onOpenCircleSettings('circles')}
+                                        className={`min-w-0 flex-1 ${onOpenCircleSettings ? 'cursor-pointer group' : ''}`}
+                                        title="Switch or Manage Circles"
+                                    >
+                                        <div className="flex items-center gap-1 text-[9px] text-indigo-400 font-bold uppercase tracking-wider group-hover:text-indigo-300 transition-colors">
+                                            <span>👥 {circleName || 'Family Circle'}</span>
+                                            {onOpenCircleSettings && <span className="text-[8px]">▾</span>}
+                                        </div>
+                                        <h3 className={`text-sm font-black truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
                                             {activeCount} Active Now
                                         </h3>
                                     </div>
-                                    <div className="flex -space-x-2">
-                                        {members.slice(0, 4).map(m => (
-                                            <img
-                                                key={m.id}
-                                                src={getSafeAvatarUrl(m.avatar, m.name || m.id)}
-                                                onError={(e) => {
-                                                    (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(m.name || m.id);
-                                                }}
-                                                alt={m.name}
-                                                className={`w-7 h-7 rounded-full border-2 ${isDark ? 'border-slate-900 bg-slate-800' : 'border-white bg-slate-100'} shadow-sm object-cover`}
-                                            />
-                                        ))}
+
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {onOpenCircleSettings && (
+                                            <button
+                                                onClick={() => onOpenCircleSettings('manage')}
+                                                className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex items-center gap-1 cursor-pointer ${
+                                                    isDark ? 'bg-white/10 hover:bg-white/15 text-slate-200' : 'bg-white hover:bg-slate-100 text-slate-700 shadow-sm'
+                                                }`}
+                                                title="Circle Settings & Management"
+                                            >
+                                                <span>⚙️</span>
+                                                <span>Settings</span>
+                                            </button>
+                                        )}
+                                        <div className="flex -space-x-2">
+                                            {members.slice(0, 3).map(m => (
+                                                <img
+                                                    key={m.id}
+                                                    src={getSafeAvatarUrl(m.avatar, m.name || m.id)}
+                                                    onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(m.name || m.id);
+                                                    }}
+                                                    alt={m.name}
+                                                    className={`w-7 h-7 rounded-full border-2 ${isDark ? 'border-slate-900 bg-slate-800' : 'border-white bg-slate-100'} shadow-sm object-cover`}
+                                                />
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
 

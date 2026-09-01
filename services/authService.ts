@@ -305,6 +305,60 @@ export const leaveCircle = async (circleId: string, userId: string): Promise<voi
 };
 
 /**
+ * Fetches all circles that a user belongs to (Multi-Circle / Secondary Circles support).
+ */
+export const getUserCircles = async (userId: string): Promise<FamilyCircle[]> => {
+    try {
+        const circlesRef = ref(database, 'circles');
+        const snapshot = await get(circlesRef);
+        if (!snapshot.exists()) return [];
+
+        const data = snapshot.val();
+        const userCircles: FamilyCircle[] = [];
+        for (const id in data) {
+            const circle = data[id];
+            if (circle.members && Array.isArray(circle.members) && circle.members.includes(userId)) {
+                userCircles.push({ ...circle, id });
+            }
+        }
+        return userCircles;
+    } catch (e) {
+        console.warn('⚠️ Error fetching user circles:', e);
+        return [];
+    }
+};
+
+/**
+ * Switches the user's active family circle.
+ */
+export const switchActiveCircle = async (userId: string, circleId: string): Promise<void> => {
+    await updateUserProfile(userId, { familyCircleId: circleId });
+};
+
+/**
+ * Renames a family circle.
+ */
+export const renameFamilyCircle = async (circleId: string, name: string): Promise<void> => {
+    const circleRef = ref(database, `circles/${circleId}`);
+    const snapshot = await get(circleRef);
+    if (snapshot.exists()) {
+        const circle = snapshot.val();
+        await set(circleRef, { ...circle, name });
+    }
+};
+
+/**
+ * Deletes a family circle completely (owner-only).
+ */
+export const deleteFamilyCircle = async (circleId: string): Promise<void> => {
+    await set(ref(database, `circles/${circleId}`), null);
+    await set(ref(database, `locations/${circleId}`), null);
+    await set(ref(database, `keys/${circleId}`), null);
+    await set(ref(database, `geofences/${circleId}`), null);
+    await set(ref(database, `places/${circleId}`), null);
+};
+
+/**
  * Remove a member from the circle (owner-only action).
  * Implements E2EE Forward Secrecy: Deletes member data and regenerates/distributes
  * a brand new AES-GCM 256-bit symmetric circle key to remaining members.

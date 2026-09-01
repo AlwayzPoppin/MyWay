@@ -25,6 +25,7 @@ import BentoSidebar from './components/BentoSidebar';
 import HoldToActivate from './components/HoldToActivate';
 import EmergencySOSModal from './components/EmergencySOSModal';
 import EditPlaceModal from './components/EditPlaceModal';
+import CircleSettingsModal from './components/CircleSettingsModal';
 import { incidentService } from './services/incidentService';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
@@ -119,6 +120,7 @@ export type ActiveModal =
   | 'offline_maps'
   | 'trip_history'
   | 'circle_admin'
+  | 'circle_settings'
   | 'notifications'
   | 'weekly_report'
   | 'invite'
@@ -130,6 +132,8 @@ const App: React.FC = () => {
   const {
     user,
     profile,
+    currentCircle,
+    userCircles,
     loading: authLoading,
     error: authError,
     emailLinkSent,
@@ -140,6 +144,11 @@ const App: React.FC = () => {
     clearError,
     createCircle,
     joinCircle,
+    switchCircle,
+    leaveCurrentCircle,
+    renameCircle,
+    deleteCircle,
+    refreshCircles,
     logout
   } = useAuth();
 
@@ -153,6 +162,7 @@ const App: React.FC = () => {
   } = useUI();
 
   const [activeModal, setActiveModal] = useState<ActiveModal | null>(null);
+  const [circleSettingsTab, setCircleSettingsTab] = useState<'circles' | 'invite' | 'manage'>('circles');
 
   const [isSearching, startSearchTransition] = React.useTransition();
   const [showOnboarding, setShowOnboarding] = useState(() => {
@@ -161,7 +171,6 @@ const App: React.FC = () => {
 
   // --- CORE STATE ---
   const [isMapReady, setIsMapReady] = useState(false);
-  const [currentCircle, setCurrentCircle] = useState<FamilyCircle | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [userPlaces, setUserPlaces] = useState<UserPlace[]>(() => {
     if (typeof window !== 'undefined') {
@@ -537,13 +546,8 @@ const App: React.FC = () => {
 
   // Circle Data Sync
   useEffect(() => {
-    if (profile?.familyCircleId) {
-      getFamilyCircle(profile.familyCircleId).then(circle => {
-        setCurrentCircle(circle);
-        setIsOwner(circle?.ownerId === user?.uid);
-      });
-    }
-  }, [profile?.familyCircleId, user?.uid]);
+    setIsOwner(currentCircle?.ownerId === user?.uid);
+  }, [currentCircle?.ownerId, user?.uid]);
 
   // Places Sync
   useEffect(() => {
@@ -784,6 +788,11 @@ const App: React.FC = () => {
             onSelect={setSelectedMemberId}
             theme={theme}
             hasCircle={!!profile?.familyCircleId}
+            circleName={currentCircle?.name}
+            onOpenCircleSettings={(tab) => {
+              setCircleSettingsTab(tab || 'circles');
+              setActiveModal('circle_settings');
+            }}
             inviteCode={currentCircle?.inviteCode}
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
@@ -793,7 +802,10 @@ const App: React.FC = () => {
             onOpenTripHistory={() => setActiveModal('trip_history')}
             onOpenNotifications={() => setActiveModal('notifications')}
             onOpenWeeklyReport={() => setActiveModal('weekly_report')}
-            onOpenInviteShare={() => setActiveModal('invite')}
+            onOpenInviteShare={() => {
+              setCircleSettingsTab('invite');
+              setActiveModal('circle_settings');
+            }}
             onSOS={handleManualSOS}
             activities={activities}
             onResolveSOS={handleResolveSOS}
@@ -1414,6 +1426,42 @@ const App: React.FC = () => {
             theme={theme}
           />
 
+          {/* Circle Settings & Multi-Circle Management Modal */}
+          <CircleSettingsModal
+            isOpen={activeModal === 'circle_settings'}
+            onClose={() => setActiveModal(null)}
+            currentCircle={currentCircle}
+            userCircles={userCircles}
+            members={members}
+            currentUserId={user?.uid}
+            onSwitchCircle={async (id) => {
+              await switchCircle(id);
+              showNotification('✅ Switched active circle', 2500);
+            }}
+            onCreateCircle={createCircle}
+            onJoinCircle={joinCircle}
+            onRenameCircle={renameCircle}
+            onLeaveCircle={async (id) => {
+              await leaveCurrentCircle(id);
+            }}
+            onDeleteCircle={deleteCircle}
+            onRemoveMember={(memberId) => {
+              if (currentCircle?.id && user?.uid) {
+                removeMember(currentCircle.id, user.uid, memberId).catch((err: any) => {
+                  console.error('Failed to remove member:', err);
+                });
+              }
+              setMembers(prev => prev.filter(m => m.id !== memberId));
+              showNotification('Member removed & security keys rotated', 3000);
+            }}
+            onUpdateRole={(memberId, role) => {
+              setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
+            }}
+            showNotification={showNotification}
+            theme={theme}
+            initialTab={circleSettingsTab}
+          />
+
           {/* Settings Panel */}
           {activeModal === 'settings' && (
             <OverlayManager>
@@ -1477,19 +1525,9 @@ const App: React.FC = () => {
                     }
                   }}
                   onShowPrivacy={() => window.open('https://myway-gps.com/privacy', '_blank')}
-                  onManageCircle={async () => {
-                    try {
-                      if (user?.uid && currentCircle?.id) {
-                        const { leaveCircle } = await import('./services/authService');
-                        if (window.confirm('Are you sure you want to leave this circle?')) {
-                          await leaveCircle(currentCircle.id, user.uid);
-                          setCurrentCircle(null);
-                          showNotification('👋 Left circle', 3000);
-                        }
-                      }
-                    } catch (err: any) {
-                      showNotification(`❌ ${err.message}`, 5000);
-                    }
+                  onManageCircle={() => {
+                    setCircleSettingsTab('manage');
+                    setActiveModal('circle_settings');
                   }}
                   onOpenKeyRecovery={() => setActiveModal('key_recovery')}
                 />
@@ -1674,6 +1712,12 @@ const App: React.FC = () => {
             onSelect={setSelectedMemberId}
             theme={theme}
             hasCircle={!!profile?.familyCircleId}
+            circleName={currentCircle?.name}
+            onOpenCircleSettings={(tab) => {
+              setIsBottomSheetExpanded(false);
+              setCircleSettingsTab(tab || 'circles');
+              setActiveModal('circle_settings');
+            }}
             inviteCode={currentCircle?.inviteCode}
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
@@ -1697,7 +1741,8 @@ const App: React.FC = () => {
             }}
             onOpenInviteShare={() => {
               setIsBottomSheetExpanded(false);
-              setActiveModal('invite');
+              setCircleSettingsTab('invite');
+              setActiveModal('circle_settings');
             }}
             onOpenMaintenance={() => {
               setIsBottomSheetExpanded(false);
