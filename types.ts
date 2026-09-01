@@ -149,6 +149,7 @@ export interface FamilyMember {
   circleId?: string;
   circleName?: string;
   circleColor?: string;
+  circleBadges?: { id: string; name: string; color: string }[];
 }
 
 export interface Place {

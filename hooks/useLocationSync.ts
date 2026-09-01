@@ -555,6 +555,14 @@ export const useLocationSync = (
                 const memberCircleColor = locInfo?.circleColor || existing?.circleColor || defaultCircleColor;
 
                 if (id === user.uid) {
+                    const userCircleBadges = (activeFilterCircleId === 'all' && userCircles && userCircles.length > 0)
+                        ? userCircles.map(c => ({
+                            id: c.id,
+                            name: c.name,
+                            color: c.color || getCircleColor(c.id).hex
+                        }))
+                        : [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }];
+
                     return {
                         ...(existing || {
                             id: user.uid,
@@ -576,7 +584,8 @@ export const useLocationSync = (
                         }),
                         circleId: memberCircleId,
                         circleName: memberCircleName,
-                        circleColor: memberCircleColor
+                        circleColor: memberCircleColor,
+                        circleBadges: userCircleBadges
                     };
                 }
 
@@ -599,12 +608,14 @@ export const useLocationSync = (
                     driveEvents: [],
                     circleId: memberCircleId,
                     circleName: memberCircleName,
-                    circleColor: memberCircleColor
+                    circleColor: memberCircleColor,
+                    circleBadges: [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }]
                 };
 
                 member.circleId = memberCircleId;
                 member.circleName = memberCircleName;
                 member.circleColor = memberCircleColor;
+                member.circleBadges = [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }];
 
                 const loc = locInfo?.loc;
                 if (!loc) return member;

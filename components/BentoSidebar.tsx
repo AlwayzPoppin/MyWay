@@ -372,7 +372,22 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                             <h3 className={`font-black text-sm tracking-tight truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                                                                 {member.name}
                                                             </h3>
-                                                            {member.circleName && (
+                                                            {member.circleBadges && member.circleBadges.length > 0 ? (
+                                                                member.circleBadges.map(b => (
+                                                                    <span
+                                                                        key={b.id}
+                                                                        style={{
+                                                                            backgroundColor: `${b.color}22`,
+                                                                            borderColor: `${b.color}44`,
+                                                                            color: b.color
+                                                                        }}
+                                                                        className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
+                                                                    >
+                                                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: b.color }} />
+                                                                        <span className="truncate max-w-[70px]">{b.name}</span>
+                                                                    </span>
+                                                                ))
+                                                            ) : member.circleName ? (
                                                                 <span
                                                                     style={{
                                                                         backgroundColor: `${memberCircleHex}22`,
@@ -384,7 +399,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                     <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: memberCircleHex }} />
                                                                     <span className="truncate max-w-[70px]">{member.circleName}</span>
                                                                 </span>
-                                                            )}
+                                                            ) : null}
                                                         </div>
                                                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0
                                                             ${member.battery <= 20 ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
