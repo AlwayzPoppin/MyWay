@@ -661,10 +661,10 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                     isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
                                             >
-                                                <span className="text-xl">📊</span>
+                                                <span className="text-xl">🏆</span>
                                                 <div>
-                                                    <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Logs</p>
-                                                    <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Insights</p>
+                                                    <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>Scorecard</p>
+                                                    <p className="text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">🏆 Badges</p>
                                                 </div>
                                             </button>
                                         )}

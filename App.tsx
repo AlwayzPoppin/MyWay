@@ -1657,7 +1657,10 @@ const App: React.FC = () => {
                     <WeeklySafetyReport
                       onClose={() => setActiveModal(null)}
                       onBack={() => setActiveModal('settings')}
-                      memberName={profile?.name || members[0]?.name}
+                      members={members}
+                      userCircles={userCircles}
+                      currentCircle={currentCircle}
+                      currentUserId={user?.uid}
                       theme={theme}
                     />
                   </React.Suspense>

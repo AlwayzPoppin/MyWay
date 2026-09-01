@@ -587,10 +587,10 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
                                                 >
-                                                    <span className="text-lg">📊</span>
+                                                    <span className="text-lg">🏆</span>
                                                     <div>
-                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Logs</p>
-                                                        <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Insights</p>
+                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>Scorecard</p>
+                                                        <p className="text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">🏆 Badges</p>
                                                     </div>
                                                 </button>
                                             )}
