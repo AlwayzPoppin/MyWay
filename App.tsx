@@ -26,6 +26,7 @@ import HoldToActivate from './components/HoldToActivate';
 import EmergencySOSModal from './components/EmergencySOSModal';
 import EditPlaceModal from './components/EditPlaceModal';
 import CircleSettingsModal from './components/CircleSettingsModal';
+import IncidentDetailModal from './components/IncidentDetailModal';
 import { incidentService } from './services/incidentService';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
@@ -221,6 +222,7 @@ const App: React.FC = () => {
 
   const [privacyZones] = useState<PrivacyZone[]>([]);
   const [incidents, setIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
+  const [selectedIncident, setSelectedIncident] = useState<IncidentReport | null>(null);
   const [insights, setInsights] = useState<DailyInsight[]>([]);
   const [isSOSModalOpen, setIsSOSModalOpen] = useState(false);
   const [editingPlace, setEditingPlace] = useState<Place | null>(null);
@@ -908,6 +910,7 @@ const App: React.FC = () => {
               splitIndex={navState.splitIndex}
               onSelectPlace={handleSelectPlace}
               onSelectMember={handleSelectMember}
+              onSelectIncident={setSelectedIncident}
               onBoundsChange={setMapBounds}
               mapStyle={userSettings.mapStyle}
               isMobile={isMobile}
@@ -1403,6 +1406,12 @@ const App: React.FC = () => {
               <IncidentReporter
                 theme={theme}
                 isMobile={isMobile}
+                activeIncidents={incidents}
+                currentUserId={user?.uid}
+                onRemoveIncident={async (id) => {
+                  await incidentService.removeIncident(id, user?.uid);
+                  showNotification('🗑️ Removed alert from map', 3000);
+                }}
                 onClose={() => setActiveModal(null)}
                 onReport={(type, details) => {
                   if (userLocation) {
@@ -1417,6 +1426,18 @@ const App: React.FC = () => {
                 }}
               />
             </OverlayManager>
+          )}
+
+          {/* Incident Detail & Dismiss / Remove Modal */}
+          {selectedIncident && (
+            <IncidentDetailModal
+              incident={selectedIncident}
+              onClose={() => setSelectedIncident(null)}
+              currentUserId={user?.uid}
+              currentUserName={profile?.displayName || user?.displayName}
+              showNotification={showNotification}
+              theme={theme}
+            />
           )}
 
           {/* Emergency SOS Safety Dispatch Modal */}

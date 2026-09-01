@@ -94,6 +94,7 @@ interface MapLibre3DViewProps {
     splitIndex?: number;
     onSelectMember?: (memberId: string) => void;
     onSelectPlace?: (place: Place) => void;
+    onSelectIncident?: (incident: any) => void;
     onBoundsChange?: (bounds: { north: number; south: number; east: number; west: number }) => void;
     mapStyle?: 'standard' | 'satellite' | 'terrain';
     isMobile?: boolean;
@@ -132,6 +133,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     splitIndex = 0,
     onSelectMember,
     onSelectPlace,
+    onSelectIncident,
     onBoundsChange,
     mapStyle = 'standard',
     isMobile = false,
@@ -1316,6 +1318,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     </div>
                 `;
 
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (onSelectIncident) {
+                        onSelectIncident(inc);
+                    }
+                });
+
                 marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
                     .setLngLat([inc.location.lng, inc.location.lat])
                     .addTo(map.current!);
@@ -1324,7 +1333,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 marker.setLngLat([inc.location.lng, inc.location.lat]);
             }
         });
-    }, [incidents, isMapReady]);
+    }, [incidents, isMapReady, onSelectIncident]);
 
     const placesRef = useRef(places);
     placesRef.current = places;

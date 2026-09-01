@@ -233,6 +233,33 @@ class IncidentService {
     }
 
     /**
+     * Directly delete / cancel an incident report (e.g. placed by accident or wrong alert)
+     */
+    public async removeIncident(incidentId: string, userId?: string): Promise<boolean> {
+        // Optimistic local update
+        this.activeIncidents = this.activeIncidents.filter(i => i.id !== incidentId);
+        this.saveLocalCache();
+        this.notifyListeners();
+
+        speechService.speak('Alert removed.');
+
+        if (rtdb) {
+            try {
+                const itemRef = ref(rtdb, `${INCIDENTS_REF_PATH}/${incidentId}`);
+                await remove(itemRef);
+                return true;
+            } catch (e) {
+                console.warn('[IncidentService] RTDB remove error:', e);
+            }
+        }
+        return true;
+    }
+
+    public async deleteIncident(incidentId: string, userId?: string): Promise<boolean> {
+        return this.removeIncident(incidentId, userId);
+    }
+
+    /**
      * Find active incidents within radius of a target location
      */
     public findIncidentsNear(location: Location, radiusMeters: number = 600): IncidentReport[] {
