@@ -631,6 +631,22 @@ const App: React.FC = () => {
     setSelectedMemberId(null);
     setSelectedPlace(place);
     setMapCenter([place.location.lat, place.location.lng]);
+
+    // BUG FIX: Ensure search-result places get a visible marker on the map.
+    // Without this, tapping a suggestion from SearchBox dropdown would center the map
+    // near the destination but render NO pin for it — making nearby saved places (e.g. Home)
+    // look like they were being mislabeled as the search result (e.g. McDonald's).
+    const isSearchResult = place.id && (
+      place.id.startsWith('photon-') ||
+      place.id.startsWith('nominatim-') ||
+      place.id.startsWith('overpass-')
+    );
+    if (isSearchResult) {
+      setDiscoveredPlaces(prev => {
+        if (prev.some(p => p.id === place.id)) return prev;
+        return [...prev, place];
+      });
+    }
   }, []);
 
   const handleAddPlace = useCallback((place: Omit<Place, 'id'>) => {

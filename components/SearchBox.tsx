@@ -124,10 +124,13 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
     const matchingSaved = userPlaces.filter(p => {
       const nameLower = (p.name || '').toLowerCase();
-      const descLower = (p.description || '').toLowerCase();
       const typeLower = (p.type || '').toLowerCase();
 
-      if (nameLower.includes(trimmed) || descLower.includes(trimmed)) return true;
+      // BUG FIX: Only match saved places by their NAME, not description/address.
+      // Matching by description caused false positives — e.g. searching "mcdonalds"
+      // would match a saved "Home" place if its street address happened to share
+      // proximity or keywords with a McDonald's location.
+      if (nameLower.includes(trimmed)) return true;
       if (isHomeQuery && (typeLower === 'home' || nameLower.includes('home'))) return true;
       if (isWorkQuery && (typeLower === 'work' || nameLower.includes('work') || nameLower.includes('office'))) return true;
       if (isSchoolQuery && (typeLower === 'school' || nameLower.includes('school'))) return true;
@@ -151,12 +154,13 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         const loc = userLocation || { lat: 35.0921, lng: -78.9823 };
         const results = await searchPlacesText(trimmed, loc);
         
-        // Merge matching saved places at the top of results
+        // Merge matching saved places at the top, but NEVER dedup search results
+        // against saved places by coordinate proximity — they are different venues.
         const combined = [
           ...matchingSaved,
           ...results.filter(r => !matchingSaved.some(s => 
-            s.name.toLowerCase() === r.name.toLowerCase() ||
-            (s.location && r.location && Math.abs(s.location.lat - r.location.lat) < 0.0005 && Math.abs(s.location.lng - r.location.lng) < 0.0005)
+            s.id === r.id ||
+            s.name.toLowerCase() === r.name.toLowerCase()
           ))
         ];
 
