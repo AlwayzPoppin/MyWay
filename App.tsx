@@ -23,6 +23,7 @@ import MessagingPanel from './components/MessagingPanel';
 import SettingsPanel from './components/SettingsPanel';
 import BentoSidebar from './components/BentoSidebar';
 import HoldToActivate from './components/HoldToActivate';
+import EmergencySOSModal from './components/EmergencySOSModal';
 import { incidentService } from './services/incidentService';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
@@ -209,6 +210,7 @@ const App: React.FC = () => {
   const [privacyZones] = useState<PrivacyZone[]>([]);
   const [incidents, setIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
   const [insights, setInsights] = useState<DailyInsight[]>([]);
+  const [isSOSModalOpen, setIsSOSModalOpen] = useState(false);
 
   // Real-time Road Incidents sync across all drivers & circle members
   useEffect(() => {
@@ -706,6 +708,15 @@ const App: React.FC = () => {
       setMembers(prev => prev.map(m => m.id === memberId ? { ...m, sosActive: true, impact } : m));
     }
   }, [user, profile, showNotification, logActivity, setMembers]);
+
+  const handleCancelSOS = useCallback(() => {
+    const memberId = user?.uid || 'demo-you';
+    if (user && profile?.familyCircleId) {
+      clearSOS(profile.familyCircleId, user.uid);
+    }
+    showNotification('✅ Emergency SOS Cancelled', 4000);
+    setMembers(prev => prev.map(m => m.id === memberId ? { ...m, sosActive: false, impact: undefined } : m));
+  }, [user, profile, showNotification, setMembers]);
 
   const handleToggleGhost = useCallback((memberId: string) => {
     setMembers(prev => prev.map(m => m.id === memberId ? { ...m, isGhostMode: !m.isGhostMode } : m));
@@ -1290,17 +1301,30 @@ const App: React.FC = () => {
                     <span className="text-xl leading-none">⚠️</span>
                   </button>
 
-                  {/* Hold to SOS */}
+                  {/* Responsive Emergency SOS Button (Tap opens Safety Dispatch, Hold triggers instant SOS) */}
                   <HoldToActivate
-                    onActivate={handleTriggerSOS}
-                    duration={2000}
-                    className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all shadow-lg ring-2 relative select-none overflow-hidden ${
-                      members.find(m => m.id === user?.uid)?.sosActive
-                        ? 'bg-red-700 animate-bounce ring-red-400'
-                        : 'bg-red-600/80 hover:bg-red-700 active:scale-95 ring-red-500/50'
+                    onActivate={() => {
+                      handleTriggerSOS();
+                      setIsSOSModalOpen(true);
+                    }}
+                    duration={1800}
+                    className={`w-11 h-12 rounded-2xl flex flex-col items-center justify-center transition-all shadow-lg ring-2 relative select-none overflow-hidden cursor-pointer ${
+                      members.find(m => m.id === (user?.uid || 'demo-you'))?.sosActive
+                        ? 'bg-red-700 animate-pulse ring-red-400 shadow-[0_0_20px_rgba(239,68,68,0.7)]'
+                        : 'bg-red-600/90 hover:bg-red-700 active:scale-95 ring-red-500/50'
                     }`}
                   >
-                    <span className="text-xl relative z-10" title="Hold for SOS">🛡️</span>
+                    <div 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsSOSModalOpen(true);
+                      }}
+                      className="w-full h-full flex flex-col items-center justify-center pointer-events-auto"
+                      title="Emergency SOS (Tap to Open • Hold to Dispatch)"
+                    >
+                      <span className="text-base leading-none">🛡️</span>
+                      <span className="text-[7.5px] font-black uppercase text-white tracking-wider mt-0.5">SOS</span>
+                    </div>
                   </HoldToActivate>
                 </div>
               </div>
@@ -1351,6 +1375,17 @@ const App: React.FC = () => {
               />
             </OverlayManager>
           )}
+
+          {/* Emergency SOS Safety Dispatch Modal */}
+          <EmergencySOSModal
+            isOpen={isSOSModalOpen}
+            onClose={() => setIsSOSModalOpen(false)}
+            isSosActive={!!members.find(m => m.id === (user?.uid || 'demo-you'))?.sosActive}
+            onTriggerSOS={() => handleTriggerSOS()}
+            onCancelSOS={handleCancelSOS}
+            theme={theme}
+            userLocation={userLocation}
+          />
 
           {/* Settings Panel */}
           {activeModal === 'settings' && (
