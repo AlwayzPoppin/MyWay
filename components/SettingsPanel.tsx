@@ -651,11 +651,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         </button>
                         <button
                             onClick={onShowPrivacy}
-                            className={`w-full py-3 rounded-xl font-medium transition-colors ${theme === 'dark'
+                            className={`w-full py-3 rounded-xl font-bold flex items-center justify-between px-4 transition-colors ${theme === 'dark'
                                 ? 'bg-white/5 text-slate-300 hover:bg-white/10'
                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                 } `}>
-                            Privacy Policy
+                            <span className="flex items-center gap-2">
+                                <span>🛡️</span>
+                                <span>Circle Privacy & Visibility</span>
+                            </span>
+                            <span className="text-xs text-indigo-400 font-bold">Configure →</span>
                         </button>
                         {onOpenKeyRecovery && (
                             <button

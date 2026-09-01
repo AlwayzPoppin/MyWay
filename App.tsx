@@ -1051,11 +1051,12 @@ const App: React.FC = () => {
 
               {activeModal === 'privacy' && (
                 <OverlayManager>
-                  <div className={`absolute z-[90] transition-all duration-500 ${isMobile ? 'inset-x-0 bottom-28 p-4' : 'left-8 top-32 w-80'}`}>
+                  <div className={`absolute z-[90] pointer-events-auto transition-all duration-500 ${isMobile ? 'inset-4 top-16 bottom-20' : 'left-8 top-24 w-96 max-h-[85vh]'}`}>
                     <PrivacyPanel
                       zones={[]}
                       isGhostMode={members.find(m => m.id === user?.uid)?.isGhostMode || false}
-                      onToggleGhost={() => handleToggleGhost(user?.uid || '')}
+                      userCircles={userCircles}
+                      activeCircleId={currentCircle?.id || profile?.familyCircleId}
                       onClose={() => setActiveModal(null)}
                       theme={theme}
                     />

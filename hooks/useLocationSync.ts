@@ -21,6 +21,7 @@ import { batteryService } from '../services/batteryService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { registerDeadZone } from '../services/offlineLocationBuffer';
 import { backgroundKeySyncService } from '../services/backgroundKeySyncService';
+import { getCirclePrivacyMode, CirclePrivacyMode } from '../services/privacyService';
 
 export const useLocationSync = (
     user: any,
@@ -376,27 +377,6 @@ export const useLocationSync = (
                 const syncLocation = async () => {
                     const currentMembers = membersRef.current;
                     const self = currentMembers.find(m => m.id === user.uid);
-                    
-                    // Read active privacy mode from localStorage or profile
-                    const storedPrivacy = (typeof window !== 'undefined' ? localStorage.getItem('myway_privacy_mode') : null) as PrivacyMode | null;
-                    const privacyMode: PrivacyMode = storedPrivacy || self?.privacyMode || (self?.isGhostMode ? 'blurred' : 'exact');
-
-                    // If frozen, skip coordinate updates to freeze location at current place
-                    if (privacyMode === 'frozen') {
-                        await updateMemberLocation(currentCircleId, user.uid, {
-                            lat: 0,
-                            lng: 0,
-                            speed: 0,
-                            heading: 0,
-                            accuracy: location.accuracy || 0,
-                            timestamp: Date.now(),
-                            battery: batteryService.getBatteryLevel(),
-                            signalQuality: location.signalQuality,
-                            status: '❄️ Location Paused (Frozen)',
-                            privacyMode: 'frozen'
-                        });
-                        return;
-                    }
 
                     // Check if inside any geofence for status_only mode
                     let insideGeofenceName: string | null = null;
@@ -416,29 +396,6 @@ export const useLocationSync = (
                         }
                     }
 
-                    let targetLat = location.latitude;
-                    let targetLng = location.longitude;
-                    let statusText = 'Online';
-                    let blurredRadius = undefined;
-
-                    if (privacyMode === 'blurred') {
-                        const centroid = getNeighborhoodCentroid(location.latitude, location.longitude, user.uid);
-                        targetLat = centroid.lat;
-                        targetLng = centroid.lng;
-                        blurredRadius = 2400; // ~1.5 miles
-                        statusText = 'In Neighborhood (Blurred)';
-                    } else if (privacyMode === 'status_only') {
-                        if (insideGeofenceName && insideGeofenceCoords) {
-                            targetLat = insideGeofenceCoords.lat;
-                            targetLng = insideGeofenceCoords.lng;
-                            statusText = `At ${insideGeofenceName}`;
-                        } else {
-                            targetLat = 0;
-                            targetLng = 0;
-                            statusText = 'In Transit (Status Only)';
-                        }
-                    }
-
                     const targetCircleIds = (userCircles && userCircles.length > 0)
                         ? Array.from(new Set(userCircles.map(c => c.id)))
                         : (currentCircleId ? [currentCircleId] : []);
@@ -446,6 +403,53 @@ export const useLocationSync = (
                     if (targetCircleIds.length === 0) return;
 
                     for (const cId of targetCircleIds) {
+                        // Evaluate granular privacy mode for THIS SPECIFIC circle
+                        const circlePrivacyMode = getCirclePrivacyMode(cId);
+
+                        // If frozen, skip coordinate updates to freeze location at current place
+                        if (circlePrivacyMode === 'frozen') {
+                            await updateMemberLocation(cId, user.uid, {
+                                lat: 0,
+                                lng: 0,
+                                speed: 0,
+                                heading: 0,
+                                accuracy: location.accuracy || 0,
+                                timestamp: Date.now(),
+                                battery: batteryService.getBatteryLevel(),
+                                signalQuality: location.signalQuality,
+                                status: '❄️ Location Paused (Ghost)',
+                                privacyMode: 'frozen'
+                            });
+                            continue;
+                        }
+
+                        let targetLat = location.latitude;
+                        let targetLng = location.longitude;
+                        let statusText = 'Online';
+                        let blurredRadius: number | undefined = undefined;
+
+                        if (circlePrivacyMode === 'blurred') {
+                            const centroid = getNeighborhoodCentroid(location.latitude, location.longitude, `${user.uid}_${cId}`);
+                            targetLat = centroid.lat;
+                            targetLng = centroid.lng;
+                            blurredRadius = 2400; // ~1.5 miles
+                            statusText = 'In Neighborhood (Blurred)';
+                        } else if (circlePrivacyMode === 'status_only') {
+                            if (insideGeofenceName && insideGeofenceCoords) {
+                                targetLat = insideGeofenceCoords.lat;
+                                targetLng = insideGeofenceCoords.lng;
+                                statusText = `At ${insideGeofenceName}`;
+                            } else {
+                                targetLat = 0;
+                                targetLng = 0;
+                                statusText = (location.speed && location.speed > 5)
+                                    ? `Driving (${Math.round(location.speed)} MPH)`
+                                    : (location.speed && location.speed > 0.6)
+                                    ? 'Moving (Walking)'
+                                    : 'Stationary';
+                            }
+                        }
+
                         // PRIVACY FIX: Encrypt the chosen target location with background key auto-restoration
                         const encrypted = (targetLat !== 0 && targetLng !== 0) 
                             ? await encryptLocation(targetLat, targetLng, cId) 
@@ -463,7 +467,7 @@ export const useLocationSync = (
                                 battery: batteryService.getBatteryLevel(),
                                 signalQuality: 'unknown',
                                 status: 'Pending Keys',
-                                privacyMode
+                                privacyMode: circlePrivacyMode
                             });
                             continue;
                         }
@@ -471,15 +475,15 @@ export const useLocationSync = (
                         await updateMemberLocation(cId, user.uid, {
                             lat: encrypted ? 0 : targetLat,
                             lng: encrypted ? 0 : targetLng,
-                            speed: privacyMode === 'exact' ? (location.speed || 0) : 0,
-                            heading: privacyMode === 'exact' ? (location.heading || 0) : 0,
-                            accuracy: privacyMode === 'blurred' ? 2400 : (location.accuracy || 0),
+                            speed: circlePrivacyMode === 'exact' ? (location.speed || 0) : 0,
+                            heading: circlePrivacyMode === 'exact' ? (location.heading || 0) : 0,
+                            accuracy: circlePrivacyMode === 'blurred' ? 2400 : (location.accuracy || 0),
                             timestamp: Date.now(),
                             battery: batteryService.getBatteryLevel(),
                             signalQuality: location.signalQuality,
                             encryptedData: encrypted || undefined,
                             status: statusText,
-                            privacyMode,
+                            privacyMode: circlePrivacyMode,
                             blurredRadiusMeters: blurredRadius
                         });
                     }

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { FamilyMember } from '../types';
 import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo } from '../services/authService';
+import { getCirclePrivacyMode, PRIVACY_LEVELS } from '../services/privacyService';
 
 interface CircleSettingsModalProps {
     isOpen: boolean;
@@ -393,9 +394,24 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                                                            {circleMemberCount} {circleMemberCount === 1 ? 'member' : 'members'} • Code: <span className="font-mono">{circle.inviteCode}</span>
-                                                        </p>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            <p className="text-[10px] text-slate-400 truncate">
+                                                                {circleMemberCount} {circleMemberCount === 1 ? 'member' : 'members'} • <span className="font-mono">{circle.inviteCode}</span>
+                                                            </p>
+                                                            {(() => {
+                                                                const privMode = getCirclePrivacyMode(circle.id);
+                                                                const privInfo = PRIVACY_LEVELS.find(l => l.id === privMode);
+                                                                return (
+                                                                    <span
+                                                                        style={{ color: privInfo?.accentHex, backgroundColor: `${privInfo?.accentHex}20`, borderColor: `${privInfo?.accentHex}40` }}
+                                                                        className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded border shrink-0 flex items-center gap-0.5"
+                                                                    >
+                                                                        <span>{privInfo?.icon}</span>
+                                                                        <span>{privInfo?.title.split(' ')[0]}</span>
+                                                                    </span>
+                                                                );
+                                                            })()}
+                                                        </div>
                                                     </div>
                                                 </div>
 
