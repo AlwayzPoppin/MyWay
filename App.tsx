@@ -1278,8 +1278,18 @@ const App: React.FC = () => {
                 }}
               >
 
-                {/* Emergency SOS Quick Button */}
+                {/* Emergency SOS & Road Alert Action Hub */}
                 <div className="flex flex-col gap-2 p-1.5 bg-black/60 backdrop-blur-xl rounded-[1.5rem] border border-white/15 shadow-2xl relative">
+                  {/* 1-Tap Road Alert / Incident Reporter Button */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal('incident')}
+                    title="Report Road Hazard, Police Trap, or Incident"
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center transition-all select-none bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-400 active:scale-95 shadow-lg cursor-pointer"
+                  >
+                    <span className="text-xl leading-none">⚠️</span>
+                  </button>
+
                   {/* Hold to SOS */}
                   <HoldToActivate
                     onActivate={handleTriggerSOS}

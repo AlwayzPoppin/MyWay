@@ -846,19 +846,8 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             </div>
           )}
 
-          {/* Right Action Controls: Report Incident + Recenter + Voice Mute + Cancel */}
+          {/* Right Action Controls: Recenter + Voice Mute + Cancel */}
           <div className="absolute right-6 bottom-6 z-20 pointer-events-auto flex items-center gap-3 animate-in slide-in-from-right duration-500">
-            {/* 1-Tap Road Incident Report Button */}
-            <button
-              type="button"
-              onClick={() => setIsIncidentReporterOpen(true)}
-              title="Report Road Hazard, Police Trap, or Construction"
-              className="bg-amber-500/20 border-2 border-amber-400/50 text-amber-400 flex flex-col items-center justify-center shadow-2xl hover:bg-amber-500/30 hover:border-amber-400 transition-all backdrop-blur-xl active:scale-95 h-20 w-20 rounded-3xl cursor-pointer group"
-            >
-              <span className="text-2xl filter drop-shadow group-hover:scale-110 transition-transform">⚠️</span>
-              <span className="text-[9px] font-black uppercase tracking-wider text-amber-300 mt-0.5">Report</span>
-            </button>
-
             {/* Recenter Button */}
             <button
               onClick={onRecenter}
@@ -1016,19 +1005,8 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               </div>
             </div>
 
-            {/* Mobile Right Action Controls: Report Incident + Recenter + Voice Mute + Cancel */}
+            {/* Mobile Right Action Controls: Recenter + Voice Mute + Cancel */}
             <div className="flex items-center gap-2">
-              {/* 1-Tap Road Incident Report Button */}
-              <button
-                type="button"
-                onClick={() => setIsIncidentReporterOpen(true)}
-                title="Report Road Hazard, Police Trap, or Construction"
-                className="bg-amber-500/20 border border-amber-400/50 text-amber-400 flex flex-col items-center justify-center shadow-xl hover:bg-amber-500/30 transition-all backdrop-blur-xl active:scale-95 h-14 w-14 rounded-xl cursor-pointer"
-              >
-                <span className="text-lg">⚠️</span>
-                <span className="text-[7px] font-black uppercase text-amber-300 leading-none mt-0.5">Report</span>
-              </button>
-
               {/* Recenter Button */}
               <button
                 onClick={onRecenter}
