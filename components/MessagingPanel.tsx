@@ -1,8 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { FamilyMember } from '../types';
-import { subscribeToMessages, sendMessage as firestoreSendMessage, ChatMessage } from '../services/chatService';
-import { getBufferedMessages, BufferedMessage } from '../services/offlineMessageBuffer';
+import {
+    subscribeToMessages,
+    subscribeToMultipleCirclesMessages,
+    sendMessage as firestoreSendMessage,
+    ChatMessage
+} from '../services/chatService';
+import { getBufferedMessages } from '../services/offlineMessageBuffer';
 import { parseMessageIntent, MessageIntent, getSocialSafetyAdvisory } from '../services/geminiService';
+import { FamilyCircle, getCircleColor } from '../services/authService';
+import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 
 const OMNI_ID = 'omni-ai';
 
@@ -10,6 +17,8 @@ interface MessagingPanelProps {
     members: FamilyMember[];
     currentUserId: string;
     circleId?: string;
+    userCircles?: FamilyCircle[];
+    activeFilterCircleId?: string | 'all';
     initialRecipientId?: string | null;
     onClose: () => void;
     theme: 'light' | 'dark';
@@ -19,10 +28,18 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     members,
     currentUserId,
     circleId,
+    userCircles = [],
+    activeFilterCircleId = 'all',
     initialRecipientId = null,
     onClose,
     theme
 }) => {
+    // Active channel: 'all' (all circles feed) or circleId (specific circle) or null (DMs mode)
+    const [selectedChannelId, setSelectedChannelId] = useState<string | 'all'>(() => {
+        if (activeFilterCircleId) return activeFilterCircleId;
+        if (userCircles.length > 0) return 'all';
+        return circleId || 'all';
+    });
     const [selectedRecipientId, setSelectedRecipientId] = useState<string | null>(initialRecipientId);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [queuedMessages, setQueuedMessages] = useState<ChatMessage[]>([]);
@@ -32,9 +49,9 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Synchronize initialRecipientId if passed from parent
+    // Sync initialRecipientId if passed from parent
     useEffect(() => {
-        if (initialRecipientId !== undefined) {
+        if (initialRecipientId !== undefined && initialRecipientId !== null) {
             setSelectedRecipientId(initialRecipientId);
         }
     }, [initialRecipientId]);
@@ -48,25 +65,46 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
         return members.filter(m => m.id !== currentUserId);
     }, [members, currentUserId]);
 
+    // Active circle object for the selected channel
+    const activeChannelCircle = useMemo(() => {
+        if (selectedChannelId === 'all') return null;
+        return userCircles.find(c => c.id === selectedChannelId) || null;
+    }, [selectedChannelId, userCircles]);
+
+    // Effective circle ID to write messages into
+    const effectiveCircleId = useMemo(() => {
+        if (selectedChannelId && selectedChannelId !== 'all') {
+            return selectedChannelId;
+        }
+        return circleId || (userCircles.length > 0 ? userCircles[0].id : '');
+    }, [selectedChannelId, circleId, userCircles]);
+
     const quickReplies = selectedRecipientId
         ? ['On my way!', 'Where are you?', 'Call me', 'Almost there!', '👍', '❤️']
         : ['👍', '❤️', '🏠', 'On my way!', 'Be there soon', 'Running late'];
 
     // Load offline queued messages
     const refreshQueuedMessages = useCallback(async () => {
-        if (!circleId) return;
-        const buffered = await getBufferedMessages(circleId);
-        const mapped: ChatMessage[] = buffered.map(b => ({
-            id: `buffered-${b.id || b.clientMessageId}`,
-            senderId: b.senderId,
-            recipientId: b.recipientId,
-            content: b.content,
-            type: b.type,
-            timestamp: new Date(b.timestamp),
-            status: 'queued'
-        }));
-        setQueuedMessages(mapped);
-    }, [circleId]);
+        const targetIds = userCircles.length > 0 ? userCircles.map(c => c.id) : (circleId ? [circleId] : []);
+        if (targetIds.length === 0) return;
+
+        const allBuffered: ChatMessage[] = [];
+        for (const cId of targetIds) {
+            const buffered = await getBufferedMessages(cId);
+            const mapped: ChatMessage[] = buffered.map(b => ({
+                id: `buffered-${b.id || b.clientMessageId}`,
+                senderId: b.senderId,
+                recipientId: b.recipientId,
+                circleId: b.circleId || cId,
+                content: b.content,
+                type: b.type,
+                timestamp: new Date(b.timestamp),
+                status: 'queued'
+            }));
+            allBuffered.push(...mapped);
+        }
+        setQueuedMessages(allBuffered);
+    }, [userCircles, circleId]);
 
     // Network status listener
     useEffect(() => {
@@ -89,14 +127,19 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
         };
     }, [refreshQueuedMessages]);
 
-    // Subscribe to real-time messages
+    // Multi-Circle Live Message Subscription
     useEffect(() => {
-        if (!circleId) return;
-        const unsubscribe = subscribeToMessages(circleId, (msgs) => {
+        const targetIds = userCircles.length > 0 
+            ? userCircles.map(c => c.id) 
+            : (circleId ? [circleId] : []);
+
+        if (targetIds.length === 0) return;
+
+        const unsubscribe = subscribeToMultipleCirclesMessages(targetIds, (msgs) => {
             setMessages(msgs);
             refreshQueuedMessages();
 
-            // Analyze last message if it's not from us
+            // Analyze last message for smart Gemini suggestions if it's not from us
             const lastMsg = msgs[msgs.length - 1];
             if (lastMsg && lastMsg.senderId !== currentUserId) {
                 parseMessageIntent(lastMsg.content).then(intent => {
@@ -110,10 +153,11 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                 setSuggestion(null);
             }
         });
-        return () => unsubscribe();
-    }, [circleId, currentUserId, refreshQueuedMessages]);
 
-    // Combine synced messages with queued offline messages (excluding any duplicates)
+        return () => unsubscribe();
+    }, [userCircles, circleId, currentUserId, refreshQueuedMessages]);
+
+    // Combine synced messages with queued offline messages
     const combinedMessages = useMemo(() => {
         return [
             ...messages,
@@ -121,21 +165,28 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
         ];
     }, [messages, queuedMessages]);
 
-    // Filter messages based on active conversation mode (1-on-1 vs Circle group chat)
+    // Filter messages based on active channel and recipient selection
     const activeConversationMessages = useMemo(() => {
         return combinedMessages.filter(msg => {
             if (selectedRecipientId) {
-                // 1-on-1 Direct Message: must be between current user and selected recipient
+                // 1-on-1 Direct Message
                 return (
                     (msg.senderId === currentUserId && msg.recipientId === selectedRecipientId) ||
                     (msg.senderId === selectedRecipientId && msg.recipientId === currentUserId)
                 );
+            }
+
+            // Exclude direct messages from group channels
+            if (msg.recipientId) return false;
+
+            // Channel filtering:
+            if (selectedChannelId === 'all') {
+                return true; // Show all circles' messages
             } else {
-                // Family Circle Group Chat: broadcast messages without specific recipientId
-                return !msg.recipientId;
+                return msg.circleId === selectedChannelId;
             }
         });
-    }, [combinedMessages, selectedRecipientId, currentUserId]);
+    }, [combinedMessages, selectedRecipientId, selectedChannelId, currentUserId]);
 
     // Auto-scroll to bottom on new messages
     useEffect(() => {
@@ -143,11 +194,11 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     }, [activeConversationMessages]);
 
     const handleSendMessage = async (content: string, type: ChatMessage['type'] = 'text') => {
-        if (!content.trim() || !circleId) return;
+        if (!content.trim() || !effectiveCircleId) return;
 
         try {
             const result = await firestoreSendMessage(
-                circleId,
+                effectiveCircleId,
                 currentUserId,
                 content,
                 type,
@@ -186,12 +237,12 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     };
 
     const handleAskOmni = async () => {
-        if (!circleId) return;
+        if (!effectiveCircleId) return;
         setIsLoadingOmni(true);
         try {
             const insight = await getSocialSafetyAdvisory(members);
             if (insight) {
-                await firestoreSendMessage(circleId, OMNI_ID, insight, 'text', selectedRecipientId || undefined);
+                await firestoreSendMessage(effectiveCircleId, OMNI_ID, insight, 'text', selectedRecipientId || undefined);
             } else {
                 alert("✨ All clear! No critical risks detected right now.");
             }
@@ -222,17 +273,20 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                             <button
                                 type="button"
                                 onClick={() => setSelectedRecipientId(null)}
-                                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
+                                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
                                     theme === 'dark' ? 'bg-white/5 hover:bg-white/10 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
                                 }`}
-                                title="Back to Circle Chat"
+                                title="Back to Group Channels"
                             >
                                 <span className="text-sm font-bold">←</span>
                             </button>
-                            <div className="relative">
+                            <div className="relative shrink-0">
                                 {activeRecipient.avatar ? (
                                     <img
-                                        src={activeRecipient.avatar}
+                                        src={getSafeAvatarUrl(activeRecipient.avatar, activeRecipient.name)}
+                                        onError={(e) => {
+                                            (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(activeRecipient.name);
+                                        }}
                                         alt={activeRecipient.name}
                                         className="w-9 h-9 rounded-full object-cover border-2 border-indigo-500 shadow-sm"
                                     />
@@ -260,56 +314,124 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                                 </p>
                             </div>
                         </>
+                    ) : selectedChannelId === 'all' ? (
+                        <>
+                            <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-blue-600 via-purple-600 to-emerald-600 flex items-center justify-center text-lg text-white shadow-md shrink-0">
+                                ✨
+                            </div>
+                            <div className="min-w-0">
+                                <h3 className={`font-black text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                    All Groups Feed
+                                </h3>
+                                <p className="text-[10px] text-slate-400 truncate">
+                                    {userCircles.length} {userCircles.length === 1 ? 'Circle' : 'Circles'} Connected • Unified Live Chat
+                                </p>
+                            </div>
+                        </>
                     ) : (
                         <>
-                            <div className="flex -space-x-2">
-                                {members.slice(0, 3).map(member => (
-                                    <img
-                                        key={member.id}
-                                        src={member.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`}
-                                        alt={member.name}
-                                        className="w-8 h-8 rounded-full border-2 border-slate-900 object-cover"
-                                    />
-                                ))}
-                            </div>
-                            <div>
-                                <h3 className={`font-bold text-sm ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                    Family Circle
-                                </h3>
-                                <p className="text-[10px] text-slate-500">{members.length} members • Group Chat</p>
-                            </div>
+                            {(() => {
+                                const cHex = activeChannelCircle?.color || getCircleColor(selectedChannelId).hex;
+                                return (
+                                    <>
+                                        <div
+                                            style={{ backgroundColor: `${cHex}33`, borderColor: cHex }}
+                                            className="w-9 h-9 rounded-2xl border flex items-center justify-center text-base shrink-0 shadow-sm"
+                                        >
+                                            {activeChannelCircle?.name.toLowerCase().includes('work') ? '💼' :
+                                             activeChannelCircle?.name.toLowerCase().includes('trip') ? '🚗' :
+                                             activeChannelCircle?.name.toLowerCase().includes('friend') ? '🎉' : '🏠'}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5">
+                                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: cHex }} />
+                                                <h3 className={`font-black text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                                    {activeChannelCircle?.name || 'Circle Channel'}
+                                                </h3>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 truncate">
+                                                {activeChannelCircle?.members?.length || members.filter(m => m.circleId === selectedChannelId).length || 1} members • Circle Channel
+                                            </p>
+                                        </div>
+                                    </>
+                                );
+                            })()}
                         </>
                     )}
                 </div>
 
                 <button
                     onClick={onClose}
-                    className={`p-2 rounded-xl transition-colors
+                    className={`p-2 rounded-xl transition-colors cursor-pointer
             ${theme === 'dark' ? 'hover:bg-white/10 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
                 >
                     ✕
                 </button>
             </div>
 
-            {/* Conversation Switcher Strip (Circle vs 1-on-1 Members) */}
+            {/* Circle Channels & 1-on-1 DM Switcher Strip */}
             <div className={`px-3 py-2 border-b flex items-center gap-1.5 overflow-x-auto no-scrollbar ${
                 theme === 'dark' ? 'bg-slate-950/40 border-white/5' : 'bg-slate-100/70 border-slate-200'
             }`}>
-                {/* All Circle Group Tab */}
+                {/* All Groups Feed Tab */}
                 <button
                     type="button"
-                    onClick={() => setSelectedRecipientId(null)}
-                    className={`px-3 py-1 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shrink-0 ${
-                        selectedRecipientId === null
-                            ? 'bg-indigo-600 text-white shadow-md'
+                    onClick={() => {
+                        setSelectedRecipientId(null);
+                        setSelectedChannelId('all');
+                    }}
+                    className={`px-3 py-1 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                        selectedRecipientId === null && selectedChannelId === 'all'
+                            ? 'bg-gradient-to-r from-blue-600 via-purple-600 to-emerald-600 text-white shadow-md'
                             : theme === 'dark'
                             ? 'bg-white/5 text-slate-400 hover:bg-white/10'
                             : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
                     }`}
                 >
-                    <span>👥</span>
-                    <span>All Circle</span>
+                    <span>✨</span>
+                    <span>All Groups</span>
                 </button>
+
+                {/* Specific Circle Channel Tabs */}
+                {userCircles.map(c => {
+                    const cHex = c.color || getCircleColor(c.id).hex;
+                    const isSelected = selectedRecipientId === null && selectedChannelId === c.id;
+                    const circleMsgCount = combinedMessages.filter(m => !m.recipientId && m.circleId === c.id).length;
+
+                    return (
+                        <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                                setSelectedRecipientId(null);
+                                setSelectedChannelId(c.id);
+                            }}
+                            style={{
+                                borderColor: isSelected ? cHex : undefined,
+                                backgroundColor: isSelected ? `${cHex}33` : undefined,
+                                color: isSelected ? '#ffffff' : undefined
+                            }}
+                            className={`px-3 py-1 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shrink-0 border cursor-pointer ${
+                                isSelected
+                                    ? 'ring-1 shadow-sm'
+                                    : theme === 'dark'
+                                    ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                            }`}
+                        >
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cHex }} />
+                            <span>{c.name}</span>
+                            {circleMsgCount > 0 && (
+                                <span className="text-[9px] opacity-75">({circleMsgCount})</span>
+                            )}
+                        </button>
+                    );
+                })}
+
+                {/* Divider between circles and 1-on-1 DMs */}
+                {otherMembers.length > 0 && (
+                    <div className="w-px h-5 bg-white/10 shrink-0 mx-0.5" />
+                )}
 
                 {/* Individual 1-on-1 Member Pills */}
                 {otherMembers.map(member => {
@@ -326,7 +448,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                             key={member.id}
                             type="button"
                             onClick={() => setSelectedRecipientId(member.id)}
-                            className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
+                            className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
                                 isSelected
                                     ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
                                     : theme === 'dark'
@@ -335,7 +457,13 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                             }`}
                         >
                             {member.avatar ? (
-                                <img src={member.avatar} className="w-4 h-4 rounded-full object-cover" />
+                                <img
+                                    src={getSafeAvatarUrl(member.avatar, member.name)}
+                                    onError={(e) => {
+                                        (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name);
+                                    }}
+                                    className="w-4 h-4 rounded-full object-cover"
+                                />
                             ) : (
                                 <span>💬</span>
                             )}
@@ -371,16 +499,22 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
             <div className="flex-1 overflow-y-auto p-4 space-y-3.5 no-scrollbar">
                 {activeConversationMessages.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500 space-y-2">
-                        <span className="text-4xl">{selectedRecipientId ? '💬' : '👨‍👩‍👧‍👦'}</span>
+                        <span className="text-4xl">
+                            {selectedRecipientId ? '💬' : selectedChannelId === 'all' ? '✨' : '👥'}
+                        </span>
                         <p className="text-sm font-bold text-slate-400">
                             {selectedRecipientId 
                                 ? `No direct messages with ${activeRecipient?.name || 'this member'} yet.` 
-                                : 'No circle messages yet.'}
+                                : selectedChannelId === 'all'
+                                ? 'No messages in All Groups feed yet.'
+                                : `No messages in ${activeChannelCircle?.name || 'this circle'} yet.`}
                         </p>
-                        <p className="text-xs text-slate-500 max-w-[240px]">
+                        <p className="text-xs text-slate-500 max-w-[260px]">
                             {selectedRecipientId 
                                 ? 'Send a private 1-on-1 message, share location, or check in.'
-                                : 'Messages sent here are broadcast to all circle members.'}
+                                : selectedChannelId === 'all'
+                                ? 'Messages from all your enrolled circles will appear here with color badges.'
+                                : `Messages posted here are broadcast to members of ${activeChannelCircle?.name || 'this circle'}.`}
                         </p>
                     </div>
                 ) : (
@@ -389,10 +523,15 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                         const isOmni = msg.senderId === OMNI_ID;
                         const isQueued = msg.status === 'queued';
                         const sender = members.find(m => m.id === msg.senderId);
-                        const senderName = isOmni ? 'MyCo-Pilot' : (sender?.name || 'Unknown');
+                        const senderName = isOmni ? 'MyCo-Pilot' : (sender?.name || (isMe ? 'You' : 'Member'));
                         const senderAvatar = isOmni 
                             ? 'https://api.dicebear.com/7.x/bottts/svg?seed=omni'
                             : (sender?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${msg.senderId}`);
+
+                        // Find circle tag info for the message
+                        const msgCircleObj = userCircles.find(c => c.id === msg.circleId);
+                        const msgCircleName = msg.circleName || msgCircleObj?.name;
+                        const msgCircleColor = msg.circleColor || msgCircleObj?.color || (msg.circleId ? getCircleColor(msg.circleId).hex : '#6366f1');
 
                         return (
                             <div
@@ -411,22 +550,40 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                                     />
                                 )}
                                 <div className={`max-w-[78%] ${isMe ? 'text-right' : ''}`}>
-                                    {!isMe && (
-                                        isOmni ? (
-                                            <div className="flex items-center gap-1.5 mb-1">
-                                                <span className="text-[10px] font-black uppercase tracking-wider bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 bg-clip-text text-transparent">
-                                                    ✨ MyCo-Pilot
-                                                </span>
-                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 tracking-wider">
-                                                    AI CO-PILOT
-                                                </span>
-                                            </div>
-                                        ) : (
-                                            <p className="text-[10px] font-bold mb-0.5 text-slate-400">
-                                                {senderName}
-                                            </p>
-                                        )
-                                    )}
+                                    <div className={`flex items-center gap-1.5 mb-1 ${isMe ? 'justify-end' : ''}`}>
+                                        {!isMe && (
+                                            isOmni ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-[10px] font-black uppercase tracking-wider bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 bg-clip-text text-transparent">
+                                                        ✨ MyCo-Pilot
+                                                    </span>
+                                                    <span className="text-[8px] font-black px-1.5 py-0.2 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 tracking-wider">
+                                                        AI CO-PILOT
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <p className="text-[10px] font-bold text-slate-400">
+                                                    {senderName}
+                                                </p>
+                                            )
+                                        )}
+
+                                        {/* Circle Badge Tag (Shown in All Groups view or on multi-circle feeds) */}
+                                        {msgCircleName && selectedChannelId === 'all' && !msg.recipientId && (
+                                            <span
+                                                style={{
+                                                    backgroundColor: `${msgCircleColor}22`,
+                                                    borderColor: `${msgCircleColor}44`,
+                                                    color: msgCircleColor
+                                                }}
+                                                className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded border flex items-center gap-1 shrink-0"
+                                            >
+                                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: msgCircleColor }} />
+                                                <span>{msgCircleName}</span>
+                                            </span>
+                                        )}
+                                    </div>
+
                                     <div className={`inline-block px-3.5 py-2 rounded-2xl text-left relative ${
                                         msg.type === 'geofence'
                                             ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-200 rounded-2xl'
@@ -470,7 +627,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                         <span className="text-[9px] font-black uppercase tracking-tighter text-indigo-400">AI Suggestion:</span>
                         <button
                             onClick={handleSuggestionClick}
-                            className="bg-indigo-500 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-md hover:scale-105 active:scale-95 transition-all"
+                            className="bg-indigo-500 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer"
                         >
                             ⚡ {suggestion.suggestedAction || "Action"}
                         </button>
@@ -480,7 +637,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                     <button
                         onClick={handleAskOmni}
                         disabled={isLoadingOmni}
-                        className="px-2.5 py-1 rounded-full text-[11px] font-bold leading-none bg-indigo-500 text-white shadow-md hover:scale-105 active:scale-95 transition-all flex items-center gap-1 whitespace-nowrap"
+                        className="px-2.5 py-1 rounded-full text-[11px] font-bold leading-none bg-indigo-500 text-white shadow-md hover:scale-105 active:scale-95 transition-all flex items-center gap-1 whitespace-nowrap cursor-pointer"
                     >
                         {isLoadingOmni ? (
                             <div className="w-2.5 h-2.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -492,7 +649,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                         <button
                             key={reply}
                             onClick={() => handleSendMessage(reply)}
-                            className={`px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-all hover:scale-105
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-all hover:scale-105 cursor-pointer
                 ${theme === 'dark'
                                     ? 'bg-white/5 text-slate-300 hover:bg-white/10'
                                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
@@ -503,12 +660,12 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                 </div>
             </div>
 
-            {/* Input */}
+            {/* Input Bar */}
             <div className={`p-3 border-t ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'}`}>
                 <div className="flex items-center gap-2">
                     <button
                         onClick={sendLocationShare}
-                        className={`p-2.5 rounded-xl transition-colors
+                        className={`p-2.5 rounded-xl transition-colors cursor-pointer
               ${theme === 'dark' ? 'bg-white/5 hover:bg-white/10 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
                         title="Share location"
                     >
@@ -524,7 +681,9 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                             placeholder={
                                 selectedRecipientId
                                     ? `Message ${activeRecipient?.name || 'directly'}...`
-                                    : isOnline ? "Message Family Circle..." : "Type offline message..."
+                                    : selectedChannelId === 'all'
+                                    ? "Broadcast message to all circles..."
+                                    : `Message ${activeChannelCircle?.name || 'Circle'}...`
                             }
                             className={`w-full px-3.5 py-2.5 rounded-xl text-xs outline-none transition-all
                 ${theme === 'dark'
@@ -536,7 +695,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                     <button
                         onClick={() => handleSendMessage(newMessage)}
                         disabled={!newMessage.trim()}
-                        className={`p-2.5 rounded-xl transition-all ${newMessage.trim()
+                        className={`p-2.5 rounded-xl transition-all cursor-pointer ${newMessage.trim()
                             ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:opacity-90 shadow-md'
                             : theme === 'dark'
                                 ? 'bg-white/5 text-slate-500'

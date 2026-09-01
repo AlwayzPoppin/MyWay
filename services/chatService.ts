@@ -22,6 +22,9 @@ export interface ChatMessage {
     id: string;
     senderId: string;
     recipientId?: string; // Optional recipient for 1-on-1 direct messages; undefined/null for Circle group broadcast
+    circleId?: string;    // Circle this message belongs to
+    circleName?: string;  // Name of the circle
+    circleColor?: string; // Theme color of the circle
     content: string;
     type: 'text' | 'emoji' | 'location' | 'checkin' | 'geofence';
     timestamp: Date;
@@ -68,6 +71,7 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
                 id: doc.id,
                 senderId: data.senderId,
                 recipientId: data.recipientId || undefined,
+                circleId: data.circleId || circleId,
                 content: content,
                 type: data.type || 'text',
                 timestamp: convertTimestamp(data.timestamp),
@@ -81,6 +85,49 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
 
         callback(messages as ChatMessage[]);
     });
+};
+
+/**
+ * Multi-Circle Live Chat Subscriber
+ * Subscribes to multiple circles concurrently and merges all messages chronologically
+ */
+export const subscribeToMultipleCirclesMessages = (
+    circleIds: string[],
+    callback: (messages: ChatMessage[]) => void
+): (() => void) => {
+    const validIds = Array.from(new Set(circleIds.filter(id => !!id)));
+    if (validIds.length === 0) return () => { };
+
+    const circleMessagesMap: Record<string, ChatMessage[]> = {};
+
+    const unsubscribers = validIds.map(cId => {
+        return subscribeToMessages(cId, (msgs) => {
+            circleMessagesMap[cId] = msgs.map(m => ({
+                ...m,
+                circleId: m.circleId || cId
+            }));
+
+            // Merge all circles' messages and sort chronologically
+            const merged: ChatMessage[] = [];
+            const seenIds = new Set<string>();
+
+            Object.values(circleMessagesMap).forEach(list => {
+                list.forEach(m => {
+                    if (!seenIds.has(m.id)) {
+                        seenIds.add(m.id);
+                        merged.push(m);
+                    }
+                });
+            });
+
+            merged.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+            callback(merged);
+        });
+    });
+
+    return () => {
+        unsubscribers.forEach(unsub => unsub());
+    };
 };
 
 /**
@@ -98,6 +145,7 @@ export const syncBufferedMessage = async (msg: BufferedMessage): Promise<void> =
 
     const payload: any = {
         senderId: msg.senderId,
+        circleId: msg.circleId,
         content: secureContent,
         type: msg.type,
         timestamp: Timestamp.fromMillis(msg.timestamp)
@@ -145,6 +193,7 @@ export const sendMessage = async (
             id: `buffered-${buffered.id || Date.now()}`,
             senderId,
             recipientId,
+            circleId,
             content,
             type,
             timestamp: new Date(buffered.timestamp),
@@ -163,6 +212,7 @@ export const sendMessage = async (
 
     const payload: any = {
         senderId,
+        circleId,
         content: secureContent,
         type,
         timestamp: serverTimestamp()
@@ -190,6 +240,7 @@ export const sendMessage = async (
             id: `buffered-${buffered.id || Date.now()}`,
             senderId,
             recipientId,
+            circleId,
             content,
             type,
             timestamp: new Date(buffered.timestamp),

@@ -1379,6 +1379,8 @@ const App: React.FC = () => {
                   members={members}
                   currentUserId={user?.uid || ''}
                   circleId={profile?.familyCircleId}
+                  userCircles={userCircles}
+                  activeFilterCircleId={activeFilterCircleId}
                   initialRecipientId={messagingRecipientId}
                   onClose={() => {
                     setActiveModal(null);
