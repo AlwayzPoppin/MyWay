@@ -79,6 +79,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         }
         return 'other';
     });
+    const [newPlaceRadius, setNewPlaceRadius] = useState<number>(place.radius || 0.3);
 
     // Multi-route alternatives state
     const [routeOptions, setRouteOptions] = useState<NavigationRoute[]>([]);
@@ -118,6 +119,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     useEffect(() => {
         setNewPlaceName(place.name || '');
         setNewPlaceIcon(place.icon || '📍');
+        setNewPlaceRadius(place.radius || 0.3);
         if (place.type && place.type !== 'search_result' && place.type !== 'sponsored') {
             setNewPlaceType(place.type as any);
         } else {
@@ -193,7 +195,41 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             ))}
                         </div>
                     </div>
-                    <div className="flex gap-2 pt-2">
+
+                    {/* Safe Zone Geofence Radius Slider */}
+                    <div className={`p-3 rounded-2xl border ${
+                        theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <div>
+                                <span className={`text-[10px] font-black uppercase tracking-wider block ${
+                                    theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'
+                                }`}>
+                                    Safe Zone Geofence
+                                </span>
+                                <p className="text-[9px] text-slate-400">Arrival & departure alert radius for circle</p>
+                            </div>
+                            <span className={`text-xs font-bold ${textColor}`}>
+                                {Math.round(newPlaceRadius * 1000)}m
+                            </span>
+                        </div>
+                        <input
+                            type="range"
+                            min="0.05"
+                            max="2.0"
+                            step="0.05"
+                            value={newPlaceRadius}
+                            onChange={(e) => setNewPlaceRadius(parseFloat(e.target.value))}
+                            className="w-full h-1.5 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
+                        />
+                        <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
+                            <span>50m</span>
+                            <span>1km</span>
+                            <span>2km</span>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
                         <button
                             onClick={() => {
                                 if (onAddPlace && newPlaceName.trim()) {
@@ -201,20 +237,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         name: newPlaceName.trim(),
                                         icon: newPlaceIcon,
                                         location: place.location,
-                                        radius: place.radius || 0.3,
+                                        radius: newPlaceRadius,
                                         type: newPlaceType,
                                         description: place.description || place.name
                                     });
                                     setIsSavingPlace(false);
                                 }
                             }}
-                            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95"
+                            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer"
                         >
                             Save Place
                         </button>
                         <button
                             onClick={() => setIsSavingPlace(false)}
-                            className={`px-4 py-3 rounded-xl border font-bold text-sm transition-all active:scale-95 ${
+                            className={`px-4 py-3 rounded-xl border font-bold text-sm transition-all active:scale-95 cursor-pointer ${
                                 theme === 'dark' ? 'border-white/10 hover:bg-white/5 text-slate-300' : 'border-slate-200 hover:bg-slate-50 text-slate-600'
                             }`}
                         >
@@ -467,8 +503,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         ) : null}
                     </div>
 
-                    {/* Geofence Radius Slider */}
-                    {onUpdateRadius && (
+                    {/* Geofence Radius Slider (Only for Saved Circle Places) */}
+                    {isSaved && onUpdateRadius && (
                         <div className={`mt-2 mb-1 p-2.5 rounded-2xl border ${
                             theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
                         }`}>
@@ -766,8 +802,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     ) : null}
                 </div>
 
-                {/* Geofence Radius Slider */}
-                {onUpdateRadius && (
+                {/* Geofence Radius Slider (Only for Saved Circle Places) */}
+                {isSaved && onUpdateRadius && (
                     <div className={`mb-4 p-3 rounded-2xl border ${
                         theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
                     }`}>
