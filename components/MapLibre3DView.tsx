@@ -1014,8 +1014,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // ==========================================
     // UNIFIED WEBGL DESTINATION PIN LAYER
     // ==========================================
-    useEffect(() => {
-        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
+    // Uses the same bulletproof pattern as the route line renderer:
+    // - Individual getLayer() checks per layer (survives style reloads)
+    // - Event-driven re-sync on style.load / idle
+    const syncDestinationPin = useCallback(() => {
+        if (!map.current || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'destination-pin-webgl-source';
         const destinationLoc = activeRoute?.destinationLoc;
@@ -1035,77 +1038,109 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }] : []
         };
 
-        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
-        if (source) {
-            source.setData(geojsonData);
-        } else {
-            map.current.addSource(sourceId, {
-                type: 'geojson',
-                data: geojsonData
-            });
+        try {
+            // 1. UPDATE OR ADD SOURCE
+            const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+            if (source) {
+                source.setData(geojsonData);
+            } else {
+                map.current.addSource(sourceId, {
+                    type: 'geojson',
+                    data: geojsonData
+                });
+            }
 
-            // Outer Pulse Glow Circle
-            map.current.addLayer({
-                id: 'destination-pulse-glow',
-                type: 'circle',
-                source: sourceId,
-                paint: {
-                    'circle-color': '#ef4444',
-                    'circle-radius': 18,
-                    'circle-opacity': 0.35,
-                    'circle-stroke-width': 2,
-                    'circle-stroke-color': '#ffffff'
-                }
-            });
+            // 2. ADD / UPDATE Outer Pulse Glow Circle
+            if (!map.current.getLayer('destination-pulse-glow')) {
+                map.current.addLayer({
+                    id: 'destination-pulse-glow',
+                    type: 'circle',
+                    source: sourceId,
+                    paint: {
+                        'circle-color': '#ef4444',
+                        'circle-radius': 18,
+                        'circle-opacity': 0.35,
+                        'circle-stroke-width': 2,
+                        'circle-stroke-color': '#ffffff'
+                    }
+                });
+            }
 
-            // Core Pin Circle
-            map.current.addLayer({
-                id: 'destination-core-circle',
-                type: 'circle',
-                source: sourceId,
-                paint: {
-                    'circle-color': '#dc2626',
-                    'circle-radius': 11,
-                    'circle-stroke-width': 2.5,
-                    'circle-stroke-color': '#ffffff',
-                    'circle-opacity': 0.98
-                }
-            });
+            // 3. ADD / UPDATE Core Pin Circle
+            if (!map.current.getLayer('destination-core-circle')) {
+                map.current.addLayer({
+                    id: 'destination-core-circle',
+                    type: 'circle',
+                    source: sourceId,
+                    paint: {
+                        'circle-color': '#dc2626',
+                        'circle-radius': 11,
+                        'circle-stroke-width': 2.5,
+                        'circle-stroke-color': '#ffffff',
+                        'circle-opacity': 0.98
+                    }
+                });
+            }
 
-            // Destination Icon
-            map.current.addLayer({
-                id: 'destination-pin-symbol',
-                type: 'symbol',
-                source: sourceId,
-                layout: {
-                    'text-field': '🏁',
-                    'text-size': 13,
-                    'text-allow-overlap': true,
-                    'text-ignore-placement': true
-                }
-            });
+            // 4. ADD / UPDATE Destination Icon
+            if (!map.current.getLayer('destination-pin-symbol')) {
+                map.current.addLayer({
+                    id: 'destination-pin-symbol',
+                    type: 'symbol',
+                    source: sourceId,
+                    layout: {
+                        'text-field': '🏁',
+                        'text-size': 13,
+                        'text-allow-overlap': true,
+                        'text-ignore-placement': true
+                    }
+                });
+            }
 
-            // Destination Name Label
-            map.current.addLayer({
-                id: 'destination-name-label',
-                type: 'symbol',
-                source: sourceId,
-                layout: {
-                    'text-field': ['get', 'name'],
-                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                    'text-size': 11,
-                    'text-offset': [0, 1.8],
-                    'text-anchor': 'top',
-                    'text-optional': true
-                },
-                paint: {
-                    'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                    'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.9)',
-                    'text-halo-width': 2
-                }
-            });
+            // 5. ADD / UPDATE Destination Name Label
+            if (!map.current.getLayer('destination-name-label')) {
+                map.current.addLayer({
+                    id: 'destination-name-label',
+                    type: 'symbol',
+                    source: sourceId,
+                    layout: {
+                        'text-field': ['get', 'name'],
+                        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                        'text-size': 11,
+                        'text-offset': [0, 1.8],
+                        'text-anchor': 'top',
+                        'text-optional': true
+                    },
+                    paint: {
+                        'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
+                        'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.9)',
+                        'text-halo-width': 2
+                    }
+                });
+            }
+        } catch (err) {
+            console.warn('[MapLibre3DView] Error syncing destination pin:', err);
         }
-    }, [activeRoute?.destinationLoc, activeRoute?.destinationName, isMapReady, styleVersion, mapSkin, theme]);
+    }, [activeRoute?.destinationLoc, activeRoute?.destinationName, effectiveSkin, theme]);
+
+    // Trigger destination pin sync + register event-driven re-sync (survives style reloads)
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+        syncDestinationPin();
+
+        const onResync = () => syncDestinationPin();
+        map.current.on('styledata', onResync);
+        map.current.on('style.load', onResync);
+        map.current.on('idle', onResync);
+
+        return () => {
+            if (map.current) {
+                map.current.off('styledata', onResync);
+                map.current.off('style.load', onResync);
+                map.current.off('idle', onResync);
+            }
+        };
+    }, [syncDestinationPin, isMapReady, styleVersion]);
 
     // Auto-frame route when previewing or starting route
     useEffect(() => {
