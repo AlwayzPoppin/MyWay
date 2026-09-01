@@ -206,10 +206,6 @@ const App: React.FC = () => {
     avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
   });
 
-  const [showStylePicker, setShowStylePicker] = useState(false);
-  const styleLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const didStyleLongPressRef = useRef(false);
-
   const [privacyZones] = useState<PrivacyZone[]>([]);
   const [incidents, setIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
   const [insights, setInsights] = useState<DailyInsight[]>([]);
@@ -711,40 +707,6 @@ const App: React.FC = () => {
     }
   }, [user, profile, showNotification, logActivity, setMembers]);
 
-  const handleStylePointerDown = useCallback(() => {
-    didStyleLongPressRef.current = false;
-    if (styleLongPressTimerRef.current) clearTimeout(styleLongPressTimerRef.current);
-    styleLongPressTimerRef.current = setTimeout(() => {
-      didStyleLongPressRef.current = true;
-      setShowStylePicker(prev => !prev);
-    }, 500);
-  }, []);
-
-  const handleStylePointerUp = useCallback(() => {
-    if (styleLongPressTimerRef.current) {
-      clearTimeout(styleLongPressTimerRef.current);
-      styleLongPressTimerRef.current = null;
-    }
-    if (!didStyleLongPressRef.current) {
-      set3DMode(prev => !prev);
-    }
-  }, []);
-
-  const handleStylePointerLeave = useCallback(() => {
-    if (styleLongPressTimerRef.current) {
-      clearTimeout(styleLongPressTimerRef.current);
-      styleLongPressTimerRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (styleLongPressTimerRef.current) {
-        clearTimeout(styleLongPressTimerRef.current);
-      }
-    };
-  }, []);
-
   const handleToggleGhost = useCallback((memberId: string) => {
     setMembers(prev => prev.map(m => m.id === memberId ? { ...m, isGhostMode: !m.isGhostMode } : m));
   }, [setMembers]);
@@ -902,6 +864,8 @@ const App: React.FC = () => {
               isCameraFree={isCameraFree}
               onCameraFreeChange={setIsCameraFree}
               isLowDataMode={isLowDataMode}
+              onToggle3DMode={() => set3DMode(prev => !prev)}
+              onSelectMapStyle={(style) => setUserSettings(prev => ({ ...prev, mapStyle: style }))}
             />
           </div>
 
@@ -1314,50 +1278,8 @@ const App: React.FC = () => {
                 }}
               >
 
-                {/* Unified Action Cluster */}
+                {/* Emergency SOS Quick Button */}
                 <div className="flex flex-col gap-2 p-1.5 bg-black/60 backdrop-blur-xl rounded-[1.5rem] border border-white/15 shadow-2xl relative">
-
-                  {/* 3D Mode / Map Style — tap toggles 3D, long-press opens style picker */}
-                  <div className="relative">
-                    <button
-                      onPointerDown={handleStylePointerDown}
-                      onPointerUp={handleStylePointerUp}
-                      onPointerLeave={handleStylePointerLeave}
-                      className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all select-none
-                        ${is3DMode ? 'bg-amber-500 text-white shadow-lg' : 'bg-white/5 text-slate-500'}`}
-                      title="Tap: 3D Mode • Hold: Map Style"
-                    >
-                      <span className="text-xl">🗺️</span>
-                    </button>
-
-                    {/* Map Style Radial Picker — slides out to the left */}
-                    {showStylePicker && (
-                      <div className="absolute right-14 top-1/2 -translate-y-1/2 flex items-center gap-1.5 bg-black/70 backdrop-blur-xl rounded-full p-1.5 border border-white/10 shadow-2xl animate-in slide-in-from-right duration-200">
-                        {[
-                          { id: 'standard' as const, label: '🗺️', name: 'Standard' },
-                          { id: 'satellite' as const, label: '🛰️', name: 'Satellite' },
-                          { id: 'terrain' as const, label: '⛰️', name: 'Terrain' },
-                        ].map(opt => (
-                          <button
-                            key={opt.id}
-                            onClick={() => {
-                              setUserSettings(prev => ({ ...prev, mapStyle: opt.id }));
-                              setShowStylePicker(false);
-                            }}
-                            className={`w-10 h-10 rounded-full flex flex-col items-center justify-center transition-all
-                              ${userSettings.mapStyle === opt.id
-                                ? 'bg-indigo-500 text-white ring-2 ring-indigo-400/50 scale-110'
-                                : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'}`}
-                            title={opt.name}
-                          >
-                            <span className="text-base leading-none">{opt.label}</span>
-                            <span className="text-[7px] font-black tracking-tight leading-none mt-0.5 opacity-80">{opt.name.slice(0, 3).toUpperCase()}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
                   {/* Hold to SOS */}
                   <HoldToActivate
                     onActivate={handleTriggerSOS}

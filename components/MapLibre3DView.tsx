@@ -103,6 +103,8 @@ interface MapLibre3DViewProps {
     onCameraFreeChange?: (isFree: boolean) => void;
     isLowDataMode?: boolean;
     showTrafficControls?: boolean;
+    onToggle3DMode?: () => void;
+    onSelectMapStyle?: (style: 'standard' | 'satellite' | 'terrain') => void;
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
@@ -138,7 +140,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     isCameraFree = false,
     onCameraFreeChange,
     isLowDataMode = false,
-    showTrafficControls = true
+    showTrafficControls = true,
+    onToggle3DMode,
+    onSelectMapStyle
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
@@ -716,9 +720,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 });
             }
         });
-
-        // Add navigation controls
-        mapInstance.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
         return () => {
             document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -2051,22 +2052,145 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
     }, [center, isNavigating, isMobile, is3DMode]);
 
+    // Consolidated Map Style & 3D Mode Handlers
+    const [showStylePicker, setShowStylePicker] = React.useState(false);
+    const styleLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const didStyleLongPressRef = useRef(false);
+
+    const handleStylePointerDown = useCallback(() => {
+        didStyleLongPressRef.current = false;
+        if (styleLongPressTimerRef.current) clearTimeout(styleLongPressTimerRef.current);
+        styleLongPressTimerRef.current = setTimeout(() => {
+            didStyleLongPressRef.current = true;
+            setShowStylePicker(prev => !prev);
+        }, 450);
+    }, []);
+
+    const handleStylePointerUp = useCallback(() => {
+        if (styleLongPressTimerRef.current) {
+            clearTimeout(styleLongPressTimerRef.current);
+            styleLongPressTimerRef.current = null;
+        }
+        if (!didStyleLongPressRef.current) {
+            if (onToggle3DMode) {
+                onToggle3DMode();
+            } else if (map.current) {
+                const currentPitch = map.current.getPitch();
+                if (currentPitch > 10) {
+                    map.current.easeTo({ pitch: 0, bearing: 0, duration: 600 });
+                } else {
+                    map.current.easeTo({ pitch: 60, bearing: -17.6, duration: 600 });
+                }
+            }
+        }
+    }, [onToggle3DMode]);
+
+    const handleStylePointerLeave = useCallback(() => {
+        if (styleLongPressTimerRef.current) {
+            clearTimeout(styleLongPressTimerRef.current);
+            styleLongPressTimerRef.current = null;
+        }
+    }, []);
+
     return (
-        <div 
-            ref={mapContainer} 
-            className={`w-full h-full transition-all duration-500 ${
-                isNavigating ? 'cursor-none' : ''
-            }`}
-            style={{ 
-                minHeight: '100vh', 
-                background: theme === 'dark' ? '#0f172a' : '#f1f5f9',
-                // AUDIT FIX: Ghost Mode Ambiguity Indicator
-                // Outer glow when in privacy mode
-                boxShadow: !members.find(m => m.id === 'demo-you')?.locationSharing 
-                    ? 'inset 0 0 100px rgba(217, 70, 239, 0.4)' 
-                    : 'none'
-            }} 
-        />
+        <div className="relative w-full h-full overflow-hidden select-none">
+            <div 
+                ref={mapContainer} 
+                className={`w-full h-full transition-all duration-500 ${
+                    isNavigating ? 'cursor-none' : ''
+                }`}
+                style={{ 
+                    minHeight: '100vh', 
+                    background: theme === 'dark' ? '#0f172a' : '#f1f5f9',
+                    // AUDIT FIX: Ghost Mode Ambiguity Indicator
+                    // Outer glow when in privacy mode
+                    boxShadow: !members.find(m => m.id === 'demo-you')?.locationSharing 
+                        ? 'inset 0 0 100px rgba(217, 70, 239, 0.4)' 
+                        : 'none'
+                }} 
+            />
+
+            {/* Consolidated Map View & Zoom Controls Cluster (with +, -, and 3D/Map View) */}
+            <div 
+                className={`absolute z-30 pointer-events-auto flex flex-col items-center gap-1.5 transition-all duration-300 ${
+                    isMobile
+                        ? (isNavigating ? 'right-3.5 bottom-24' : 'right-4 bottom-28')
+                        : (isNavigating ? 'right-6 bottom-28' : 'right-6 bottom-32')
+                }`}
+            >
+                {/* Map Style Radial / Layer Picker (slides out to the left when held/toggled) */}
+                {showStylePicker && (
+                    <div className="absolute right-14 bottom-0 flex items-center gap-1.5 bg-black/85 backdrop-blur-2xl rounded-2xl p-1.5 border border-white/20 shadow-2xl animate-in slide-in-from-right duration-200">
+                        {[
+                            { id: 'standard' as const, label: '🗺️', name: 'Standard' },
+                            { id: 'satellite' as const, label: '🛰️', name: 'Satellite' },
+                            { id: 'terrain' as const, label: '⛰️', name: 'Terrain' },
+                        ].map(opt => (
+                            <button
+                                key={opt.id}
+                                onClick={() => {
+                                    onSelectMapStyle?.(opt.id);
+                                    setShowStylePicker(false);
+                                }}
+                                className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer ${
+                                    mapStyle === opt.id
+                                        ? 'bg-indigo-600 text-white ring-2 ring-indigo-400 shadow-lg scale-105'
+                                        : 'bg-white/10 text-slate-300 hover:bg-white/20'
+                                }`}
+                                title={opt.name}
+                            >
+                                <span className="text-base leading-none">{opt.label}</span>
+                                <span className="text-[7px] font-black uppercase mt-0.5 tracking-tight">{opt.name.slice(0, 3)}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                {/* Control Pill: [+] [-] [3D/Style] */}
+                <div className="flex flex-col p-1 bg-black/75 backdrop-blur-2xl rounded-2xl border border-white/15 shadow-2xl overflow-hidden divide-y divide-white/10">
+                    {/* Zoom In */}
+                    <button
+                        type="button"
+                        onClick={() => map.current?.zoomIn({ duration: 250 })}
+                        title="Zoom In"
+                        className="w-10 h-10 flex items-center justify-center text-white hover:bg-white/15 active:scale-95 transition-all text-xl font-bold select-none cursor-pointer"
+                    >
+                        +
+                    </button>
+
+                    {/* Zoom Out */}
+                    <button
+                        type="button"
+                        onClick={() => map.current?.zoomOut({ duration: 250 })}
+                        title="Zoom Out"
+                        className="w-10 h-10 flex items-center justify-center text-white hover:bg-white/15 active:scale-95 transition-all text-xl font-bold select-none cursor-pointer"
+                    >
+                        −
+                    </button>
+
+                    {/* 3D / 2D & Map Style Toggle Button */}
+                    <button
+                        type="button"
+                        onPointerDown={handleStylePointerDown}
+                        onPointerUp={handleStylePointerUp}
+                        onPointerLeave={handleStylePointerLeave}
+                        title="Tap: Toggle 3D/2D View • Hold: Change Map Layer"
+                        className={`w-10 h-10 flex flex-col items-center justify-center transition-all active:scale-95 select-none cursor-pointer ${
+                            is3DMode 
+                                ? 'bg-amber-500/90 text-white font-black shadow-inner' 
+                                : 'text-slate-300 hover:bg-white/15'
+                        }`}
+                    >
+                        <span className="text-[11px] font-black leading-none tracking-tight">
+                            {is3DMode ? '3D' : '2D'}
+                        </span>
+                        <span className="text-[7px] font-black uppercase tracking-tighter opacity-80 mt-0.5">
+                            {mapStyle === 'satellite' ? 'SAT' : mapStyle === 'terrain' ? 'TER' : 'MAP'}
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 };
 
