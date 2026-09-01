@@ -47,12 +47,23 @@ export interface RouteStep {
   trafficControl?: TrafficControlType; // Stop sign, traffic light, railroad crossing, etc.
 }
 
+export type IncidentType = 'police' | 'hazard' | 'shoulder' | 'construction' | 'traffic' | 'safety_alert';
+
 export interface IncidentReport {
   id: string;
-  type: 'police' | 'hazard' | 'traffic' | 'safety_alert';
+  type: IncidentType;
   location: Location;
   timestamp: string;
   reporterId: string;
+  reporterName?: string;
+  reporterAvatar?: string;
+  details?: string;
+  upvotes?: number;
+  upvoterIds?: string[];
+  downvotes?: number;
+  downvoterIds?: string[];
+  expiresAt?: number;
+  verified?: boolean;
 }
 
 export interface NavigationRoute {

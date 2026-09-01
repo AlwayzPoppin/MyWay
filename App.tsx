@@ -23,6 +23,7 @@ import MessagingPanel from './components/MessagingPanel';
 import SettingsPanel from './components/SettingsPanel';
 import BentoSidebar from './components/BentoSidebar';
 import HoldToActivate from './components/HoldToActivate';
+import { incidentService } from './services/incidentService';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
 import PlaceDetailPanel from './components/PlaceDetailPanel';
@@ -210,8 +211,13 @@ const App: React.FC = () => {
   const didStyleLongPressRef = useRef(false);
 
   const [privacyZones] = useState<PrivacyZone[]>([]);
-  const [incidents, setIncidents] = useState<IncidentReport[]>([]);
+  const [incidents, setIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
   const [insights, setInsights] = useState<DailyInsight[]>([]);
+
+  // Real-time Road Incidents sync across all drivers & circle members
+  useEffect(() => {
+    return incidentService.subscribe(setIncidents);
+  }, []);
   const [activities, setActivities] = useState<AppNotification[]>([]);
   const prevMembersRef = useRef<Record<string, { sosActive: boolean; battery: number; status: string }>>({});
 
@@ -1389,6 +1395,28 @@ const App: React.FC = () => {
                   theme={theme}
                 />
               </div>
+            </OverlayManager>
+          )}
+
+          {/* 1-Tap Road Incident Reporter */}
+          {activeModal === 'incident' && (
+            <OverlayManager>
+              <IncidentReporter
+                theme={theme}
+                isMobile={isMobile}
+                onClose={() => setActiveModal(null)}
+                onReport={(type, details) => {
+                  if (userLocation) {
+                    incidentService.reportIncident(
+                      type,
+                      userLocation,
+                      { id: user?.uid || 'driver', name: profile?.displayName || user?.displayName || 'Driver' },
+                      details
+                    );
+                    showNotification(`📢 Road report shared with circle!`, 3000);
+                  }
+                }}
+              />
             </OverlayManager>
           )}
 

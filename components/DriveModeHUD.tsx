@@ -1,11 +1,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { NavigationRoute, FamilyMember, Location } from '../types';
+import { NavigationRoute, FamilyMember, Location, IncidentReport, IncidentType } from '../types';
 import { speechService } from '../services/speechService';
 import { BetterRouteSuggestion, UpcomingTollAlert, LeaderDivertedPrompt, AmbientMaintenanceAdvisory } from '../hooks/useNavigation';
 import { convoyService, ConvoyMember, ConvoySession } from '../services/convoyService';
 import { maintenanceAlertService } from '../services/maintenanceAlertService';
 import { vehicleFuelService } from '../services/vehicleFuelService';
+import { incidentService } from '../services/incidentService';
+import { getDistanceMeters } from '../utils/geo';
+import IncidentReporter from './IncidentReporter';
 
 interface DriveModeHUDProps {
   route: NavigationRoute;
@@ -122,6 +125,11 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   const [activeConvoy, setActiveConvoy] = useState<ConvoySession | null>(() => convoyService.getActiveConvoy());
   const [isConvoyDrawerOpen, setIsConvoyDrawerOpen] = useState(false);
 
+  // 1-Tap Road Incident Reporting & Approaching Hazards
+  const [isIncidentReporterOpen, setIsIncidentReporterOpen] = useState(false);
+  const [activeIncidents, setActiveIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
+  const [dismissedIncidentIds, setDismissedIncidentIds] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     return speechService.onMuteChange(setIsVoiceMuted);
   }, []);
@@ -129,6 +137,20 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   useEffect(() => {
     return convoyService.subscribe(setActiveConvoy);
   }, []);
+
+  useEffect(() => {
+    return incidentService.subscribe(setActiveIncidents);
+  }, []);
+
+  const approachingIncident = useMemo(() => {
+    if (!userLocation) return null;
+    return activeIncidents.find(inc => {
+      if (dismissedIncidentIds.has(inc.id)) return false;
+      if (inc.reporterId === currentUserId) return false;
+      const dist = getDistanceMeters(userLocation, inc.location);
+      return dist <= 500 && dist >= 25;
+    }) || null;
+  }, [activeIncidents, userLocation, dismissedIncidentIds, currentUserId]);
 
   const convoyTelemetry = useMemo(() => {
     return convoyService.getConvoyTelemetry(userLocation || null, speed, currentUserId, members);
@@ -289,6 +311,61 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
           <div className="absolute bottom-0 left-0 h-1 bg-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }} />
         </div>
       </div>
+
+      {/* Crowd-Sourced Road Incident Ahead: Interactive Still-There / Cleared Confirmation Banner */}
+      {approachingIncident && (
+        <div className="w-full pointer-events-auto flex justify-center mt-2 px-3 animate-in slide-in-from-top duration-300">
+          <div className="bg-slate-950/95 backdrop-blur-2xl border-2 border-amber-500/60 rounded-2xl p-3 shadow-[0_15px_40px_rgba(245,158,11,0.3)] flex items-center justify-between gap-3 max-w-lg w-full">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-2xl flex items-center justify-center border border-amber-400/40 shrink-0 shadow-inner">
+                {approachingIncident.type === 'police' ? '🚔' :
+                 approachingIncident.type === 'hazard' ? '⚠️' :
+                 approachingIncident.type === 'shoulder' ? '🚗' :
+                 approachingIncident.type === 'construction' ? '🚧' :
+                 approachingIncident.type === 'traffic' ? '🚙' : '🛡️'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                    {approachingIncident.type === 'police' ? 'Police Trap Reported' :
+                     approachingIncident.type === 'hazard' ? 'Road Hazard Ahead' :
+                     approachingIncident.type === 'shoulder' ? 'Vehicle on Shoulder' :
+                     approachingIncident.type === 'construction' ? 'Work Zone Ahead' : 'Traffic Slowdown'}
+                  </h4>
+                  <span className="text-[10px] font-bold text-amber-400">
+                    ({(getDistanceMeters(userLocation || { lat: 0, lng: 0 }, approachingIncident.location) * 0.000621371).toFixed(1)} mi)
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-300 truncate">Is this still there?</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  incidentService.upvoteIncident(approachingIncident.id, currentUserId || 'driver');
+                  setDismissedIncidentIds(prev => new Set(prev).add(approachingIncident.id));
+                }}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black shadow-md active:scale-95 transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <span>👍</span>
+                <span>Still There</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  incidentService.clearIncident(approachingIncident.id, currentUserId || 'driver');
+                  setDismissedIncidentIds(prev => new Set(prev).add(approachingIncident.id));
+                }}
+                className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-slate-300 rounded-xl text-[10px] font-bold active:scale-95 transition-all cursor-pointer"
+              >
+                <span>Cleared ✕</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hive-Mind Fleet Routing: Leader Diverted Interactive 10-Second Countdown Card */}
       {leaderDivertedPrompt && (
@@ -769,8 +846,19 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             </div>
           )}
 
-          {/* Right Action Controls: Recenter + Voice Mute + Cancel */}
+          {/* Right Action Controls: Report Incident + Recenter + Voice Mute + Cancel */}
           <div className="absolute right-6 bottom-6 z-20 pointer-events-auto flex items-center gap-3 animate-in slide-in-from-right duration-500">
+            {/* 1-Tap Road Incident Report Button */}
+            <button
+              type="button"
+              onClick={() => setIsIncidentReporterOpen(true)}
+              title="Report Road Hazard, Police Trap, or Construction"
+              className="bg-amber-500/20 border-2 border-amber-400/50 text-amber-400 flex flex-col items-center justify-center shadow-2xl hover:bg-amber-500/30 hover:border-amber-400 transition-all backdrop-blur-xl active:scale-95 h-20 w-20 rounded-3xl cursor-pointer group"
+            >
+              <span className="text-2xl filter drop-shadow group-hover:scale-110 transition-transform">⚠️</span>
+              <span className="text-[9px] font-black uppercase tracking-wider text-amber-300 mt-0.5">Report</span>
+            </button>
+
             {/* Recenter Button */}
             <button
               onClick={onRecenter}
@@ -928,8 +1016,19 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               </div>
             </div>
 
-            {/* Mobile Right Action Controls: Recenter + Voice Mute + Cancel */}
+            {/* Mobile Right Action Controls: Report Incident + Recenter + Voice Mute + Cancel */}
             <div className="flex items-center gap-2">
+              {/* 1-Tap Road Incident Report Button */}
+              <button
+                type="button"
+                onClick={() => setIsIncidentReporterOpen(true)}
+                title="Report Road Hazard, Police Trap, or Construction"
+                className="bg-amber-500/20 border border-amber-400/50 text-amber-400 flex flex-col items-center justify-center shadow-xl hover:bg-amber-500/30 transition-all backdrop-blur-xl active:scale-95 h-14 w-14 rounded-xl cursor-pointer"
+              >
+                <span className="text-lg">⚠️</span>
+                <span className="text-[7px] font-black uppercase text-amber-300 leading-none mt-0.5">Report</span>
+              </button>
+
               {/* Recenter Button */}
               <button
                 onClick={onRecenter}
@@ -1116,6 +1215,25 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 1-Tap Road Incident Reporter Modal */}
+      {isIncidentReporterOpen && (
+        <IncidentReporter
+          theme={theme}
+          isMobile={isMobile}
+          onClose={() => setIsIncidentReporterOpen(false)}
+          onReport={(type, details) => {
+            if (userLocation) {
+              incidentService.reportIncident(
+                type,
+                userLocation,
+                { id: currentUserId || 'driver', name: 'You' },
+                details
+              );
+            }
+          }}
+        />
       )}
     </div>
   );

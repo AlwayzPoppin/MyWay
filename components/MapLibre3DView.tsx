@@ -147,6 +147,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const renderedGeofenceIdsRef = useRef<Set<string>>(new Set());
     const routeRafRef = useRef<number | null>(null);
     const trafficControlMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const incidentMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const membersMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const placesMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const currentStyleUrlRef = useRef<string | null>(null);
@@ -1187,6 +1188,82 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             isCancelled = true;
         };
     }, [activeRoute?.trafficControls, activeRoute?.routeGeometry, showTrafficControls, isMapReady, isNavigating, userLocation?.lat, userLocation?.lng]);
+
+    // ==========================================
+    // CROWD-SOURCED ROAD INCIDENTS (POLICE, HAZARDS, SHOULDER, WORK ZONES)
+    // ==========================================
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+
+        const validIncidents = (incidents || []).filter(
+            (inc: any) => inc && inc.location && typeof inc.location.lat === 'number' && typeof inc.location.lng === 'number'
+        );
+        const currentIds = new Set(validIncidents.map((i: any) => i.id));
+
+        // Remove stale incident markers
+        for (const [id, marker] of incidentMarkersRef.current.entries()) {
+            if (!currentIds.has(id)) {
+                marker.remove();
+                incidentMarkersRef.current.delete(id);
+            }
+        }
+
+        // Render or update each incident marker
+        validIncidents.forEach((inc: any) => {
+            let marker = incidentMarkersRef.current.get(inc.id);
+            if (!marker) {
+                const el = document.createElement('div');
+                el.className = 'myway-incident-marker select-none';
+                el.style.cursor = 'pointer';
+                el.style.display = 'flex';
+                el.style.flexDirection = 'column';
+                el.style.alignItems = 'center';
+                el.style.filter = 'drop-shadow(0 6px 16px rgba(0,0,0,0.6))';
+                el.style.transform = 'translate3d(0,0,0)';
+
+                const icon = 
+                    inc.type === 'police' ? '🚔' :
+                    inc.type === 'hazard' ? '⚠️' :
+                    inc.type === 'shoulder' ? '🚗' :
+                    inc.type === 'construction' ? '🚧' :
+                    inc.type === 'traffic' ? '🚙' : '🛡️';
+
+                const label = 
+                    inc.type === 'police' ? 'Police' :
+                    inc.type === 'hazard' ? 'Hazard' :
+                    inc.type === 'shoulder' ? 'Shoulder' :
+                    inc.type === 'construction' ? 'Work Zone' :
+                    inc.type === 'traffic' ? 'Traffic' : 'Alert';
+
+                const color = 
+                    inc.type === 'police' ? '#3b82f6' :
+                    inc.type === 'hazard' ? '#f59e0b' :
+                    inc.type === 'shoulder' ? '#a855f7' :
+                    inc.type === 'construction' ? '#f97316' :
+                    inc.type === 'traffic' ? '#ef4444' : '#10b981';
+
+                el.innerHTML = `
+                    <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
+                        <div style="position: absolute; inset: -4px; border-radius: 50%; background: ${color}; opacity: 0.4; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+                        <div style="width: 38px; height: 38px; border-radius: 50%; background: ${color}; border: 2.5px solid #ffffff; box-shadow: 0 4px 16px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-size: 18px; position: relative;">
+                            ${icon}
+                        </div>
+                        <div style="margin-top: 3px; background: rgba(0,0,0,0.85); border: 1px solid ${color}; border-radius: 6px; padding: 1px 5px; font-size: 8.5px; font-weight: 900; color: #ffffff; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 3px;">
+                            <span>${label}</span>
+                            ${(inc.upvotes || 1) > 1 ? `<span style="color: #4ade80;">+${inc.upvotes}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+
+                marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+                    .setLngLat([inc.location.lng, inc.location.lat])
+                    .addTo(map.current!);
+                incidentMarkersRef.current.set(inc.id, marker);
+            } else {
+                marker.setLngLat([inc.location.lng, inc.location.lat]);
+            }
+        });
+    }, [incidents, isMapReady]);
 
     const placesRef = useRef(places);
     placesRef.current = places;
