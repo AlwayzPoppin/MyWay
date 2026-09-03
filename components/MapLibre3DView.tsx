@@ -2011,7 +2011,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
 
             const markerHtml = isAmbient ? `
-                <div class="myway-ambient-poi-text" style="display: flex; align-items: center; justify-content: center; padding: 2px 4px; pointer-events: auto; user-select: none;">
+                <div class="marker-content myway-ambient-poi-text" style="display: flex; align-items: center; justify-content: center; padding: 2px 4px; pointer-events: auto; user-select: none; transition: transform 0.15s ease, opacity 0.15s ease; transform-origin: center center;">
                     <span style="
                         font-family: inherit;
                         font-size: 10.5px;
@@ -2028,7 +2028,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     ">${place.name}</span>
                 </div>
             ` : `
-                <div style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer;">
+                <div class="marker-content" style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer; transition: transform 0.15s ease, opacity 0.15s ease; transform-origin: bottom center;">
                     ${isSelected ? `
                         <div style="
                             position: absolute;
@@ -2115,8 +2115,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 el.style.flexDirection = 'column';
                 el.style.alignItems = 'center';
                 el.style.cursor = 'pointer';
-                el.style.transform = 'translate3d(0,0,0)';
-                el.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
                 el.dataset.minzoom = String(markerMinZoom);
                 el.style.zIndex = isSelected ? '60' : isSearchResult ? '35' : isAmbient ? '10' : '25';
                 el.innerHTML = markerHtml;
@@ -2166,19 +2164,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         });
 
         // Dynamic smooth scaling & visibility updater for POI markers based on map zoom
+        // Applies scale & opacity strictly to innerContent child to preserve MapLibre's root translate matrix
         const updatePoiMarkerVisibility = () => {
             if (!map.current) return;
             const currentZoom = map.current.getZoom();
             for (const [id, marker] of placesMarkersRef.current.entries()) {
                 const el = marker.getElement();
                 if (!el) continue;
+                const innerContent = (el.firstElementChild || el.querySelector('.marker-content')) as HTMLElement | null;
+                if (!innerContent) continue;
+
                 const minZStr = el.dataset.minzoom;
                 if (!minZStr) continue;
                 const minZ = parseFloat(minZStr);
                 if (minZ === 0) {
                     el.style.display = 'flex';
-                    el.style.opacity = '1';
-                    el.style.transform = 'translate3d(0,0,0) scale(1)';
+                    innerContent.style.opacity = '1';
+                    innerContent.style.transform = 'scale(1)';
                     continue;
                 }
 
@@ -2190,8 +2192,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     const zoomDelta = currentZoom - minZ;
                     const scale = Math.min(1.15, Math.max(0.65, 0.65 + (zoomDelta / 1.5) * 0.5));
                     const opacity = Math.min(1, Math.max(0.2, zoomDelta / 0.5));
-                    el.style.opacity = String(opacity);
-                    el.style.transform = `translate3d(0,0,0) scale(${scale.toFixed(2)})`;
+                    innerContent.style.opacity = String(opacity);
+                    innerContent.style.transform = `scale(${scale.toFixed(2)})`;
                 }
             }
         };
