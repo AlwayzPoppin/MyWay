@@ -186,3 +186,10 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: rgba(99, 102, 241, 0.5);
 }
+
+/* Navigation vehicle puck micro-smoothing: dampens GPS sensor micro-jitter at stoplights */
+.myway-puck-arrow,
+.myway-puck-beam {
+    transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+    will-change: transform;
+}

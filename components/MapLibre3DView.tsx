@@ -3382,13 +3382,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const markerHtml = isSelfNavigating ? `
                     <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
                         <!-- Dynamic Forward Vision Headlight Beam (Electric Cyan) -->
-                        <div class="myway-puck-beam" style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${visualRotation}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, ${isCarbonAmber ? 'rgba(0, 242, 254, 0.65)' : 'rgba(56, 189, 248, 0.45)'} 0%, ${isCarbonAmber ? 'rgba(6, 182, 212, 0.25)' : 'rgba(56, 189, 248, 0.12)'} 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
+                        <div class="myway-puck-beam" style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${visualRotation}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, ${isCarbonAmber ? 'rgba(0, 242, 254, 0.65)' : 'rgba(56, 189, 248, 0.45)'} 0%, ${isCarbonAmber ? 'rgba(6, 182, 212, 0.25)' : 'rgba(56, 189, 248, 0.12)'} 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none; transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1); will-change: transform;"></div>
                         
                         <!-- Radar Pulse Beacon (Electric Cyan) -->
                         <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isCarbonAmber ? '#00f2fe' : isLightSkin ? '#0284c7' : circleColor}; opacity: 0.4; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; box-shadow: ${isCarbonAmber ? '0 0 16px #00f2fe' : 'none'};"></div>
                         
                         <!-- 3D Navigation Vehicle Arrow Puck with Solid Black Casing -->
-                        <div class="myway-puck-arrow" style="position: relative; width: 46px; height: 46px; transform: rotate(${visualRotation}deg); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.8));">
+                        <div class="myway-puck-arrow" style="position: relative; width: 46px; height: 46px; transform: rotate(${visualRotation}deg); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.8)); transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1); will-change: transform;">
                             <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
                                 <!-- 2px Solid Pure Black Outer Casing Border -->
                                 <path d="M22 2 L40 40 L22 31 L4 40 Z" fill="#000000" />
