@@ -614,24 +614,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
 
         // ==========================================
-        // WAZE-STYLE HORIZONTAL ROAD LABELS ENGINE
+        // HIGH-CONTRAST HORIZONTAL ROAD LABELS ENGINE
         // ==========================================
         const isWarmLightSkin = effectiveSkin === 'warm_cream';
-
         const style = map.current.getStyle();
         const vectorSourceId = Object.keys(style?.sources || {}).find(id => {
             return style?.sources?.[id]?.type === 'vector';
         }) || 'carto';
 
-        const wazeMajorLabelsId = 'waze-road-labels-major';
-        const wazeMinorLabelsId = 'waze-road-labels-minor';
+        const majorLabelsId = 'myway-road-labels-major';
+        const minorLabelsId = 'myway-road-labels-minor';
         const defaultRoadLayers = ['roadname_minor', 'roadname_sec', 'roadname_pri', 'roadname_major'];
         
         // High-Contrast Palette: Crisp warm ivory (#fef9c3) on Dark with 2.8px Pure Black Halo (#000000, blur 0.5px)
-        const wazeTextColor = isWarmLightSkin ? '#111827' : isCarbonAmber ? '#fef9c3' : '#ffffff';
-        const wazeHaloColor = isWarmLightSkin ? '#ffffff' : '#000000';
-        const wazeHaloWidth = isWarmLightSkin ? 3.0 : isCarbonAmber ? 2.8 : 3.2;
-        const wazeHaloBlur = isCarbonAmber ? 0.5 : 0.3;
+        const roadTextColor = isWarmLightSkin ? '#111827' : isCarbonAmber ? '#fef9c3' : '#ffffff';
+        const roadHaloColor = isWarmLightSkin ? '#ffffff' : '#000000';
+        const roadHaloWidth = isWarmLightSkin ? 3.0 : isCarbonAmber ? 2.8 : 3.2;
+        const roadHaloBlur = isCarbonAmber ? 0.5 : 0.3;
 
         // Configure default CARTO road label layers with high-contrast Carbon Amber styling
         defaultRoadLayers.forEach(id => {
@@ -640,44 +639,44 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     map.current!.setLayoutProperty(id, 'visibility', 'visible');
                     map.current!.setLayoutProperty(id, 'text-field', ['get', 'name']);
                     map.current!.setLayoutProperty(id, 'text-font', ['Open Sans Regular', 'Arial Unicode MS Regular']);
-                    map.current!.setPaintProperty(id, 'text-color', wazeTextColor);
-                    map.current!.setPaintProperty(id, 'text-halo-color', wazeHaloColor);
-                    map.current!.setPaintProperty(id, 'text-halo-width', wazeHaloWidth);
-                    map.current!.setPaintProperty(id, 'text-halo-blur', wazeHaloBlur);
+                    map.current!.setPaintProperty(id, 'text-color', roadTextColor);
+                    map.current!.setPaintProperty(id, 'text-halo-color', roadHaloColor);
+                    map.current!.setPaintProperty(id, 'text-halo-width', roadHaloWidth);
+                    map.current!.setPaintProperty(id, 'text-halo-blur', roadHaloBlur);
                 } catch (e) {}
             }
         });
 
-        // Purge legacy monolithic layer if lingering
-        if (map.current.getLayer('waze-style-road-labels')) {
-            try {
-                map.current.removeLayer('waze-style-road-labels');
-            } catch (e) {}
-        }
+        // Purge legacy layers if lingering
+        ['waze-style-road-labels', 'waze-road-labels-major', 'waze-road-labels-minor'].forEach(legacyId => {
+            if (map.current!.getLayer(legacyId)) {
+                try { map.current!.removeLayer(legacyId); } catch (e) {}
+            }
+        });
 
         // ==========================================
         // 1. MAJOR ROAD LABELS (Motorways, Trunk, Primary, Secondary)
         // ==========================================
-        if (map.current.getLayer(wazeMajorLabelsId)) {
+        if (map.current.getLayer(majorLabelsId)) {
             try {
-                map.current.setPaintProperty(wazeMajorLabelsId, 'text-color', wazeTextColor);
-                map.current.setPaintProperty(wazeMajorLabelsId, 'text-halo-color', wazeHaloColor);
-                map.current.setPaintProperty(wazeMajorLabelsId, 'text-halo-width', wazeHaloWidth);
-                map.current.setPaintProperty(wazeMajorLabelsId, 'text-halo-blur', wazeHaloBlur);
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'symbol-spacing', 500);
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'text-padding', 20);
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'text-allow-overlap', false);
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'text-ignore-placement', false);
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'symbol-placement', 'line');
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'text-rotation-alignment', 'viewport');
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'text-pitch-alignment', 'viewport');
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'text-field', ['get', 'name']);
-                map.current.setLayoutProperty(wazeMajorLabelsId, 'text-font', ['Open Sans Regular', 'Arial Unicode MS Regular']);
+                map.current.setPaintProperty(majorLabelsId, 'text-color', roadTextColor);
+                map.current.setPaintProperty(majorLabelsId, 'text-halo-color', roadHaloColor);
+                map.current.setPaintProperty(majorLabelsId, 'text-halo-width', roadHaloWidth);
+                map.current.setPaintProperty(majorLabelsId, 'text-halo-blur', roadHaloBlur);
+                map.current.setLayoutProperty(majorLabelsId, 'symbol-spacing', 500);
+                map.current.setLayoutProperty(majorLabelsId, 'text-padding', 20);
+                map.current.setLayoutProperty(majorLabelsId, 'text-allow-overlap', false);
+                map.current.setLayoutProperty(majorLabelsId, 'text-ignore-placement', false);
+                map.current.setLayoutProperty(majorLabelsId, 'symbol-placement', 'line');
+                map.current.setLayoutProperty(majorLabelsId, 'text-rotation-alignment', 'viewport');
+                map.current.setLayoutProperty(majorLabelsId, 'text-pitch-alignment', 'viewport');
+                map.current.setLayoutProperty(majorLabelsId, 'text-field', ['get', 'name']);
+                map.current.setLayoutProperty(majorLabelsId, 'text-font', ['Open Sans Regular', 'Arial Unicode MS Regular']);
             } catch (e) {}
         } else {
             try {
                 map.current.addLayer({
-                    id: wazeMajorLabelsId,
+                    id: majorLabelsId,
                     type: 'symbol',
                     source: vectorSourceId,
                     'source-layer': 'transportation_name',
@@ -713,40 +712,40 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         'text-letter-spacing': 0.02
                     },
                     paint: {
-                        'text-color': wazeTextColor,
-                        'text-halo-color': wazeHaloColor,
-                        'text-halo-width': wazeHaloWidth,
-                        'text-halo-blur': wazeHaloBlur
+                        'text-color': roadTextColor,
+                        'text-halo-color': roadHaloColor,
+                        'text-halo-width': roadHaloWidth,
+                        'text-halo-blur': roadHaloBlur
                     }
                 });
             } catch (e) {
-                console.warn('[MapLibre] Failed to add waze-road-labels-major layer:', e);
+                console.warn('[MapLibre] Failed to add major road labels layer:', e);
             }
         }
 
         // ==========================================
         // 2. MINOR ROAD LABELS (Tertiary, Residential, Service, Minor, Unclassified)
         // ==========================================
-        if (map.current.getLayer(wazeMinorLabelsId)) {
+        if (map.current.getLayer(minorLabelsId)) {
             try {
-                map.current.setPaintProperty(wazeMinorLabelsId, 'text-color', wazeTextColor);
-                map.current.setPaintProperty(wazeMinorLabelsId, 'text-halo-color', wazeHaloColor);
-                map.current.setPaintProperty(wazeMinorLabelsId, 'text-halo-width', wazeHaloWidth);
-                map.current.setPaintProperty(wazeMinorLabelsId, 'text-halo-blur', wazeHaloBlur);
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'symbol-spacing', 450);
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'text-padding', 18);
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'text-allow-overlap', false);
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'text-ignore-placement', false);
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'symbol-placement', 'line');
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'text-rotation-alignment', 'viewport');
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'text-pitch-alignment', 'viewport');
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'text-field', ['get', 'name']);
-                map.current.setLayoutProperty(wazeMinorLabelsId, 'text-font', ['Open Sans Regular', 'Arial Unicode MS Regular']);
+                map.current.setPaintProperty(minorLabelsId, 'text-color', roadTextColor);
+                map.current.setPaintProperty(minorLabelsId, 'text-halo-color', roadHaloColor);
+                map.current.setPaintProperty(minorLabelsId, 'text-halo-width', roadHaloWidth);
+                map.current.setPaintProperty(minorLabelsId, 'text-halo-blur', roadHaloBlur);
+                map.current.setLayoutProperty(minorLabelsId, 'symbol-spacing', 450);
+                map.current.setLayoutProperty(minorLabelsId, 'text-padding', 18);
+                map.current.setLayoutProperty(minorLabelsId, 'text-allow-overlap', false);
+                map.current.setLayoutProperty(minorLabelsId, 'text-ignore-placement', false);
+                map.current.setLayoutProperty(minorLabelsId, 'symbol-placement', 'line');
+                map.current.setLayoutProperty(minorLabelsId, 'text-rotation-alignment', 'viewport');
+                map.current.setLayoutProperty(minorLabelsId, 'text-pitch-alignment', 'viewport');
+                map.current.setLayoutProperty(minorLabelsId, 'text-field', ['get', 'name']);
+                map.current.setLayoutProperty(minorLabelsId, 'text-font', ['Open Sans Regular', 'Arial Unicode MS Regular']);
             } catch (e) {}
         } else {
             try {
                 map.current.addLayer({
-                    id: wazeMinorLabelsId,
+                    id: minorLabelsId,
                     type: 'symbol',
                     source: vectorSourceId,
                     'source-layer': 'transportation_name',
@@ -779,19 +778,19 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         'text-letter-spacing': 0.02
                     },
                     paint: {
-                        'text-color': wazeTextColor,
-                        'text-halo-color': wazeHaloColor,
-                        'text-halo-width': wazeHaloWidth,
-                        'text-halo-blur': wazeHaloBlur
+                        'text-color': roadTextColor,
+                        'text-halo-color': roadHaloColor,
+                        'text-halo-width': roadHaloWidth,
+                        'text-halo-blur': roadHaloBlur
                     }
                 });
             } catch (e) {
-                console.warn('[MapLibre] Failed to add waze-road-labels-minor layer:', e);
+                console.warn('[MapLibre] Failed to add minor road labels layer:', e);
             }
         }
 
         layers.forEach((layer: any) => {
-            if (layer.type === 'symbol' && layer.id !== wazeMajorLabelsId && layer.id !== wazeMinorLabelsId && !defaultRoadLayers.includes(layer.id)) {
+            if (layer.type === 'symbol' && layer.id !== majorLabelsId && layer.id !== minorLabelsId && !defaultRoadLayers.includes(layer.id)) {
                 const id = layer.id.toLowerCase();
                 const isEmergency = id.includes('hospital') || id.includes('police') || id.includes('emergency') || id.includes('ambulance') || id.includes('fire');
                 const isGasOrStore = id.includes('gas') || id.includes('fuel') || id.includes('petrol') || id.includes('convenience') || id.includes('shop') || id.includes('store') || id.includes('commercial');

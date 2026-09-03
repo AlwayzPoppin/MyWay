@@ -567,7 +567,7 @@ export const useNavigation = (
                 stopCrashMonitoring();
                 setEtaSharing(false);
 
-                // Build arrival trip data for Waze-style post-drive arrival prompt & location correction
+                // Build arrival trip data for post-drive arrival prompt & location correction
                 const arrivalData: ArrivalTripData = {
                     destinationName: activeRoute.destinationName || 'Destination',
                     destinationLoc: activeRoute.destinationLoc || userLocation || { lat: 0, lng: 0 },

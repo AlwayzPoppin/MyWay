@@ -140,7 +140,7 @@ export const applySkinOverrides = (
     if (isCarbonAmber) {
         const roadLabelLayerIds = [
             'roadname_minor', 'roadname_sec', 'roadname_pri', 'roadname_major',
-            'waze-road-labels-major', 'waze-road-labels-minor',
+            'myway-road-labels-major', 'myway-road-labels-minor',
             'road-label', 'street-labels', 'road_label'
         ];
 

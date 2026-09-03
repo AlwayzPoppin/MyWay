@@ -553,7 +553,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
         </div>
       )}
 
-      {/* Final 150-Foot "Storefront Approach Card" (Waze-Style Visual Confirmation) */}
+      {/* Final 150-Foot "Storefront Approach Card" (Visual Confirmation) */}
       {isApproachingStorefront && (
         <div className="w-full pointer-events-auto flex justify-center mt-2 px-3 animate-in slide-in-from-top zoom-in-95 duration-300">
           <div className="bg-slate-950/95 backdrop-blur-2xl border-2 border-emerald-500/70 rounded-2xl p-3 shadow-[0_15px_45px_rgba(16,185,129,0.35)] flex flex-col gap-2.5 max-w-lg w-full">

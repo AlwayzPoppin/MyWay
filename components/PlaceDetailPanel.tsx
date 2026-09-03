@@ -666,7 +666,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     }, [place]);
 
     const distance = formatDistanceFromUser(userLocation, place.location);
-    const canCorrectPin = true; // Anyone can suggest edits or report issues for any place (Waze/Google Maps style)
+    const canCorrectPin = true; // Anyone can suggest edits or report issues for any place (Community-driven)
 
     // Deduplicate address if the place title is identical to the first line of the address
     const addressSubtitle = useMemo(() => {

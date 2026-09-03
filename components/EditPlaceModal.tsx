@@ -246,7 +246,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                         </div>
                     </div>
 
-                    {/* Waze-Style Adjust Pin Location on Map Button */}
+                    {/* Precision Adjust Pin Location on Map Button */}
                     {onCorrectLocation && (
                         <button
                             type="button"
@@ -261,7 +261,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                             <div className="flex items-center gap-2.5">
                                 <span className="text-lg">🎯</span>
                                 <div className="text-left">
-                                    <span className="text-xs font-black block">Adjust Pin Location (Waze Style)</span>
+                                    <span className="text-xs font-black block">Adjust Pin Location</span>
                                     <span className="text-[10px] opacity-80 block">Fix entrance, driveway, or parking coordinate</span>
                                 </div>
                             </div>

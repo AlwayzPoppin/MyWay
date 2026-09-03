@@ -415,7 +415,7 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                             <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-indigo-500/15 border border-amber-500/30 flex items-center gap-2.5">
                                 <span className="text-lg shrink-0">📍</span>
                                 <p className="text-[11px] font-bold text-amber-200/90 leading-snug">
-                                    <strong>Waze-Style Adjustment:</strong> Drag and pan the map so the crosshair pin aligns directly with the correct location.
+                                    <strong>Precision Adjustment:</strong> Drag and pan the map so the crosshair pin aligns directly with the correct location.
                                 </p>
                             </div>
 
@@ -423,7 +423,7 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                             <div className="relative w-full h-64 sm:h-72 rounded-3xl overflow-hidden border border-white/15 shadow-inner bg-slate-950">
                                 <div ref={mapContainerRef} className="absolute inset-0 w-full h-full rounded-3xl" />
 
-                                {/* Stationary Center Target Pin / Crosshair (Waze Style) */}
+                                {/* Stationary Center Target Pin / Crosshair */}
                                 <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                                     <div className="relative flex flex-col items-center -translate-y-5">
                                         {/* Animated Pulsing Radar Rings */}
@@ -657,7 +657,7 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                     </div>
                     <p className={`text-[10px] mt-1.5 px-1 font-semibold ${subTextColor}`}>
                         {visibility === 'public'
-                            ? '🚀 Waze-style crowdsource: Helps all drivers find the correct spot. Anonymously shared with community.'
+                            ? '🚀 Community Map Edit: Helps all drivers find the correct spot. Anonymously shared with community.'
                             : '🔒 Private: Only members in your Circle will see this correction.'}
                     </p>
                 </div>

@@ -1,4 +1,4 @@
-// Place Correction Service - Waze-Style Pin Relocation & Storefront Photo Crowdsourcing
+// Place Correction Service - High-Precision Pin Relocation & Storefront Photo Crowdsourcing
 import { Place, Location, EntranceType } from '../types';
 import { database, storage } from './firebase';
 import { ref, set, get, onValue, off } from 'firebase/database';
@@ -190,7 +190,7 @@ class PlaceCorrectionService {
     }
 
     /**
-     * Record a Waze-style user correction for an address or place pin
+     * Record a precision community user correction for an address or place pin
      */
     public async saveCorrection(params: {
         place: Place;

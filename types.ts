@@ -187,7 +187,7 @@ export interface Place {
   type: 'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result' | 'sponsored' | 'maintenance' | 'mechanic' | 'emergency' | 'hospital' | 'police' | 'fire_station' | 'pharmacy' | 'grocery';
   icon: string;
   brandColor?: string;
-  isAmbient?: boolean; // Ambient Waze-style always-visible POI on map (gas, fire, hospital, police, etc.)
+  isAmbient?: boolean; // Ambient community always-visible POI on map (gas, fire, hospital, police, etc.)
   deal?: string;
   description?: string; // Full address string (e.g., "123 Main St, City, State, USA")
   address?: string; // Optional alias for address string

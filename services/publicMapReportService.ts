@@ -1,6 +1,6 @@
 /**
  * Public Map Report Service
- * Waze-style global crowdsourcing system for map edits, entrance fixes, and road hazards.
+ * Real-time global crowdsourcing system for map edits, entrance fixes, and road hazards.
  * Uses root-level 'public_map_reports' collection with geohash spatial indexing and community trust scoring.
  */
 

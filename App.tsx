@@ -240,7 +240,7 @@ const App: React.FC = () => {
     return incidentService.subscribe(setIncidents);
   }, []);
 
-  // Ambient Waze-Style POIs (Always-visible Gas, Fire, Hospitals, Police, Supermarkets)
+  // Ambient Map POIs (Always-visible Gas, Fire, Hospitals, Police, Supermarkets)
   const [ambientPlaces, setAmbientPlaces] = useState<Place[]>(() => ambientPoiService.getPois());
 
   useEffect(() => {
@@ -1613,7 +1613,7 @@ const App: React.FC = () => {
             theme={theme}
           />
 
-          {/* Waze-Style Address & Pin Location Correction Modal */}
+          {/* Precision Address & Pin Location Correction Modal */}
           <CorrectLocationModal
             place={correctingPlace}
             isOpen={!!correctingPlace}
@@ -1648,11 +1648,11 @@ const App: React.FC = () => {
                   ? correctedPlace
                   : p
               ));
-              showNotification(`✅ Pin location & entrance photo saved (Waze-style)!`, 4000);
+              showNotification(`✅ Pin location & entrance photo saved!`, 4000);
             }}
           />
 
-          {/* Waze-Style Post-Drive Arrival & Rating Prompt Modal */}
+          {/* Post-Drive Arrival & Rating Prompt Modal */}
           <ArrivalPromptModal
             arrivalData={arrivalTripData}
             isOpen={!!arrivalTripData}

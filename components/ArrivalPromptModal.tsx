@@ -168,7 +168,7 @@ const ArrivalPromptModal: React.FC<ArrivalPromptModalProps> = ({
                         </div>
                     </div>
 
-                    {/* Waze-Style Location & Storefront Photo Section */}
+                    {/* Precision Location & Storefront Photo Section */}
                     <div className={`p-4 rounded-3xl border transition-all ${
                         hasPinIssue
                             ? 'bg-amber-500/15 border-amber-500/40 ring-1 ring-amber-500/30'
@@ -193,7 +193,7 @@ const ArrivalPromptModal: React.FC<ArrivalPromptModalProps> = ({
                             onClick={handleAdjustPin}
                             className="w-full mt-3 py-3 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs shadow-lg shadow-indigo-600/30 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                         >
-                            <span>📍 Adjust Pin & Take Photo (Waze Style)</span>
+                            <span>📍 Adjust Pin & Take Photo</span>
                             <span>📸</span>
                         </button>
                     </div>

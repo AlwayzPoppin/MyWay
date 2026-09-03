@@ -1,6 +1,6 @@
 {
   "name": "MyWay",
-  "description": "AI-powered family GPS with Waze-style navigation and Life360 family safety, featuring Gemini Live for hands-free co-piloting.",
+  "description": "AI-powered family GPS with real-time community navigation and precision family safety, featuring Gemini Live for hands-free co-piloting.",
   "requestFramePermissions": [
     "geolocation",
     "microphone"

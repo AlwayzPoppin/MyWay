@@ -267,7 +267,7 @@ const searchViaProxy = async (
         console.log(`  📍 #${i + 1}: "${r.name}" (${r.description}) at (${r.location.lat.toFixed(4)}, ${r.location.lng.toFixed(4)}) — ${distMi} mi away`);
     });
 
-    // Apply user & community Waze-style location corrections and photos
+    // Apply user & community precision location corrections and photos
     results = placeCorrectionService.applyCorrectionsToPlaces(results);
 
     return results;
