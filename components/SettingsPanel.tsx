@@ -77,8 +77,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
     // Accordion State
     const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-        alerts: true, // open by default
-        map_visuals: true, // 3D buildings & map customization
+        privacy: true, // open by default
+        alerts: false,
+        navigation_routing: false,
+        map_visuals: false, // collapsed by default to reduce scroll fatigue
         system: false,
         account: false
     });
@@ -95,7 +97,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     const toggleAllSections = () => {
         const targetValue = !hasAnyExpanded;
         setExpandedSections({
+            privacy: targetValue,
             alerts: targetValue,
+            navigation_routing: targetValue,
             map_visuals: targetValue,
             system: targetValue,
             account: targetValue
@@ -343,12 +347,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </div>
 
 
-                {/* 4. Alerts & Privacy */}
+                {/* 1. Privacy & Visibility */}
                 <AccordionSection
-                    id="alerts"
-                    title="Alerts & Privacy"
-                    emoji="🔔"
-                    subtitle={`${localSettings.privacyMode === 'blurred' ? 'Neighborhood Blurred' : localSettings.privacyMode === 'status_only' ? 'Status Only' : localSettings.privacyMode === 'frozen' ? 'Location Frozen' : 'Exact GPS'} • ${localSettings.notifications ? 'Alerts On' : 'Alerts Off'}`}
+                    id="privacy"
+                    title="Privacy & Visibility"
+                    emoji="🛡️"
+                    subtitle={`${localSettings.privacyMode === 'blurred' ? 'Neighborhood Blurred' : localSettings.privacyMode === 'status_only' ? 'Status Only' : localSettings.privacyMode === 'frozen' ? 'Location Frozen' : 'Exact GPS'} • ${localSettings.locationSharing ? 'Sharing On' : 'Sharing Off'}`}
                 >
                     {/* Granular Ghost & Privacy Blur Selector */}
                     <div className="mb-4 pb-3 border-b border-white/10">
@@ -402,6 +406,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <SettingRow label="Location Sharing" description="Share your location with family">
                         <ToggleSwitch enabled={localSettings.locationSharing} onChange={(v) => updateSetting('locationSharing', v)} />
                     </SettingRow>
+                </AccordionSection>
+
+                {/* 2. Notifications & Alerts */}
+                <AccordionSection
+                    id="alerts"
+                    title="Notifications & Alerts"
+                    emoji="🔔"
+                    subtitle={`${localSettings.notifications ? 'Push On' : 'Push Off'} • ${localSettings.batteryAlerts ? 'Battery On' : 'Battery Off'} • ${localSettings.speedAlerts ? 'Speed On' : 'Speed Off'}`}
+                >
                     <SettingRow label="Push Notifications" description="Receive alerts on your device">
                         <ToggleSwitch enabled={localSettings.notifications} onChange={(v) => updateSetting('notifications', v)} />
                     </SettingRow>
@@ -658,51 +671,89 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 🔑 My Security Locker
                             </button>
                         )}
+                    </div>
+                </AccordionSection>
+
+                {/* ⚠️ Dedicated Danger Zone */}
+                <div className={`mt-8 p-4 rounded-2xl border ${
+                    theme === 'dark'
+                        ? 'bg-red-950/20 border-red-500/20'
+                        : 'bg-red-50/70 border-red-200'
+                }`}>
+                    <div className="flex items-center gap-2 mb-3">
+                        <span className="text-sm">⚠️</span>
+                        <h4 className={`text-xs font-black uppercase tracking-wider ${
+                            theme === 'dark' ? 'text-red-400' : 'text-red-600'
+                        }`}>
+                            Danger Zone
+                        </h4>
+                    </div>
+
+                    <div className="space-y-2.5">
                         {onManageCircle && (
                             <button
+                                type="button"
                                 onClick={() => {
                                     if (confirm('Are you sure you want to leave this circle? Your location data will be removed from the group.')) {
                                         onManageCircle();
                                     }
                                 }}
-                                className="w-full py-3 rounded-xl font-medium bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors"
+                                className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-between border ${
+                                    theme === 'dark'
+                                        ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/20 text-amber-300'
+                                        : 'bg-white hover:bg-amber-50 border-amber-200 text-amber-700 shadow-sm'
+                                }`}
                             >
-                                🚪 Leave MyFamily
+                                <span className="flex items-center gap-2">
+                                    <span>🚪</span>
+                                    <span>Leave MyFamily Circle</span>
+                                </span>
+                                <span className="text-[10px] uppercase tracking-wider font-extrabold opacity-75">Leave</span>
                             </button>
                         )}
-                    </div>
-                </AccordionSection>
 
-                {/* Primary Escape hatches remain persistent at the bottom of scroll list */}
-                <div className="pt-6 border-t border-white/5 space-y-3">
-                    <button
-                        onClick={onSignOut}
-                        className="w-full py-3 rounded-xl font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
-                    >
-                        Sign Out
-                    </button>
-                    <button
-                        onClick={async () => {
-                            const firstConfirm = confirm('⚠️ Delete your account? This will permanently remove all your data, leave any circles, and cannot be undone.');
-                            if (!firstConfirm) return;
-                            const typed = prompt('Type DELETE to confirm account deletion:');
-                            if (typed !== 'DELETE') return;
-                            try {
-                                const { deleteAccount } = await import('../services/authService');
-                                // @ts-ignore — circleId may be available from parent
-                                await deleteAccount(userName, undefined);
-                                alert('Account deleted successfully.');
-                                onSignOut?.();
-                            } catch (err: any) {
-                                alert(`Failed: ${err.message}`);
-                            }
-                        }}
-                        className={`w-full py-2 rounded-xl text-xs transition-colors ${
-                            theme === 'dark' ? 'text-slate-600 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-500 hover:bg-red-50'
-                        }`}
-                    >
-                        🗑️ Delete Account
-                    </button>
+                        <button
+                            type="button"
+                            onClick={onSignOut}
+                            className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-between border ${
+                                theme === 'dark'
+                                    ? 'bg-red-500/10 hover:bg-red-500/20 border-red-500/30 text-red-300'
+                                    : 'bg-white hover:bg-red-50 border-red-200 text-red-600 shadow-sm'
+                            }`}
+                        >
+                            <span className="flex items-center gap-2">
+                                <span>🔒</span>
+                                <span>Sign Out</span>
+                            </span>
+                            <span className="text-[10px] uppercase tracking-wider font-extrabold opacity-75">End Session</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                const firstConfirm = confirm('⚠️ Delete your account? This will permanently remove all your data, leave any circles, and cannot be undone.');
+                                if (!firstConfirm) return;
+                                const typed = prompt('Type DELETE to confirm account deletion:');
+                                if (typed !== 'DELETE') return;
+                                try {
+                                    const { deleteAccount } = await import('../services/authService');
+                                    // @ts-ignore — circleId may be available from parent
+                                    await deleteAccount(userName, undefined);
+                                    alert('Account deleted successfully.');
+                                    onSignOut?.();
+                                } catch (err: any) {
+                                    alert(`Failed: ${err.message}`);
+                                }
+                            }}
+                            className={`w-full py-2 px-3 rounded-xl text-[11px] font-bold text-center transition-all ${
+                                theme === 'dark'
+                                    ? 'text-red-400/80 hover:text-red-300 hover:bg-red-500/10'
+                                    : 'text-red-600/80 hover:text-red-700 hover:bg-red-100/50'
+                            }`}
+                        >
+                            🗑️ Permanently Delete Account
+                        </button>
+                    </div>
                 </div>
 
                 {/* Upgrade Banner */}
