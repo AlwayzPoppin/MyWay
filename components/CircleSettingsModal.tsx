@@ -55,8 +55,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 }) => {
     const [activeTab, setActiveTab] = useState<'circles' | 'invite' | 'manage'>(initialTab);
     const [isCreatingCircle, setIsCreatingCircle] = useState(false);
+    const defaultColor = currentCircle?.color || (currentCircle ? getCircleColor(currentCircle.id).hex : CIRCLE_COLORS[0].hex);
     const [newCircleName, setNewCircleName] = useState('');
-    const [newCircleColor, setNewCircleColor] = useState<string>(CIRCLE_COLORS[0].hex);
+    const [newCircleColor, setNewCircleColor] = useState<string>(defaultColor);
+    const [activeThemeColor, setActiveThemeColor] = useState<string>(defaultColor);
     const [isJoiningCircle, setIsJoiningCircle] = useState(false);
     const [joinInviteCode, setJoinInviteCode] = useState('');
     const [manualInviteCode, setManualInviteCode] = useState('');
@@ -81,10 +83,23 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             }
             setEditingCircleName(currentCircle?.name || '');
             setIsRenaming(false);
-            const defaultColor = currentCircle?.color || (currentCircle ? getCircleColor(currentCircle.id).hex : CIRCLE_COLORS[0].hex);
-            setNewCircleColor(defaultColor);
+            const currentColor = currentCircle?.color || (currentCircle ? getCircleColor(currentCircle.id).hex : CIRCLE_COLORS[0].hex);
+            setNewCircleColor(currentColor);
+            setActiveThemeColor(currentColor);
         }
     }, [isOpen, initialTab, currentCircle]);
+
+    const selectedColorInfo = useMemo(() => {
+        return getCircleColor(currentCircle?.id, activeThemeColor);
+    }, [currentCircle?.id, activeThemeColor]);
+
+    const handleSelectColorTheme = (hex: string) => {
+        hapticTick();
+        setActiveThemeColor(hex);
+        if (currentCircle && onUpdateCircleColor) {
+            onUpdateCircleColor(currentCircle.id, hex);
+        }
+    };
 
     useEffect(() => {
         return () => {
@@ -296,14 +311,26 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             <div className={`relative w-full max-w-md rounded-[2.5rem] border shadow-2xl overflow-hidden flex flex-col max-h-[85vh] transition-all ${
                 isDark ? 'bg-slate-900/98 border-white/10 text-white' : 'bg-white/98 border-slate-200 text-slate-900'
             }`}>
-                {/* Header Ambient Glow */}
-                <div className="absolute -top-24 -left-24 w-48 h-48 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
-                <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-600/20 rounded-full blur-3xl pointer-events-none" />
+                {/* Header Ambient Glow with live theme preview */}
+                <div
+                    className="absolute -top-24 -left-24 w-48 h-48 rounded-full blur-3xl pointer-events-none transition-colors duration-500"
+                    style={{ backgroundColor: `${activeThemeColor}25` }}
+                />
+                <div
+                    className="absolute -bottom-24 -right-24 w-48 h-48 rounded-full blur-3xl pointer-events-none transition-colors duration-500"
+                    style={{ backgroundColor: `${activeThemeColor}20` }}
+                />
 
                 {/* Top Header */}
                 <div className="p-5 pb-3 border-b border-white/10 relative z-10 flex items-center justify-between">
                     <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-xl shadow-inner shrink-0">
+                        <div
+                            className="w-10 h-10 rounded-2xl border flex items-center justify-center text-xl shadow-inner shrink-0 transition-colors duration-200"
+                            style={{
+                                backgroundColor: `${activeThemeColor}20`,
+                                borderColor: `${activeThemeColor}40`
+                            }}
+                        >
                             👥
                         </div>
                         <div className="min-w-0">
@@ -325,7 +352,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                     </button>
                 </div>
 
-                {/* Tabs Navigation */}
+                {/* Tabs Navigation with Live Theme Preview */}
                 <div className="px-5 pt-3 relative z-10">
                     <div className={`p-1 rounded-2xl border flex gap-1 ${
                         isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'
@@ -335,9 +362,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                             onClick={() => setActiveTab('circles')}
                             className={`flex-1 py-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                                 activeTab === 'circles'
-                                    ? 'bg-indigo-600 text-white shadow-md'
+                                    ? 'text-white shadow-md'
                                     : 'text-slate-400 hover:text-white'
                             }`}
+                            style={activeTab === 'circles' ? { backgroundColor: activeThemeColor, boxShadow: `0 2px 10px ${activeThemeColor}40` } : undefined}
                         >
                             <span>🗂️</span>
                             <span>Circles ({userCircles.length})</span>
@@ -348,9 +376,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                             onClick={() => setActiveTab('invite')}
                             className={`flex-1 py-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                                 activeTab === 'invite'
-                                    ? 'bg-indigo-600 text-white shadow-md'
+                                    ? 'text-white shadow-md'
                                     : 'text-slate-400 hover:text-white'
                             }`}
+                            style={activeTab === 'invite' ? { backgroundColor: activeThemeColor, boxShadow: `0 2px 10px ${activeThemeColor}40` } : undefined}
                         >
                             <span>✉️</span>
                             <span>Invite</span>
@@ -361,9 +390,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                             onClick={() => setActiveTab('manage')}
                             className={`flex-1 py-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                                 activeTab === 'manage'
-                                    ? 'bg-indigo-600 text-white shadow-md'
+                                    ? 'text-white shadow-md'
                                     : 'text-slate-400 hover:text-white'
                             }`}
+                            style={activeTab === 'manage' ? { backgroundColor: activeThemeColor, boxShadow: `0 2px 10px ${activeThemeColor}40` } : undefined}
                         >
                             <span>⚙️</span>
                             <span>Manage</span>
@@ -556,7 +586,11 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                         <button
                                             type="button"
                                             onClick={() => setIsCreatingCircle(true)}
-                                            className="py-3 px-3 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                            className="py-3 px-3 active:scale-95 text-white font-black text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                            style={{
+                                                backgroundColor: activeThemeColor,
+                                                boxShadow: `0 4px 14px ${activeThemeColor}40`
+                                            }}
                                         >
                                             <span>+</span>
                                             <span>Create Circle</span>
@@ -579,7 +613,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 {isCreatingCircle && (
                                     <form onSubmit={handleCreateCircle} className={`p-4 rounded-2xl border space-y-3 animate-in fade-in duration-150 ${cardBg}`}>
                                         <div className="flex items-center justify-between">
-                                            <span className="text-xs font-black text-indigo-400 uppercase tracking-wider">
+                                            <span className="text-xs font-black uppercase tracking-wider" style={{ color: newCircleColor }}>
                                                 Create New Circle
                                             </span>
                                             <button
@@ -597,33 +631,56 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             value={newCircleName}
                                             onChange={(e) => setNewCircleName(e.target.value)}
                                             autoFocus
-                                            className={`w-full px-3.5 py-2.5 rounded-xl border text-xs font-bold outline-none focus:border-indigo-500 transition-colors ${
+                                            className={`w-full px-3.5 py-2.5 rounded-xl border text-xs font-bold outline-none transition-colors ${
                                                 isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
                                             }`}
                                         />
 
-                                        {/* Color Selection */}
+                                        {/* Color Selection - Circular Swatches */}
                                         <div className="space-y-1.5">
-                                            <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                                                Circle Theme Color
-                                            </label>
-                                            <div className="grid grid-cols-4 gap-2">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                                                    Circle Theme Color
+                                                </label>
+                                                <span
+                                                    style={{
+                                                        backgroundColor: `${newCircleColor}20`,
+                                                        color: newCircleColor,
+                                                        borderColor: `${newCircleColor}50`
+                                                    }}
+                                                    className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border transition-all duration-200 tracking-wider"
+                                                >
+                                                    {getCircleColor(undefined, newCircleColor).name}
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
                                                 {CIRCLE_COLORS.map(c => {
                                                     const isSelected = newCircleColor.toLowerCase() === c.hex.toLowerCase();
                                                     return (
                                                         <button
                                                             key={c.id}
                                                             type="button"
-                                                            onClick={() => setNewCircleColor(c.hex)}
-                                                            className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                                                            onClick={() => {
+                                                                hapticTick();
+                                                                setNewCircleColor(c.hex);
+                                                            }}
+                                                            aria-label={c.name}
+                                                            title={c.name}
+                                                            className={`w-9 h-9 rounded-full transition-all duration-200 flex items-center justify-center cursor-pointer relative shrink-0 ${
                                                                 isSelected
-                                                                    ? 'ring-2 ring-white border-transparent scale-105 shadow-md'
-                                                                    : 'border-white/10 hover:border-white/20 opacity-80 hover:opacity-100'
-                                                            }`}
-                                                            style={{ backgroundColor: c.bg }}
+                                                                    ? 'ring-2 ring-white ring-offset-2 scale-110 shadow-lg'
+                                                                    : 'opacity-80 hover:opacity-100 hover:scale-105 active:scale-95'
+                                                            } ${isDark ? 'ring-offset-slate-900' : 'ring-offset-white'}`}
+                                                            style={{
+                                                                backgroundColor: c.hex,
+                                                                boxShadow: isSelected ? `0 0 14px ${c.hex}90` : undefined
+                                                            }}
                                                         >
-                                                            <div className="w-4 h-4 rounded-full border border-white/40 shadow-sm" style={{ backgroundColor: c.hex }} />
-                                                            <span className="text-[9px] font-bold text-white truncate max-w-full">{c.name.split(' ')[0]}</span>
+                                                            {isSelected && (
+                                                                <span className="text-white text-xs font-black drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                                                                    ✓
+                                                                </span>
+                                                            )}
                                                         </button>
                                                     );
                                                 })}
@@ -633,7 +690,11 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                         <button
                                             type="submit"
                                             disabled={!newCircleName.trim() || isSubmitting}
-                                            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                                            className="w-full py-2.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                                            style={{
+                                                backgroundColor: newCircleColor,
+                                                boxShadow: `0 4px 14px ${newCircleColor}40`
+                                            }}
                                         >
                                             {isSubmitting ? 'Creating...' : 'Create & Switch to Circle'}
                                         </button>
@@ -698,8 +759,12 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             className={`w-full py-2.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 ${
                                                 cleanInviteCode(joinInviteCode).length === 8
                                                     ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25 ring-2 ring-emerald-400/40 animate-pulse'
-                                                    : 'bg-purple-600 hover:bg-purple-500 disabled:opacity-50'
+                                                    : 'disabled:opacity-50'
                                             }`}
+                                            style={{
+                                                backgroundColor: cleanInviteCode(joinInviteCode).length === 8 ? undefined : activeThemeColor,
+                                                boxShadow: cleanInviteCode(joinInviteCode).length === 8 ? undefined : `0 4px 14px ${activeThemeColor}40`
+                                            }}
                                         >
                                             {isSubmitting ? (
                                                 <>
@@ -741,8 +806,13 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 <div
                                     onClick={handleCopyCode}
                                     className={`py-3 px-6 rounded-2xl border font-mono font-black text-2xl tracking-[0.15em] cursor-pointer transition-all hover:scale-105 active:scale-95 inline-flex items-center gap-2 ${
-                                        isDark ? 'bg-white/5 border-white/10 text-indigo-400' : 'bg-slate-50 border-slate-200 text-indigo-600'
+                                        isDark ? 'bg-white/5' : 'bg-slate-50'
                                     }`}
+                                    style={{
+                                        color: activeThemeColor,
+                                        borderColor: `${activeThemeColor}40`,
+                                        boxShadow: `0 0 16px ${activeThemeColor}20`
+                                    }}
                                     title="Click to copy code"
                                 >
                                     <span>{formatSegmentedInviteCode(inviteCode)}</span>
@@ -756,7 +826,11 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 <button
                                     type="button"
                                     onClick={handleShareInvite}
-                                    className="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:scale-95 text-white font-black text-xs rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                                    className="w-full py-3 px-4 active:scale-95 text-white font-black text-xs rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                                    style={{
+                                        backgroundColor: activeThemeColor,
+                                        boxShadow: `0 6px 20px ${activeThemeColor}40`
+                                    }}
                                 >
                                     <span>✉️</span>
                                     <span>Share Invite Link / SMS</span>
@@ -800,7 +874,8 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             <button
                                                 type="button"
                                                 onClick={handleSaveRename}
-                                                className="px-3 py-1.5 bg-indigo-600 text-white font-bold text-xs rounded-xl active:scale-95 shadow"
+                                                className="px-3 py-1.5 text-white font-bold text-xs rounded-xl active:scale-95 shadow cursor-pointer"
+                                                style={{ backgroundColor: activeThemeColor }}
                                             >
                                                 Save
                                             </button>
@@ -823,7 +898,8 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                     setEditingCircleName(currentCircle.name);
                                                     setIsRenaming(true);
                                                 }}
-                                                className="text-xs font-bold text-indigo-400 hover:underline"
+                                                className="text-xs font-bold hover:underline cursor-pointer"
+                                                style={{ color: activeThemeColor }}
                                             >
                                                 ✏️ Rename
                                             </button>
@@ -834,35 +910,52 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
                             {/* Circle Color Theme Picker (For Owner/Admin) */}
                             {currentCircle && (
-                                <div className={`p-3.5 rounded-2xl border space-y-2.5 ${cardBg}`}>
+                                <div
+                                    className={`p-3.5 rounded-2xl border space-y-2.5 transition-all duration-200 ${cardBg}`}
+                                    style={{ borderColor: `${activeThemeColor}40` }}
+                                >
                                     <div className="flex items-center justify-between">
                                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
                                             Circle Base Color Theme
                                         </span>
                                         <span
-                                            style={{ backgroundColor: `${currentCircle.color || getCircleColor(currentCircle.id).hex}33`, color: currentCircle.color || getCircleColor(currentCircle.id).hex }}
-                                            className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md border border-current"
+                                            style={{
+                                                backgroundColor: `${activeThemeColor}20`,
+                                                color: activeThemeColor,
+                                                borderColor: `${activeThemeColor}50`
+                                            }}
+                                            className="text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full border transition-all duration-200 tracking-wider shadow-sm"
                                         >
-                                            {getCircleColor(currentCircle.id, currentCircle.color).name}
+                                            {selectedColorInfo.name}
                                         </span>
                                     </div>
-                                    <div className="grid grid-cols-4 gap-2">
+
+                                    {/* Compact row of circular color swatches */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                                         {CIRCLE_COLORS.map(c => {
-                                            const isSelected = (currentCircle.color || getCircleColor(currentCircle.id).hex).toLowerCase() === c.hex.toLowerCase();
+                                            const isSelected = activeThemeColor.toLowerCase() === c.hex.toLowerCase();
                                             return (
                                                 <button
                                                     key={c.id}
                                                     type="button"
-                                                    onClick={() => onUpdateCircleColor?.(currentCircle.id, c.hex)}
-                                                    className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                                                    onClick={() => handleSelectColorTheme(c.hex)}
+                                                    aria-label={c.name}
+                                                    title={c.name}
+                                                    className={`w-10 h-10 rounded-full transition-all duration-200 flex items-center justify-center cursor-pointer relative shrink-0 ${
                                                         isSelected
-                                                            ? 'ring-2 ring-white border-transparent scale-105 shadow-md'
-                                                            : 'border-white/10 hover:border-white/20 opacity-80 hover:opacity-100'
-                                                    }`}
-                                                    style={{ backgroundColor: c.bg }}
+                                                            ? 'ring-2 ring-white ring-offset-2 scale-110 shadow-lg'
+                                                            : 'opacity-80 hover:opacity-100 hover:scale-105 active:scale-95'
+                                                    } ${isDark ? 'ring-offset-slate-900' : 'ring-offset-white'}`}
+                                                    style={{
+                                                        backgroundColor: c.hex,
+                                                        boxShadow: isSelected ? `0 0 16px ${c.hex}90` : undefined
+                                                    }}
                                                 >
-                                                    <div className="w-4 h-4 rounded-full border border-white/40 shadow-sm" style={{ backgroundColor: c.hex }} />
-                                                    <span className="text-[9px] font-bold text-white truncate max-w-full">{c.name.split(' ')[0]}</span>
+                                                    {isSelected && (
+                                                        <span className="text-white text-xs font-black drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                                                            ✓
+                                                        </span>
+                                                    )}
                                                 </button>
                                             );
                                         })}
@@ -956,7 +1049,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                             </div>
 
                             {/* Join a Circle Section */}
-                            <div className={`p-3.5 rounded-2xl border space-y-3 ${cardBg}`}>
+                            <div
+                                className={`p-3.5 rounded-2xl border space-y-3 transition-colors duration-200 ${cardBg}`}
+                                style={{ borderColor: `${activeThemeColor}30` }}
+                            >
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
                                         <span className="text-base">🔗</span>
@@ -1010,8 +1106,12 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                         className={`px-5 py-2.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0 flex items-center justify-center gap-1.5 ${
                                             cleanInviteCode(manualInviteCode).length === 8
                                                 ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25 ring-2 ring-emerald-400/40 animate-pulse'
-                                                : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50'
+                                                : 'disabled:opacity-50'
                                         }`}
+                                        style={{
+                                            backgroundColor: cleanInviteCode(manualInviteCode).length === 8 ? undefined : activeThemeColor,
+                                            boxShadow: cleanInviteCode(manualInviteCode).length === 8 ? undefined : `0 4px 14px ${activeThemeColor}40`
+                                        }}
                                     >
                                         {isSubmitting ? 'Joining...' : cleanInviteCode(manualInviteCode).length === 8 ? '⚡ Join' : 'Join'}
                                     </button>
