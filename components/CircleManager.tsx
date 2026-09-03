@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { formatSegmentedInviteCode, cleanInviteCode } from '../utils/inviteCode';
 
 interface CircleManagerProps {
@@ -13,6 +13,13 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
     const [code, setCode] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const autoSubmitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
+        };
+    }, []);
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -28,22 +35,48 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
         }
     };
 
-    const handleJoin = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const cleaned = cleanInviteCode(code);
-        if (!cleaned || cleaned.length !== 8) {
-            setError(`Invite code must be exactly 8 characters (entered ${cleaned.length}/8).`);
+    const executeJoin = async (cleanedCode: string) => {
+        if (!cleanedCode || cleanedCode.length !== 8) {
+            setError(`Invite code must be exactly 8 characters (entered ${cleanedCode.length}/8).`);
             return;
         }
         setLoading(true);
         setError(null);
+        if (autoSubmitTimerRef.current) {
+            clearTimeout(autoSubmitTimerRef.current);
+            autoSubmitTimerRef.current = null;
+        }
         try {
-            const circle = await onJoinCircle(cleaned);
+            const circle = await onJoinCircle(cleanedCode);
             if (!circle) setError('Invalid invite code. Circle not found.');
         } catch (err: any) {
             setError(err.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleJoin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const cleaned = cleanInviteCode(code);
+        executeJoin(cleaned);
+    };
+
+    const handleCodeChange = (val: string) => {
+        const formatted = formatSegmentedInviteCode(val);
+        const cleaned = cleanInviteCode(formatted);
+        setCode(formatted);
+        if (error) setError(null);
+
+        if (autoSubmitTimerRef.current) {
+            clearTimeout(autoSubmitTimerRef.current);
+            autoSubmitTimerRef.current = null;
+        }
+
+        if (cleaned.length === 8 && !loading) {
+            autoSubmitTimerRef.current = setTimeout(() => {
+                executeJoin(cleaned);
+            }, 450);
         }
     };
 
@@ -127,25 +160,45 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
                         <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Enter the 8-character invite code</p>
                     </div>
 
-                    <input
-                        type="text"
-                        value={code}
-                        onChange={(e) => setCode(formatSegmentedInviteCode(e.target.value))}
-                        placeholder="ABCD - 1234"
-                        maxLength={11}
-                        className={`w-full p-4 rounded-2xl font-bold font-mono bg-transparent border outline-none transition-all text-center tracking-[0.25em]
-                            ${isDark ? 'border-white/10 text-white focus:border-indigo-500' : 'border-slate-200 text-slate-900 focus:border-indigo-500'}`}
-                        autoFocus
-                    />
+                    <div className="relative">
+                        <input
+                            type="text"
+                            value={code}
+                            onChange={(e) => handleCodeChange(e.target.value)}
+                            placeholder="ABCD - 1234"
+                            maxLength={11}
+                            className={`w-full p-4 rounded-2xl font-bold font-mono bg-transparent border outline-none transition-all duration-300 text-center tracking-[0.25em]
+                                ${cleanInviteCode(code).length === 8
+                                    ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/20 animate-pulse'
+                                    : isDark ? 'border-white/10 text-white focus:border-indigo-500' : 'border-slate-200 text-slate-900 focus:border-indigo-500'
+                                }`}
+                            autoFocus
+                        />
+                        <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono font-black px-2 py-0.5 rounded-lg transition-all duration-300 ${
+                            cleanInviteCode(code).length === 8
+                                ? 'bg-emerald-500 text-white shadow-sm scale-105'
+                                : isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                            {loading && cleanInviteCode(code).length === 8
+                                ? 'Joining...'
+                                : cleanInviteCode(code).length === 8
+                                    ? '8/8 ✓'
+                                    : `${cleanInviteCode(code).length}/8`}
+                        </span>
+                    </div>
 
                     {error && <p className="text-xs text-red-500 font-bold">{error}</p>}
 
                     <button
                         type="submit"
                         disabled={loading}
-                        className="w-full p-4 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-black text-sm transition-all disabled:opacity-50"
+                        className={`w-full p-4 rounded-2xl font-black text-sm transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 ${
+                            cleanInviteCode(code).length === 8
+                                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/25 ring-2 ring-emerald-400/40 animate-pulse'
+                                : 'bg-purple-600 hover:bg-purple-500 text-white'
+                        }`}
                     >
-                        {loading ? 'Joining...' : 'Join Circle'}
+                        {loading ? 'Joining Circle...' : cleanInviteCode(code).length === 8 ? '⚡ Join Circle Now' : 'Join Circle'}
                     </button>
                 </form>
             )}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { FamilyMember } from '../types';
 import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo } from '../services/authService';
@@ -64,6 +64,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     const [isRenaming, setIsRenaming] = useState(false);
     const [editingMemberRole, setEditingMemberRole] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const autoSubmitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -73,12 +74,24 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             setJoinInviteCode('');
             setManualInviteCode('');
             setJoinError(null);
+            if (autoSubmitTimerRef.current) {
+                clearTimeout(autoSubmitTimerRef.current);
+                autoSubmitTimerRef.current = null;
+            }
             setEditingCircleName(currentCircle?.name || '');
             setIsRenaming(false);
             const defaultColor = currentCircle?.color || (currentCircle ? getCircleColor(currentCircle.id).hex : CIRCLE_COLORS[0].hex);
             setNewCircleColor(defaultColor);
         }
     }, [isOpen, initialTab, currentCircle]);
+
+    useEffect(() => {
+        return () => {
+            if (autoSubmitTimerRef.current) {
+                clearTimeout(autoSubmitTimerRef.current);
+            }
+        };
+    }, []);
 
     if (!isOpen) return null;
 
@@ -135,6 +148,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
         setIsSubmitting(true);
         setJoinError(null);
+        if (autoSubmitTimerRef.current) {
+            clearTimeout(autoSubmitTimerRef.current);
+            autoSubmitTimerRef.current = null;
+        }
         try {
             const circle = await onJoinCircle(cleanCode);
             if (circle) {
@@ -154,6 +171,31 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             showNotification?.(`⚠️ ${errMsg}`, 4000);
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    const handleCodeChange = (val: string, target: 'tab1' | 'tab3') => {
+        const formatted = formatSegmentedInviteCode(val);
+        const cleaned = cleanInviteCode(formatted);
+
+        if (target === 'tab1') {
+            setJoinInviteCode(formatted);
+        } else {
+            setManualInviteCode(formatted);
+        }
+
+        if (joinError) setJoinError(null);
+
+        if (autoSubmitTimerRef.current) {
+            clearTimeout(autoSubmitTimerRef.current);
+            autoSubmitTimerRef.current = null;
+        }
+
+        // Auto-submit when exactly 8 valid characters are typed or pasted
+        if (cleaned.length === 8 && !isSubmitting) {
+            autoSubmitTimerRef.current = setTimeout(() => {
+                handleJoinCircle(cleaned);
+            }, 450);
         }
     };
 
@@ -609,21 +651,26 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                 placeholder="XXXX - XXXX"
                                                 maxLength={11}
                                                 value={joinInviteCode}
-                                                onChange={(e) => {
-                                                    setJoinInviteCode(formatSegmentedInviteCode(e.target.value));
-                                                    if (joinError) setJoinError(null);
-                                                }}
+                                                onChange={(e) => handleCodeChange(e.target.value, 'tab1')}
                                                 autoFocus
-                                                className={`w-full px-3.5 py-2.5 pr-14 rounded-xl border text-xs font-mono font-black text-center tracking-[0.2em] uppercase outline-none focus:border-purple-500 transition-colors ${
+                                                className={`w-full px-3.5 py-2.5 pr-16 rounded-xl border text-xs font-mono font-black text-center tracking-[0.2em] uppercase outline-none transition-all duration-300 ${
+                                                    cleanInviteCode(joinInviteCode).length === 8
+                                                        ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/20 animate-pulse'
+                                                        : 'focus:border-purple-500'
+                                                } ${
                                                     isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
                                                 }`}
                                             />
-                                            <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono font-black px-1.5 py-0.5 rounded-md ${
+                                            <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono font-black px-1.5 py-0.5 rounded-md transition-all duration-300 ${
                                                 cleanInviteCode(joinInviteCode).length === 8
-                                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                    ? 'bg-emerald-500 text-white shadow-sm scale-105'
                                                     : isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-500'
                                             }`}>
-                                                {cleanInviteCode(joinInviteCode).length === 8 ? '8/8 ✓' : `${cleanInviteCode(joinInviteCode).length}/8`}
+                                                {isSubmitting && cleanInviteCode(joinInviteCode).length === 8
+                                                    ? 'Joining...'
+                                                    : cleanInviteCode(joinInviteCode).length === 8
+                                                        ? '8/8 ✓'
+                                                        : `${cleanInviteCode(joinInviteCode).length}/8`}
                                             </span>
                                         </div>
 
@@ -633,10 +680,26 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
                                         <button
                                             type="submit"
-                                            disabled={!joinInviteCode.trim() || isSubmitting}
-                                            className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                                            disabled={!cleanInviteCode(joinInviteCode).length || isSubmitting}
+                                            className={`w-full py-2.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 ${
+                                                cleanInviteCode(joinInviteCode).length === 8
+                                                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25 ring-2 ring-emerald-400/40 animate-pulse'
+                                                    : 'bg-purple-600 hover:bg-purple-500 disabled:opacity-50'
+                                            }`}
                                         >
-                                            {isSubmitting ? 'Joining...' : 'Join'}
+                                            {isSubmitting ? (
+                                                <>
+                                                    <span className="animate-spin inline-block">⏳</span>
+                                                    <span>Joining Circle...</span>
+                                                </>
+                                            ) : cleanInviteCode(joinInviteCode).length === 8 ? (
+                                                <>
+                                                    <span>⚡</span>
+                                                    <span>Join Now</span>
+                                                </>
+                                            ) : (
+                                                <span>Join</span>
+                                            )}
                                         </button>
                                     </form>
                                 )}
@@ -907,27 +970,36 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                         placeholder="XXXX - XXXX"
                                         maxLength={11}
                                         value={manualInviteCode}
-                                        onChange={(e) => {
-                                            setManualInviteCode(formatSegmentedInviteCode(e.target.value));
-                                            if (joinError) setJoinError(null);
-                                        }}
+                                        onChange={(e) => handleCodeChange(e.target.value, 'tab3')}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                                 e.preventDefault();
+                                                if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
                                                 handleJoinCircle(manualInviteCode);
                                             }
                                         }}
-                                        className={`flex-1 px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black tracking-[0.2em] text-center uppercase outline-none focus:border-indigo-500 transition-colors ${
+                                        className={`flex-1 px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black tracking-[0.2em] text-center uppercase outline-none transition-all duration-300 ${
+                                            cleanInviteCode(manualInviteCode).length === 8
+                                                ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/20 animate-pulse'
+                                                : 'focus:border-indigo-500'
+                                        } ${
                                             isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
                                         }`}
                                     />
                                     <button
                                         type="button"
-                                        onClick={() => handleJoinCircle(manualInviteCode)}
+                                        onClick={() => {
+                                            if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
+                                            handleJoinCircle(manualInviteCode);
+                                        }}
                                         disabled={isSubmitting || cleanInviteCode(manualInviteCode).length === 0}
-                                        className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0"
+                                        className={`px-5 py-2.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0 flex items-center justify-center gap-1.5 ${
+                                            cleanInviteCode(manualInviteCode).length === 8
+                                                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25 ring-2 ring-emerald-400/40 animate-pulse'
+                                                : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50'
+                                        }`}
                                     >
-                                        {isSubmitting ? 'Joining...' : 'Join'}
+                                        {isSubmitting ? 'Joining...' : cleanInviteCode(manualInviteCode).length === 8 ? '⚡ Join' : 'Join'}
                                     </button>
                                 </div>
                                 {joinError && (
