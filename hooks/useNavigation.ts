@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { FamilyMember, Place, NavigationRoute, ArrivalTripData } from '../types';
 import { getDistanceMeters } from '../utils/geo';
-import { getRouteFromOSRM, geocodePlace, fetchRouteOptions } from '../services/osrmService';
+import { getRouteFromOSRM, geocodePlace, fetchRouteOptions, clearRouteCache } from '../services/osrmService';
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText, searchMaintenanceAlongRoute } from '../services/placesService';
 import { searchPlacesOnMap } from '../services/geminiService';
 import { updateNavigationState, NavigationState } from '../services/navigationEngine';
@@ -91,29 +91,98 @@ export const useNavigation = (
         navStateRef.current = navState;
     }, [navState]);
 
-    const handleStartNavigation = useCallback(async (dest: string, destCoords?: { lat: number; lng: number }, precomputedRoute?: NavigationRoute) => {
-        if (members.length === 0) return;
+    const getActiveUserLocation = useCallback((): { lat: number; lng: number } => {
+        // Priority 1: Live GPS from useLocationSync
+        if (userLocation && userLocation.lat !== 0 && userLocation.lng !== 0 && !isNaN(userLocation.lat) && !isNaN(userLocation.lng)) {
+            console.log(`📍 [Search] Using live userLocation: (${userLocation.lat}, ${userLocation.lng})`);
+            return userLocation;
+        }
 
+        // Priority 2: Authenticated user's member entry
+        if (user?.uid) {
+            const self = members.find(m => m.id === user.uid);
+            if (self && self.location && self.location.lat !== 0 && self.location.lng !== 0 && !isNaN(self.location.lat) && !isNaN(self.location.lng)) {
+                console.log(`📍 [Search] Using self member location (uid=${user.uid}): (${self.location.lat}, ${self.location.lng})`);
+                return self.location;
+            }
+        }
+
+        // Priority 3: Any active family member with valid coordinates
+        const activeMember = members.find(m => m.location && m.location.lat !== 0 && m.location.lng !== 0 && !isNaN(m.location.lat) && !isNaN(m.location.lng));
+        if (activeMember) {
+            console.log(`📍 [Search] Using active member "${activeMember.name}" location: (${activeMember.location.lat}, ${activeMember.location.lng})`);
+            return activeMember.location;
+        }
+
+        // Priority 4: Last known location from localStorage
+        if (typeof window !== 'undefined' && window.localStorage) {
+            const saved = window.localStorage.getItem('myway_last_known_location');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    if (parsed && typeof parsed.lat === 'number' && typeof parsed.lng === 'number' && parsed.lat !== 0 && parsed.lng !== 0) {
+                        console.log(`📍 [Search] Using localStorage last known: (${parsed.lat}, ${parsed.lng})`);
+                        return parsed;
+                    }
+                } catch (e) { /* ignore */ }
+            }
+        }
+
+        // Priority 5: Default coordinates fallback (only if browser/device denied location permissions and no prior cache exists)
+        console.warn(`📍 [Search] Live location unavailable — using default fallback center (35.105, -78.966)`);
+        return { lat: 35.105, lng: -78.966 };
+    }, [userLocation, members, user?.uid]);
+
+    const handleStartNavigation = useCallback(async (
+        dest: string,
+        destCoords?: { lat: number; lng: number },
+        precomputedRoute?: NavigationRoute
+    ) => {
         try {
             showNotification(`🧭 Preparing navigation...`, 5000);
 
-            if (members[0].location.lat === 0 && members[0].location.lng === 0) {
+            // Explicitly pull fresh, live GPS coordinates for the trip origin
+            const liveOrigin = getActiveUserLocation();
+            if (liveOrigin.lat === 0 && liveOrigin.lng === 0) {
                 showNotification("⚠️ Waiting for GPS lock...", 4000);
                 return;
             }
 
-            // Use provided coordinates if available, otherwise geocode the destination string
-            const destLocation = destCoords || precomputedRoute?.destinationLoc || await geocodePlace(dest, members[0].location);
+            // Use provided coordinates if available, otherwise geocode the destination string from fresh live GPS
+            const destLocation = destCoords || precomputedRoute?.destinationLoc || await geocodePlace(dest, liveOrigin);
             if (!destLocation) {
                 showNotification("❌ Destination not found.", 4000);
                 return;
             }
 
-            const route = precomputedRoute || await getRouteFromOSRM(members[0].location, dest, destLocation);
+            // Stale route protection: If a precomputed route is provided, verify that the vehicle has not moved
+            // away from the preview origin. If offset by > 40m, purge precomputed route to prevent routing from stale position.
+            let route: NavigationRoute | null = null;
+            if (precomputedRoute && precomputedRoute.originLoc) {
+                const distFromPreviewOrigin = getDistanceMeters(liveOrigin, precomputedRoute.originLoc);
+                if (distFromPreviewOrigin <= 40) {
+                    route = precomputedRoute;
+                } else {
+                    console.log(`📍 [useNavigation] Vehicle offset by ${Math.round(distFromPreviewOrigin)}m from preview origin. Recalculating from live GPS.`);
+                }
+            }
+
+            if (!route) {
+                // Clear any prior cached corridor route to guarantee fresh calculation from live GPS
+                clearRouteCache();
+                route = await getRouteFromOSRM(liveOrigin, dest, destLocation, { bypassCache: true });
+            }
+
             if (!route || !route.steps) {
                 showNotification("❌ Routing failed.", 4000);
                 return;
             }
+
+            // Purge stale recalculation flags from any previously aborted trip
+            isRecalculatingRef.current = false;
+            lastOffRouteRecalcTimeRef.current = 0;
+            lastRerouteRef.current = 0;
+            rerouteAttemptsRef.current = 0;
 
             // Record to recent search & navigation history
             searchHistoryService.addItem({
@@ -157,11 +226,18 @@ export const useNavigation = (
                 hasArrived: false,
                 splitIndex: 0
             });
+            navStateRef.current = {
+                currentStepIndex: 0,
+                distanceToNextStep: 0,
+                isOffRoute: false,
+                hasArrived: false,
+                splitIndex: 0
+            };
             setDriveMode(true);
             setIsNavigating(true);
             set3DMode(true);
 
-            startTrip(members[0].location, dest);
+            startTrip(liveOrigin, dest);
 
             // Announce initial route start
             if (route.steps.length > 0) {
@@ -190,14 +266,14 @@ export const useNavigation = (
                     showNotification('✅ Crash alert cancelled.', 5000);
                 },
                 () => {
-                    const loc = members[0]?.location || userLocation;
+                    const loc = userLocation || liveOrigin;
                     if (loc && loc.lat !== 0 && loc.lng !== 0) {
                         recordDriveEvent('hard_brake', loc);
                         showNotification('⚠️ Hard braking detected', 2500);
                     }
                 },
                 () => {
-                    const loc = members[0]?.location || userLocation;
+                    const loc = userLocation || liveOrigin;
                     if (loc && loc.lat !== 0 && loc.lng !== 0) {
                         recordDriveEvent('rapid_accel', loc);
                         showNotification('⚡ Rapid acceleration detected', 2500);
@@ -248,49 +324,104 @@ export const useNavigation = (
             console.error("Navigation startup error:", error);
             showNotification("❌ Navigation failed.", 3000);
         }
-    }, [members, user, profile, showNotification, setDriveMode, set3DMode, setCrashCountdown, setEtaSharing, userLocation]);
+    }, [members, user, profile, showNotification, setDriveMode, set3DMode, setCrashCountdown, setEtaSharing, userLocation, getActiveUserLocation, userPlaces]);
 
-    const getActiveUserLocation = useCallback((): { lat: number; lng: number } => {
-        // Priority 1: Live GPS from useLocationSync
-        if (userLocation && userLocation.lat !== 0 && userLocation.lng !== 0 && !isNaN(userLocation.lat) && !isNaN(userLocation.lng)) {
-            console.log(`📍 [Search] Using live userLocation: (${userLocation.lat}, ${userLocation.lng})`);
-            return userLocation;
+    /**
+     * Recalculates the active route from fresh, live GPS coordinates rather than stale cached origins.
+     * Purges passed waypoints and clears route cache.
+     */
+    const recalculateRoute = useCallback(async (customOrigin?: { lat: number; lng: number }): Promise<NavigationRoute | null> => {
+        if (!activeRoute || !activeRoute.destinationLoc) {
+            console.warn('⚠️ [recalculateRoute] No active destination to recalculate.');
+            return null;
         }
 
-        // Priority 2: Authenticated user's member entry
-        if (user?.uid) {
-            const self = members.find(m => m.id === user.uid);
-            if (self && self.location && self.location.lat !== 0 && self.location.lng !== 0 && !isNaN(self.location.lat) && !isNaN(self.location.lng)) {
-                console.log(`📍 [Search] Using self member location (uid=${user.uid}): (${self.location.lat}, ${self.location.lng})`);
-                return self.location;
+        // Pull fresh live GPS coordinates explicitly
+        const liveOrigin = customOrigin || getActiveUserLocation();
+        if (liveOrigin.lat === 0 && liveOrigin.lng === 0) {
+            console.warn('⚠️ [recalculateRoute] Live location unavailable for recalculation.');
+            return null;
+        }
+
+        console.log(`🔄 [recalculateRoute] Recalculating route from fresh live GPS (${liveOrigin.lat}, ${liveOrigin.lng}) to ${activeRoute.destinationName}`);
+        showNotification('🔄 Recalculating route...', 3000);
+        speechService.speak('Recalculating route', { chime: 'turn' });
+
+        // Purge route cache so routing engines don't return a stale snapshot
+        clearRouteCache();
+
+        // Stale Waypoint State Purge:
+        // Filter out intermediate stops that were already reached/passed (currentLegIndex)
+        // Keep only remaining pending stops so phantom past stops never bias the route
+        const currentLeg = activeRoute.currentLegIndex || 0;
+        const remainingWaypoints = (activeRoute.waypoints || []).slice(currentLeg);
+
+        try {
+            isRecalculatingRef.current = true;
+            const options: any = { bypassCache: true };
+            if (remainingWaypoints.length > 0) {
+                options.waypoints = remainingWaypoints;
             }
-        }
-
-        // Priority 3: Any active family member with valid coordinates
-        const activeMember = members.find(m => m.location && m.location.lat !== 0 && m.location.lng !== 0 && !isNaN(m.location.lat) && !isNaN(m.location.lng));
-        if (activeMember) {
-            console.log(`📍 [Search] Using active member "${activeMember.name}" location: (${activeMember.location.lat}, ${activeMember.location.lng})`);
-            return activeMember.location;
-        }
-
-        // Priority 4: Last known location from localStorage
-        if (typeof window !== 'undefined' && window.localStorage) {
-            const saved = window.localStorage.getItem('myway_last_known_location');
-            if (saved) {
-                try {
-                    const parsed = JSON.parse(saved);
-                    if (parsed && typeof parsed.lat === 'number' && typeof parsed.lng === 'number' && parsed.lat !== 0 && parsed.lng !== 0) {
-                        console.log(`📍 [Search] Using localStorage last known: (${parsed.lat}, ${parsed.lng})`);
-                        return parsed;
-                    }
-                } catch (e) { /* ignore */ }
+            if (activeRoute.avoidTolls) {
+                options.avoidTolls = true;
             }
-        }
 
-        // Priority 5: Default coordinates fallback (only if browser/device denied location permissions and no prior cache exists)
-        console.warn(`📍 [Search] Live location unavailable — using default fallback center (35.105, -78.966)`);
-        return { lat: 35.105, lng: -78.966 };
-    }, [userLocation, members, user?.uid]);
+            const freshRoute = await getRouteFromOSRM(
+                liveOrigin,
+                activeRoute.destinationName,
+                activeRoute.destinationLoc,
+                options
+            );
+
+            isRecalculatingRef.current = false;
+
+            if (freshRoute && freshRoute.steps && freshRoute.steps.length > 0) {
+                freshRoute.destinationImageUrl = activeRoute.destinationImageUrl;
+                freshRoute.destinationEntranceNotes = activeRoute.destinationEntranceNotes;
+                freshRoute.destinationEntranceType = activeRoute.destinationEntranceType;
+                freshRoute.waypoints = remainingWaypoints;
+                freshRoute.currentLegIndex = 0;
+
+                setActiveRoute(freshRoute);
+                setNavState({
+                    currentStepIndex: 0,
+                    distanceToNextStep: 0,
+                    isOffRoute: false,
+                    hasArrived: false,
+                    splitIndex: 0
+                });
+                navStateRef.current = {
+                    currentStepIndex: 0,
+                    distanceToNextStep: 0,
+                    isOffRoute: false,
+                    hasArrived: false,
+                    splitIndex: 0
+                };
+                lastAnnouncedStepIndexRef.current = 0;
+                lastAnnouncedProximityRef.current = 'initial';
+                if (freshRoute.steps[0]) {
+                    speechService.announceManeuver(freshRoute.steps[0].instruction, 50, 'initial');
+                }
+                showNotification(`🔀 Rerouted via ${freshRoute.summary || 'fastest path'}`, 3500);
+
+                // Hive-Mind Fleet Routing: If current user is Convoy Leader, broadcast reroute to caravan followers
+                const activeConvoy = convoyService.getActiveConvoy();
+                const currentUid = user?.uid || members[0]?.id || 'self';
+                if (activeConvoy && activeConvoy.isActive && activeConvoy.leaderId === currentUid) {
+                    convoyService.broadcastReroute(freshRoute, profile?.familyCircleId);
+                    showNotification(`📡 Fleet Reroute broadcasted to caravan followers`, 4000);
+                }
+
+                return freshRoute;
+            }
+        } catch (err) {
+            isRecalculatingRef.current = false;
+            console.warn('[recalculateRoute] Failed:', err);
+        }
+        return null;
+    }, [activeRoute, getActiveUserLocation, showNotification, user?.uid, members, profile?.familyCircleId]);
+
+
 
     const handleDiscovery = useCallback((query: string, onSelectPlace?: (place: Place) => void) => {
         const location = getActiveUserLocation();
@@ -497,48 +628,12 @@ export const useNavigation = (
             }
 
             // --- AUTOMATIC OFF-ROUTE RE-ROUTING ---
-            // If the driver takes a wrong turn or misses a waypoint, automatically calculate a fresh route to destination
+            // If the driver takes a wrong turn or misses a waypoint, automatically calculate a fresh route from live GPS
             if (newNavState.isOffRoute && activeRoute.destinationLoc && !isRecalculatingRef.current) {
                 const now = Date.now();
                 if (now - lastOffRouteRecalcTimeRef.current > 4000) { // 4s cooldown to prevent API spam
                     lastOffRouteRecalcTimeRef.current = now;
-                    isRecalculatingRef.current = true;
-                    console.log('🔄 [Navigation] Off-route detected. Recalculating path to destination...');
-                    showNotification('🔄 Recalculating route...', 3000);
-                    speechService.speak('Recalculating route', { chime: 'turn' });
-
-                    getRouteFromOSRM(userLocation, activeRoute.destinationName, activeRoute.destinationLoc)
-                        .then(newRoute => {
-                            isRecalculatingRef.current = false;
-                            if (newRoute && newRoute.steps && newRoute.steps.length > 0) {
-                                setActiveRoute(newRoute);
-                                setNavState({
-                                    currentStepIndex: 0,
-                                    distanceToNextStep: 0,
-                                    isOffRoute: false,
-                                    hasArrived: false,
-                                    splitIndex: 0
-                                });
-                                showNotification(`🔀 Rerouted via ${newRoute.summary || 'fastest path'}`, 3500);
-                                if (newRoute.steps[0]) {
-                                    speechService.announceManeuver(newRoute.steps[0].instruction, 50, 'initial');
-                                    lastAnnouncedStepIndexRef.current = 0;
-                                    lastAnnouncedProximityRef.current = 'initial';
-                                }
-
-                                // Hive-Mind Fleet Routing: If current user is Convoy Leader, broadcast reroute to caravan followers
-                                const activeConvoy = convoyService.getActiveConvoy();
-                                const currentUid = user?.uid || members[0]?.id || 'self';
-                                if (activeConvoy && activeConvoy.isActive && activeConvoy.leaderId === currentUid) {
-                                    convoyService.broadcastReroute(newRoute, profile?.familyCircleId);
-                                    showNotification(`📡 Fleet Reroute broadcasted to caravan followers`, 4000);
-                                }
-                            }
-                        })
-                        .catch(err => {
-                            isRecalculatingRef.current = false;
-                            console.warn('[Navigation] Off-route recalculation failed:', err);
-                        });
+                    recalculateRoute(userLocation || undefined);
                 }
             }
 
@@ -665,8 +760,55 @@ export const useNavigation = (
         setUpcomingTollAlert(null);
     }, []);
 
+    // Hive-Mind Fleet Routing: 10-Second Countdown Decision Engine
+    const [leaderDivertedPrompt, setLeaderDivertedPrompt] = useState<LeaderDivertedPrompt | null>(null);
+    const leaderPromptTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const clearLeaderPromptTimer = useCallback(() => {
+        if (leaderPromptTimerRef.current) {
+            clearInterval(leaderPromptTimerRef.current);
+            leaderPromptTimerRef.current = null;
+        }
+    }, []);
+
     // Cleanup & Cancel Navigation
     const handleCancelNavigation = useCallback(() => {
+        // 1. Purge route cache so subsequent routing calculations pull fresh live geometry
+        clearRouteCache();
+
+        // 2. Clear active routing and phantom waypoint states
+        setActiveRoute(null);
+        setBetterRouteSuggestion(null);
+        setUpcomingTollAlert(null);
+        setLeaderDivertedPrompt(null);
+        clearLeaderPromptTimer();
+
+        // 3. Reset navigation engine state cleanly
+        navStateRef.current = {
+            currentStepIndex: 0,
+            distanceToNextStep: 0,
+            isOffRoute: false,
+            hasArrived: false,
+            splitIndex: 0
+        };
+        setNavState({
+            currentStepIndex: 0,
+            distanceToNextStep: 0,
+            isOffRoute: false,
+            hasArrived: false,
+            splitIndex: 0
+        });
+
+        // 4. Reset recalculation & reroute tracking refs
+        isRecalculatingRef.current = false;
+        lastOffRouteRecalcTimeRef.current = 0;
+        lastRerouteRef.current = 0;
+        rerouteAttemptsRef.current = 0;
+        lastAnnouncedStepIndexRef.current = -1;
+        lastAnnouncedProximityRef.current = null;
+        lastTollAnnouncedStepRef.current = -1;
+        lastCameraAlertStepRef.current = -1;
+
         if (activeRoute && userLocation && activeRoute.destinationLoc) {
             const distToDest = getDistanceMeters(userLocation, activeRoute.destinationLoc);
             if (distToDest <= 300) {
@@ -695,13 +837,10 @@ export const useNavigation = (
         setEtaSharing(false);
         setDriveMode(false);
         setIsNavigating(false);
-        setActiveRoute(null);
-        setBetterRouteSuggestion(null);
-        setUpcomingTollAlert(null);
         if (profile?.familyCircleId && user?.uid) {
             updateMemberTrip(profile.familyCircleId, user.uid, null).catch(() => {});
         }
-    }, [activeRoute, userLocation, safetyScore, setDriveMode, setEtaSharing, profile?.familyCircleId, user?.uid]);
+    }, [activeRoute, userLocation, safetyScore, setDriveMode, setEtaSharing, profile?.familyCircleId, user?.uid, clearLeaderPromptTimer]);
 
     // Rerouting logic
     const lastRerouteRef = useRef<number>(0);
@@ -718,24 +857,11 @@ export const useNavigation = (
             }
             lastRerouteRef.current = now;
             rerouteAttemptsRef.current += 1;
-            showNotification(`🔄 Off route! Recalculating...`, 4000);
-            speechService.announceManeuver('', 0, 'reroute');
-            handleStartNavigation(activeRoute.destinationName);
+            recalculateRoute(userLocation || undefined);
         } else if (isNavigating && !navState.isOffRoute) {
             rerouteAttemptsRef.current = 0;
         }
-    }, [isNavigating, navState.isOffRoute, activeRoute, handleStartNavigation, showNotification]);
-
-    // Hive-Mind Fleet Routing: 10-Second Countdown Decision Engine
-    const [leaderDivertedPrompt, setLeaderDivertedPrompt] = useState<LeaderDivertedPrompt | null>(null);
-    const leaderPromptTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-    const clearLeaderPromptTimer = useCallback(() => {
-        if (leaderPromptTimerRef.current) {
-            clearInterval(leaderPromptTimerRef.current);
-            leaderPromptTimerRef.current = null;
-        }
-    }, []);
+    }, [isNavigating, navState.isOffRoute, activeRoute, recalculateRoute, userLocation, showNotification]);
 
     const handleFollowLeader = useCallback(() => {
         clearLeaderPromptTimer();
@@ -934,6 +1060,7 @@ export const useNavigation = (
         handleDismissTollAlert,
         handleStartNavigation,
         handleCancelNavigation,
+        recalculateRoute,
         handleDiscovery,
         handleQuickSearch,
         arrivalTripData,

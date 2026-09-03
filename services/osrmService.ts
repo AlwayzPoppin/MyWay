@@ -351,14 +351,24 @@ interface RouteCacheEntry {
     timestamp: number;
 }
 const ROUTE_OPTIONS_CACHE = new Map<string, RouteCacheEntry>();
-const ROUTE_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const ROUTE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-function getRouteCacheKey(start: Location, end: Location, options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[] }): string {
-    const sLat = Math.round(start.lat * 100) / 100;
-    const sLng = Math.round(start.lng * 100) / 100;
-    const eLat = Math.round(end.lat * 100) / 100;
-    const eLng = Math.round(end.lng * 100) / 100;
-    const wpKey = options?.waypoints?.map(w => `${Math.round(w.location.lat * 100) / 100},${Math.round(w.location.lng * 100) / 100}`).join('|') || '';
+/**
+ * Clears the in-memory route options cache.
+ * Called when a trip is aborted, canceled, or forced to recalculate from fresh GPS coordinates.
+ */
+export function clearRouteCache(): void {
+    ROUTE_OPTIONS_CACHE.clear();
+    console.log('🧹 [osrmService] Route options cache purged.');
+}
+
+function getRouteCacheKey(start: Location, end: Location, options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[]; bypassCache?: boolean }): string {
+    // 4 decimal places gives ~11m precision to ensure vehicle movement down a road is not clobbered by stale 1km cache hits
+    const sLat = Math.round(start.lat * 10000) / 10000;
+    const sLng = Math.round(start.lng * 10000) / 10000;
+    const eLat = Math.round(end.lat * 10000) / 10000;
+    const eLng = Math.round(end.lng * 10000) / 10000;
+    const wpKey = options?.waypoints?.map(w => `${Math.round(w.location.lat * 10000) / 10000},${Math.round(w.location.lng * 10000) / 10000}`).join('|') || '';
     return `${sLat},${sLng}->${wpKey}->${eLat},${eLng}_toll=${!!options?.avoidTolls}_hwy=${!!options?.avoidHighways}`;
 }
 
@@ -473,16 +483,18 @@ export async function fetchRouteOptions(
     start: Location,
     endName: string,
     endLocation: Location,
-    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[] }
+    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[]; bypassCache?: boolean }
 ): Promise<NavigationRoute[]> {
     const waypoints = options?.waypoints || [];
     const allPoints = [start, ...waypoints.map(w => w.location), endLocation];
 
     const cacheKey = getRouteCacheKey(start, endLocation, options);
-    const cached = ROUTE_OPTIONS_CACHE.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < ROUTE_CACHE_TTL_MS)) {
-        console.log(`⚡ [Route Options Cache HIT] ${cached.routes.length} routes for "${endName}"`);
-        return cached.routes;
+    if (!options?.bypassCache) {
+        const cached = ROUTE_OPTIONS_CACHE.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < ROUTE_CACHE_TTL_MS)) {
+            console.log(`⚡ [Route Options Cache HIT] ${cached.routes.length} routes for "${endName}"`);
+            return cached.routes;
+        }
     }
 
     const straightLineDist = getDistanceMeters(start, endLocation);
@@ -654,7 +666,7 @@ export async function getRouteFromOSRM(
     start: Location,
     endName: string,
     endLocation: Location,
-    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[] }
+    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[]; bypassCache?: boolean }
 ): Promise<NavigationRoute | null> {
     const routes = await fetchRouteOptions(start, endName, endLocation, options);
     if (routes && routes.length > 0) {
