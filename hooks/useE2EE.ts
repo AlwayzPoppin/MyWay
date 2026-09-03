@@ -139,6 +139,7 @@ export const useE2EE = (
 
         // Targeted Realtime Listener: triggers only when circle membership changes
         const unsubscribe = subscribeToCircleMembers(currentCircle.id, (memberIds) => {
+            if (!memberIds || memberIds.length === 0) return;
             const signature = [...memberIds].sort().join(',');
             if (signature === lastSyncedMembersSignatureRef.current) return;
             lastSyncedMembersSignatureRef.current = signature;

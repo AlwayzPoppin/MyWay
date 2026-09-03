@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 
 interface UIContextType {
     theme: 'light' | 'dark';
@@ -60,14 +60,14 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const showNotification = (msg: string | null, duration = 5000) => {
+    const showNotification = useCallback((msg: string | null, duration = 5000) => {
         setNotification(msg);
         if (msg) {
             setTimeout(() => setNotification(null), duration);
         }
-    };
+    }, []);
 
-    const value: UIContextType = {
+    const value: UIContextType = useMemo(() => ({
         theme,
         setTheme,
         isMobile,
@@ -93,7 +93,33 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsLowDataMode,
         notification,
         showNotification
-    };
+    }), [
+        theme,
+        setTheme,
+        isMobile,
+        isUpsellOpen,
+        setUpsellOpen,
+        isRewardsOpen,
+        setRewardsOpen,
+        isPrivacyOpen,
+        setPrivacyOpen,
+        isQuickStopOpen,
+        setQuickStopOpen,
+        isMessagingOpen,
+        setMessagingOpen,
+        isSettingsOpen,
+        setSettingsOpen,
+        isOfflineMapsOpen,
+        setOfflineMapsOpen,
+        isDriveMode,
+        setDriveMode,
+        is3DMode,
+        set3DMode,
+        isLowDataMode,
+        setIsLowDataMode,
+        notification,
+        showNotification
+    ]);
 
     return <UIContext.Provider value={value}>{children}</UIContext.Provider>;
 };

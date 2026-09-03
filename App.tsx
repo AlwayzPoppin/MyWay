@@ -696,6 +696,9 @@ const App: React.FC = () => {
   }, [members.length]);
 
   // Push Token Sync & Foreground Alert Listener
+  const showNotificationRef = useRef(showNotification);
+  showNotificationRef.current = showNotification;
+
   useEffect(() => {
     if (!user?.uid) return;
 
@@ -704,14 +707,14 @@ const App: React.FC = () => {
       persistTokenToProfile(user.uid);
       cleanup = await onForegroundMessage((payload) => {
         const body = payload.notification?.body || 'New alert received';
-        showNotification(body, 4000);
+        showNotificationRef.current(body, 4000);
       });
     });
 
     return () => {
       if (cleanup) cleanup();
     };
-  }, [user?.uid, showNotification]);
+  }, [user?.uid]);
 
   const handleClearSelectedPlace = useCallback(() => {
     setSelectedPlace(null);

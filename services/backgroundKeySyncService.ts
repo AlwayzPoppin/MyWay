@@ -56,6 +56,7 @@ class BackgroundKeySyncService {
 
         // Realtime background listener on circle membership
         this.unsubscribeListener = subscribeToCircleMembers(circleId, (memberIds) => {
+            if (!memberIds || memberIds.length === 0) return;
             const signature = [...memberIds].sort().join(',');
             if (signature === this.lastSyncedSignature) return;
             this.lastSyncedSignature = signature;

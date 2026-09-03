@@ -50,33 +50,48 @@ const initMessaging = async () => {
     }
 };
 
+let cachedFcmToken: string | null = null;
+let tokenRequestPromise: Promise<string | null> | null = null;
+
 /**
  * Request notification permission and get FCM token
  * The token should be stored in the user's Firebase profile for server-side targeting
  */
 export const requestPushPermission = async (): Promise<string | null> => {
-    try {
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-            console.warn('🔔 Push notification permission denied');
+    if (cachedFcmToken) return cachedFcmToken;
+    if (tokenRequestPromise) return tokenRequestPromise;
+
+    tokenRequestPromise = (async () => {
+        try {
+            if (typeof window === 'undefined' || !('Notification' in window)) return null;
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') {
+                console.warn('🔔 Push notification permission denied');
+                return null;
+            }
+
+            const msg = await initMessaging();
+            if (!msg) return null;
+
+            // Get the FCM token — requires service worker to be registered
+            const reg = await navigator.serviceWorker.getRegistration();
+            const token = await getToken(msg, {
+                vapidKey: VAPID_KEY,
+                serviceWorkerRegistration: reg
+            });
+
+            cachedFcmToken = token;
+            console.log('🔔 FCM Token obtained:', token.substring(0, 20) + '...');
+            return token;
+        } catch (err) {
+            console.error('🔔 FCM Token error:', err);
             return null;
+        } finally {
+            tokenRequestPromise = null;
         }
+    })();
 
-        const msg = await initMessaging();
-        if (!msg) return null;
-
-        // Get the FCM token — requires service worker to be registered
-        const token = await getToken(msg, {
-            vapidKey: VAPID_KEY,
-            serviceWorkerRegistration: await navigator.serviceWorker.getRegistration()
-        });
-
-        console.log('🔔 FCM Token obtained:', token.substring(0, 20) + '...');
-        return token;
-    } catch (err) {
-        console.error('🔔 FCM Token error:', err);
-        return null;
-    }
+    return tokenRequestPromise;
 };
 
 const lastPersistedTokenMap = new Map<string, string>();

@@ -6,9 +6,11 @@
 
 // Global reference for the circle key (derived from shared secret in production flow)
 let familyKey: CryptoKey | null = null;
+let hasLoggedNoFamilyKeyWarn = false;
 
 export const setFamilyKey = (key: CryptoKey, circleId?: string) => {
     familyKey = key;
+    hasLoggedNoFamilyKeyWarn = false;
     // Persist key to IndexedDB for Background Push Decryption Worker in Service Worker
     if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
         window.crypto.subtle.exportKey('jwk', key).then(jwk => {
@@ -207,7 +209,10 @@ export const encryptLocation = async (lat: number, lng: number, circleId?: strin
         key = await ensureFamilyKeyRestored(circleId);
     }
     if (!key) {
-        console.warn("🔒 Encryption skipped: No Family Key established yet.");
+        if (!hasLoggedNoFamilyKeyWarn) {
+            console.warn("🔒 Encryption skipped: No Family Key established yet.");
+            hasLoggedNoFamilyKeyWarn = true;
+        }
         // We return empty string or throw error to prevent leaking plaintext location
         return "";
     }
