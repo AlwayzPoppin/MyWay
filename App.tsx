@@ -2103,7 +2103,11 @@ const App: React.FC = () => {
           }`}>
             {/* Mobile Drag Handle (Only when place is selected) */}
             {selectedPlace && (
-              <div className="pt-3 pb-1 shrink-0">
+              <div 
+                className="pt-3 pb-1 shrink-0 cursor-grab active:cursor-grabbing"
+                onTouchStart={() => (document.activeElement as HTMLElement)?.blur()}
+                onMouseDown={() => (document.activeElement as HTMLElement)?.blur()}
+              >
                 <div className="w-12 h-1 rounded-full mx-auto bg-white/20" />
               </div>
             )}
@@ -2138,7 +2142,11 @@ const App: React.FC = () => {
 
             {/* Mobile Place Detail Panel (Renders immediately below search in the exact same sheet) */}
             {selectedPlace && !correctingPlace && (
-              <div className="flex-1 overflow-y-auto overscroll-contain no-scrollbar max-h-[calc(min(60vh,420px)-65px)] animate-in slide-in-from-bottom-3 duration-300">
+              <div 
+                className="flex-1 overflow-y-auto overscroll-contain no-scrollbar max-h-[calc(min(60vh,420px)-65px)] animate-in slide-in-from-bottom-3 duration-300"
+                onScroll={() => (document.activeElement as HTMLElement)?.blur()}
+                onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
+              >
                 <PlaceDetailPanel
                   place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
                   onClose={handleClearSelectedPlace}

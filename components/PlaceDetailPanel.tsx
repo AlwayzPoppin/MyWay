@@ -450,6 +450,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const [waypoints, setWaypoints] = useState<RouteWaypoint[]>([]);
     const [showAddStopDrawer, setShowAddStopDrawer] = useState<boolean>(false);
     const [stopSearchQuery, setStopSearchQuery] = useState<string>('');
+    const [isStopSearchFocused, setIsStopSearchFocused] = useState<boolean>(false);
     const [isSearchingStops, setIsSearchingStops] = useState<boolean>(false);
     const [stopSearchResults, setStopSearchResults] = useState<Place[]>([]);
     const [detourDeltas, setDetourDeltas] = useState<Map<number, number>>(new Map());
@@ -1007,19 +1008,23 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         {/* Quick Ambient POI Chips */}
                         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
                             {[
-                                { label: '⛽ Gas', query: 'gas station' },
-                                { label: '☕ Coffee', query: 'coffee' },
-                                { label: '🍔 Food', query: 'fast food restaurant' },
-                                { label: '💊 Pharmacy', query: 'pharmacy' },
-                                { label: '🏧 ATM', query: 'atm' }
+                                { icon: '⛽', label: 'Gas', query: 'gas station' },
+                                { icon: '☕', label: 'Coffee', query: 'coffee' },
+                                { icon: '🍔', label: 'Food', query: 'fast food restaurant' },
+                                { icon: '💊', label: 'Pharmacy', query: 'pharmacy' },
+                                { icon: '🏧', label: 'ATM', query: 'atm' }
                             ].map(chip => (
                                 <button
                                     key={chip.query}
                                     type="button"
                                     onClick={() => handleQuickPoiSearch(chip.query)}
-                                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/10 hover:bg-amber-500/20 text-slate-200 shrink-0 border border-white/10 hover:border-amber-500/30 transition-colors cursor-pointer"
+                                    className="px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/10 hover:bg-amber-500/20 text-slate-200 shrink-0 border border-white/10 hover:border-amber-500/30 transition-colors cursor-pointer flex items-center gap-1"
+                                    title={chip.label}
                                 >
-                                    {chip.label}
+                                    <span>{chip.icon}</span>
+                                    <span className={isStopSearchFocused ? 'hidden min-[420px]:inline' : 'hidden min-[376px]:inline'}>
+                                        {chip.label}
+                                    </span>
                                 </button>
                             ))}
                         </div>
@@ -1029,6 +1034,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <input
                                 type="text"
                                 value={stopSearchQuery}
+                                onFocus={() => setIsStopSearchFocused(true)}
+                                onBlur={() => setIsStopSearchFocused(false)}
                                 onChange={(e) => {
                                     setStopSearchQuery(e.target.value);
                                     handleSearchStops(e.target.value);
@@ -1102,9 +1109,15 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             <div
                 className={`w-full max-h-[min(60vh,420px)] overflow-y-auto overscroll-contain no-scrollbar rounded-t-[2rem] shadow-[0_-10px_50px_rgba(0,0,0,0.5)] border-t backdrop-blur-2xl animate-in slide-in-from-bottom duration-300 pb-safe ${sheetBg}`}
                 style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 16px), 16px)' }}
+                onScroll={() => (document.activeElement as HTMLElement)?.blur()}
+                onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
             >
                 {/* Drag Handle Pill */}
-                <div className="pt-3 pb-1">
+                <div 
+                    className="pt-3 pb-1 cursor-grab active:cursor-grabbing"
+                    onTouchStart={() => (document.activeElement as HTMLElement)?.blur()}
+                    onMouseDown={() => (document.activeElement as HTMLElement)?.blur()}
+                >
                     <div className={`w-12 h-1 rounded-full mx-auto ${theme === 'dark' ? 'bg-white/20' : 'bg-slate-300'}`} />
                 </div>
 

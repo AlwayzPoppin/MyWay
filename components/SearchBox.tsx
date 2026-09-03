@@ -627,6 +627,30 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               </div>
             )}
 
+            {/* Quick Ambient Category Chips Row */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-1 mb-2 shrink-0">
+              {categories.map((cat) => (
+                <button
+                  key={cat.type}
+                  type="button"
+                  onClick={() => {
+                    if (onCategorySearch) onCategorySearch(cat.type);
+                    setQuery(cat.query);
+                    setShowDrawer(false);
+                    setIsFocused(false);
+                    (document.activeElement as HTMLElement)?.blur();
+                  }}
+                  className="px-2.5 py-1 rounded-xl text-[10px] font-bold bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 shrink-0 flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+                  title={cat.label}
+                >
+                  <span className="text-xs">{cat.icon}</span>
+                  <span className={isFocused ? 'hidden min-[420px]:inline' : 'hidden min-[376px]:inline'}>
+                    {cat.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+
             {/* Header Tabs */}
             <div className="flex items-center justify-between gap-2 mb-3 pb-2 border-b border-white/10 shrink-0">
               <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
@@ -696,7 +720,11 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 0: Live Suggestions List */}
             {activeTab === 'suggestions' && (
-              <div className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5">
+              <div 
+                className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5"
+                onScroll={() => (document.activeElement as HTMLElement)?.blur()}
+                onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
+              >
                 {isLoadingSuggestions ? (
                   <div className="py-6 text-center space-y-2">
                     <div className="w-7 h-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
@@ -801,7 +829,11 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 1: Recent Searches List */}
             {activeTab === 'recent' && (
-              <div className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5">
+              <div 
+                className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5"
+                onScroll={() => (document.activeElement as HTMLElement)?.blur()}
+                onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
+              >
                 {filteredHistory.length > 0 ? (
                   filteredHistory.map((item) => {
                     const branchInfo = extractBranchDistinction(item, filteredHistory, userLocation);
@@ -920,7 +952,11 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 3: Saved Places */}
             {activeTab === 'saved' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto overscroll-contain no-scrollbar pt-1">
+              <div 
+                className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto overscroll-contain no-scrollbar pt-1"
+                onScroll={() => (document.activeElement as HTMLElement)?.blur()}
+                onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
+              >
                 {userPlaces.map((place) => (
                   <button
                     key={place.id}

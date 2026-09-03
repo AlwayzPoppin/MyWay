@@ -104,13 +104,23 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     const [customPlaceType, setCustomPlaceType] = useState<'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other'>('other');
     const sheetRef = useRef<HTMLDivElement>(null);
 
+    const dismissKeyboard = () => {
+        if (typeof document !== 'undefined') {
+            (document.activeElement as HTMLElement)?.blur();
+        }
+    };
+
     const handleTouchStart = (e: React.TouchEvent) => {
+        dismissKeyboard();
         setDragStart(e.touches[0].clientY);
     };
 
     const handleTouchMove = (e: React.TouchEvent) => {
         if (dragStart === null) return;
         const diff = dragStart - e.touches[0].clientY;
+        if (Math.abs(diff) > 5) {
+            dismissKeyboard();
+        }
         if (diff > 45 && !isExpanded) setExpanded(true);
         if (diff < -45 && isExpanded) setExpanded(false);
     };
@@ -204,7 +214,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                 {/* Drag Handle Bar */}
                 <div
                     className="pt-2.5 pb-1 flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
-                    onClick={() => setExpanded(!isExpanded)}
+                    onClick={() => {
+                        dismissKeyboard();
+                        setExpanded(!isExpanded);
+                    }}
+                    onTouchStart={dismissKeyboard}
                 >
                 <div className={`w-10 h-1.5 rounded-full transition-colors ${isDark ? 'bg-white/25 hover:bg-white/40' : 'bg-slate-300 hover:bg-slate-400'}`} />
             </div>
@@ -399,7 +413,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                     </div>
 
                     {/* ─── TAB CONTENT (SCROLLABLE) ─── */}
-                    <div className="flex-1 overflow-y-auto no-scrollbar space-y-3.5 pb-6">
+                    <div 
+                        className="flex-1 overflow-y-auto no-scrollbar space-y-3.5 pb-6"
+                        onScroll={dismissKeyboard}
+                        onTouchMove={dismissKeyboard}
+                    >
                         {!hasCircle ? (
                             onCreateCircle && onJoinCircle ? (
                                 <CircleManager
