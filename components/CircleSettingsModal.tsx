@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { FamilyMember } from '../types';
 import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo } from '../services/authService';
