@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Place } from '../types';
+import { Place, EntranceType } from '../types';
 import { compressImageFile, placeCorrectionService } from '../services/placeCorrectionService';
 
 interface EditPlaceModalProps {
@@ -38,6 +38,8 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
     const [type, setType] = useState<string>('other');
     const [radius, setRadius] = useState<number>(0.3);
     const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
+    const [entranceType, setEntranceType] = useState<EntranceType | undefined>(undefined);
+    const [savedPresetNotice, setSavedPresetNotice] = useState<string | null>(null);
     const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
     useEffect(() => {
@@ -46,7 +48,9 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             setIcon(place.icon || '📍');
             setType(place.type || 'other');
             setRadius(place.radius ? (place.radius > 5 ? place.radius / 1000 : place.radius) : 0.05);
+            setEntranceType(place.entranceType || (place.type === 'home' ? 'driveway' : 'front_door'));
             setImageUrl(place.imageUrl || undefined);
+            setSavedPresetNotice(null);
         }
     }, [place]);
 
@@ -89,6 +93,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             icon,
             type: type as any,
             radius,
+            entranceType,
             imageUrl: finalPhotoUrl
         });
         onClose();
@@ -191,11 +196,19 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                                 }`}>
                                     Safe Zone Geofence
                                 </span>
-                                <p className="text-[9px] text-slate-400">Arrival & departure alert radius</p>
+                                <p className="text-[9px] text-slate-400">
+                                    Radius: {radius && radius > 5 ? `${Math.round(radius)}m` : (radius && radius < 0.1 ? `${Math.round(radius * 1000)}m` : `${radius?.toFixed(2)}km`)}
+                                </p>
                             </div>
-                            <span className={`text-xs font-black ${textColor}`}>
-                                {Math.round((radius && radius > 5 ? radius : (radius || 0.05) * 1000))}m
-                            </span>
+                            {savedPresetNotice ? (
+                                <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 animate-pulse">
+                                    {savedPresetNotice}
+                                </span>
+                            ) : (
+                                <span className={`text-xs font-black ${textColor}`}>
+                                    {Math.round((radius && radius > 5 ? radius : (radius || 0.05) * 1000))}m
+                                </span>
+                            )}
                         </div>
 
                         {/* Quick-Preset Radius Chips */}
@@ -212,7 +225,11 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                                     <button
                                         key={preset.label}
                                         type="button"
-                                        onClick={() => setRadius(preset.value)}
+                                        onClick={() => {
+                                            setRadius(preset.value);
+                                            setSavedPresetNotice(`📍 ${preset.label} (${preset.meters})`);
+                                            setTimeout(() => setSavedPresetNotice(null), 2500);
+                                        }}
                                         className={`px-2.5 py-1 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer shrink-0 border ${
                                             isActive
                                                 ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
@@ -243,6 +260,51 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                             <span>15m (Driveway)</span>
                             <span>1km</span>
                             <span>2km</span>
+                        </div>
+
+                        {/* Entrance Anchor Point (Driveway Curb Cut vs Front Door) */}
+                        <div className="mt-3 pt-3 border-t border-white/10">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5 flex items-center justify-between">
+                                <span>Geofence Departure Anchor</span>
+                                <span className="text-[9px] text-indigo-400 font-semibold lowercase">
+                                    {entranceType === 'driveway' ? '🚗 driveway curb' : '🚪 front door'}
+                                </span>
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setEntranceType('driveway')}
+                                    className={`py-2 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border transition-all cursor-pointer ${
+                                        entranceType === 'driveway'
+                                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
+                                            : isDark
+                                                ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    <span>🚗</span>
+                                    <span>Driveway Curb</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setEntranceType('front_door')}
+                                    className={`py-2 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border transition-all cursor-pointer ${
+                                        entranceType === 'front_door'
+                                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
+                                            : isDark
+                                                ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    <span>🚪</span>
+                                    <span>Front Door</span>
+                                </button>
+                            </div>
+                            <p className="text-[9px] text-slate-400 mt-1 leading-tight">
+                                {entranceType === 'driveway'
+                                    ? 'Anchoring to the driveway curb cut triggers departure alerts the instant the car enters the street.'
+                                    : 'Anchors the geofence perimeter to the main building entrance / rooftop centroid.'}
+                            </p>
                         </div>
                     </div>
 

@@ -70,7 +70,7 @@ import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceS
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from './utils/avatar';
 // Audit #3: rewardsService removed
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText } from './services/placesService';
-import { subscribeToUserPlaces, subscribeToUserPlacesMulti, UserPlace, addUserPlace, deleteUserPlace, updateUserPlace } from './services/userPlacesService';
+import { subscribeToUserPlaces, subscribeToUserPlacesMulti, UserPlace, addUserPlace, deleteUserPlace, updateUserPlace, broadcastPlaceGeofenceUpdate } from './services/userPlacesService';
 import { placeCorrectionService } from './services/placeCorrectionService';
 // Audit #3: sponsoredPlacesService removed
 import { updateNavigationState, NavigationState } from './services/navigationEngine';
@@ -831,7 +831,18 @@ const App: React.FC = () => {
 
     const actualPlaceId = targetSavedPlace?.id || placeId;
 
-    // 2. Update selected place state immediately
+    // 2. Visual Save Confirmation: Formatted descriptor toast
+    const radiusMeters = radius > 5 ? Math.round(radius) : Math.round(radius * 1000);
+    let radiusDescriptor = 'Safe Zone';
+    if (radiusMeters <= 20) radiusDescriptor = 'Driveway';
+    else if (radiusMeters <= 75) radiusDescriptor = 'Street';
+    else if (radiusMeters <= 250) radiusDescriptor = 'Neighborhood';
+    else radiusDescriptor = 'City Area';
+
+    const displayMeters = radiusMeters >= 1000 ? `${(radiusMeters / 1000).toFixed(1).replace('.0', '')}km` : `${radiusMeters}m`;
+    showNotification(`📍 Geofence set to ${displayMeters} (${radiusDescriptor})`, 3500);
+
+    // 3. Update selected place state immediately
     setSelectedPlace(prev => {
       if (!prev) return null;
       if (prev.id === placeId || prev.id === actualPlaceId || 
@@ -841,12 +852,12 @@ const App: React.FC = () => {
       return prev;
     });
     
-    // 3. Update discovered places state so the geofence circle on the 3D Map updates live
+    // 4. Update discovered places state so the geofence circle on the 3D Map updates live
     setDiscoveredPlaces(prev => prev.map(p => 
       (p.id === placeId || p.id === actualPlaceId) ? { ...p, radius } : p
     ));
     
-    // 4. Update userPlaces and persist to localStorage immediately
+    // 5. Update userPlaces and persist to localStorage immediately
     setUserPlaces(prev => {
       const next = prev.map(p => 
         (p.id === placeId || p.id === actualPlaceId) ? { ...p, radius } : p
@@ -857,7 +868,7 @@ const App: React.FC = () => {
       return next;
     });
 
-    // 5. Sync to Firebase across all target circles and user personal store
+    // 6. Sync to Firebase across all target circles and user personal store
     const targetCircleId = targetSavedPlace?.circleId || currentCircle?.id || profile?.familyCircleId || userCircles[0]?.id || '';
     const allCircleIds = Array.from(new Set([
       targetCircleId,
@@ -869,7 +880,15 @@ const App: React.FC = () => {
     updateUserPlace(targetCircleId, actualPlaceId, { radius }, user?.uid, allCircleIds).catch(err => {
       console.warn('Could not update saved place radius in DB:', err);
     });
-  }, [user, profile, currentCircle, userCircles, userPlaces, selectedPlace]);
+
+    // 7. Realtime Circle Broadcast: Broadcast across active circle WebSockets & Activity feed
+    const memberName = profile?.displayName || user?.displayName || 'Family Member';
+    const targetPlaceName = targetSavedPlace?.name || selectedPlace?.name || 'Safe Zone';
+    if (targetCircleId) {
+      broadcastPlaceGeofenceUpdate(targetCircleId, actualPlaceId, targetPlaceName, radiusMeters, memberName);
+    }
+    logActivity('CIRCLE', 'Geofence Updated', `${memberName} set ${targetPlaceName} geofence to ${displayMeters} (${radiusDescriptor})`, '📍', user?.uid);
+  }, [user, profile, currentCircle, userCircles, userPlaces, selectedPlace, showNotification, logActivity]);
 
   const handleTriggerSOS = useCallback((impact?: CrashImpactMetadata) => {
     const memberName = profile?.displayName || user?.displayName || 'You';

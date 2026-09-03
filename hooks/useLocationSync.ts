@@ -149,8 +149,8 @@ export const useLocationSync = (
         geolocationService.watchPosition((location) => {
             // Geofence Detection with 2-Fix Confirmation Window (Drift Tolerance for 15m micro-geofences)
             geofences.forEach(gf => {
-                const gfLat = gf?.location?.lat ?? gf?.lat;
-                const gfLng = gf?.location?.lng ?? gf?.lng;
+                const gfLat = gf?.entranceLocation?.lat ?? gf?.location?.lat ?? gf?.lat;
+                const gfLng = gf?.entranceLocation?.lng ?? gf?.location?.lng ?? gf?.lng;
                 if (typeof gfLat !== 'number' || typeof gfLng !== 'number') return;
 
                 const distance = getDistanceFromCoords(location.latitude, location.longitude, gfLat, gfLng);
@@ -423,8 +423,8 @@ export const useLocationSync = (
                     let insideGeofenceCoords: { lat: number; lng: number } | null = null;
                     if (geofences && geofences.length > 0) {
                         for (const gf of geofences) {
-                            const gfLat = gf?.location?.lat ?? gf?.lat;
-                            const gfLng = gf?.location?.lng ?? gf?.lng;
+                            const gfLat = gf?.entranceLocation?.lat ?? gf?.location?.lat ?? gf?.lat;
+                            const gfLng = gf?.entranceLocation?.lng ?? gf?.location?.lng ?? gf?.lng;
                             if (typeof gfLat === 'number' && typeof gfLng === 'number') {
                                 const distToGf = getDistanceFromCoords(location.latitude, location.longitude, gfLat, gfLng);
                                 if (distToGf <= (gf.radius || 150)) {
@@ -744,8 +744,8 @@ export const useLocationSync = (
                     }
 
                     geofences.forEach((gf) => {
-                        const gfLat = gf?.location?.lat ?? (gf as any)?.lat;
-                        const gfLng = gf?.location?.lng ?? (gf as any)?.lng;
+                        const gfLat = gf?.entranceLocation?.lat ?? gf?.location?.lat ?? (gf as any)?.lat;
+                        const gfLng = gf?.entranceLocation?.lng ?? gf?.location?.lng ?? (gf as any)?.lng;
                         if (typeof gfLat === 'number' && typeof gfLng === 'number') {
                             const distance = getDistanceFromCoords(lat, lng, gfLat, gfLng);
                             const radius = gf.radius || 150;

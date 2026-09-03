@@ -177,7 +177,7 @@ export interface FamilyMember {
   circleBadges?: { id: string; name: string; color: string }[];
 }
 
-export type EntranceType = 'drive_thru' | 'parking' | 'main_door' | 'curbside' | 'general';
+export type EntranceType = 'drive_thru' | 'parking' | 'main_door' | 'curbside' | 'general' | 'driveway' | 'front_door';
 
 export interface Place {
   id: string;
@@ -197,7 +197,8 @@ export interface Place {
   maintenanceCategory?: string; // e.g. "Oil Change", "Tire Rotation", "Brake Inspection"
   imageUrl?: string; // Storefront / entrance photo URL or Data URI
   isCorrected?: boolean; // User-verified / corrected entrance location
-  entranceType?: EntranceType; // Specific entrance category (drive-thru, parking, main door, curbside)
+  entranceLocation?: Location; // Driveway curb-cut or entrance coordinate for micro-geofencing
+  entranceType?: EntranceType; // Specific entrance category (drive-thru, parking, main door, curbside, driveway, front_door)
   entranceNotes?: string; // e.g. "East side drive-thru entrance"
   correctedAt?: number; // Timestamp of the correction
   submitterId?: string; // Member ID who verified the pin

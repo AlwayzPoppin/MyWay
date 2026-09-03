@@ -7,8 +7,11 @@ import { placeCorrectionService, PlaceCorrection, compressImageFile } from '../s
 import { publicMapReportService } from '../services/publicMapReportService';
 import { getDistanceMeters, getBearing } from '../utils/geo';
 import { hapticTick, hapticSuccess, hapticError } from '../utils/haptics';
+import { getCircleCoords } from './MapLibre3DView';
 
 export const ENTRANCE_CATEGORY_OPTIONS: { id: EntranceType; label: string; icon: string; description: string; defaultNote: string }[] = [
+    { id: 'driveway', label: 'Driveway Curb Cut', icon: '🚗', description: 'Driveway access connecting to street', defaultNote: 'Driveway curb cut' },
+    { id: 'front_door', label: 'Front Door / Entry', icon: '🚪', description: 'Pedestrian front door or entryway', defaultNote: 'Front door entrance' },
     { id: 'drive_thru', label: 'Drive-Thru Lane', icon: '🚗', description: 'Drive-thru order or pickup', defaultNote: 'Drive-thru entrance lane' },
     { id: 'parking', label: 'Parking Lot / Gate', icon: '🅿️', description: 'Vehicle parking entrance or gate', defaultNote: 'Parking lot entrance / gate' },
     { id: 'main_door', label: 'Main Lobby / Door', icon: '🚪', description: 'Front storefront or lobby', defaultNote: 'Main storefront entrance' },
@@ -104,9 +107,73 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
 
         mapInstanceRef.current = map;
 
+        const effectiveRadiusM = (place.radius ? (place.radius > 5 ? place.radius : place.radius * 1000) : 15);
+        const radiusKm = (effectiveRadiusM / 1000);
+        const isMicro = effectiveRadiusM <= 30;
+
         map.on('load', () => {
             setIsMapLoaded(true);
             map.resize();
+
+            // Render Safe Zone Geofence Circle & Faint Dotted +3m Departure Hysteresis Ring
+            const center = map.getCenter();
+            const centerLoc = { lat: center.lat, lng: center.lng };
+            const innerCoords = getCircleCoords(centerLoc, radiusKm, 64);
+
+            map.addSource('reticle-geofence-source', {
+                type: 'geojson',
+                data: {
+                    type: 'Feature',
+                    properties: {},
+                    geometry: { type: 'Polygon', coordinates: [innerCoords] }
+                }
+            });
+
+            map.addLayer({
+                id: 'reticle-geofence-fill',
+                type: 'fill',
+                source: 'reticle-geofence-source',
+                paint: {
+                    'fill-color': '#6366f1',
+                    'fill-opacity': 0.12
+                }
+            });
+
+            map.addLayer({
+                id: 'reticle-geofence-outline',
+                type: 'line',
+                source: 'reticle-geofence-source',
+                paint: {
+                    'line-color': '#818cf8',
+                    'line-width': 2,
+                    'line-opacity': 0.8
+                }
+            });
+
+            if (isMicro) {
+                const hystKm = radiusKm + 0.003; // +3m departure buffer
+                const hystCoords = getCircleCoords(centerLoc, hystKm, 64);
+                map.addSource('reticle-hysteresis-source', {
+                    type: 'geojson',
+                    data: {
+                        type: 'Feature',
+                        properties: {},
+                        geometry: { type: 'Polygon', coordinates: [hystCoords] }
+                    }
+                });
+
+                map.addLayer({
+                    id: 'reticle-hysteresis-outline',
+                    type: 'line',
+                    source: 'reticle-hysteresis-source',
+                    paint: {
+                        'line-color': '#38bdf8',
+                        'line-width': 1.8,
+                        'line-opacity': 0.85,
+                        'line-dasharray': [2, 3] // Faint dotted outer ring
+                    }
+                });
+            }
         });
 
         // Failsafe for portal-mounting and animation layout delays
@@ -135,10 +202,34 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
         // Update live coordinates when map moves under the reticle
         map.on('move', () => {
             const center = map.getCenter();
-            setCurrentCoords({
+            const nextCoords = {
                 lat: parseFloat(center.lat.toFixed(6)),
                 lng: parseFloat(center.lng.toFixed(6))
-            });
+            };
+            setCurrentCoords(nextCoords);
+
+            // Sync geofence rings to center of crosshair
+            const innerSource = map.getSource('reticle-geofence-source') as maplibregl.GeoJSONSource;
+            if (innerSource) {
+                const innerCoords = getCircleCoords(nextCoords, radiusKm, 64);
+                innerSource.setData({
+                    type: 'Feature',
+                    properties: {},
+                    geometry: { type: 'Polygon', coordinates: [innerCoords] }
+                });
+            }
+
+            if (isMicro) {
+                const hystSource = map.getSource('reticle-hysteresis-source') as maplibregl.GeoJSONSource;
+                if (hystSource) {
+                    const hystCoords = getCircleCoords(nextCoords, radiusKm + 0.003, 64);
+                    hystSource.setData({
+                        type: 'Feature',
+                        properties: {},
+                        geometry: { type: 'Polygon', coordinates: [hystCoords] }
+                    });
+                }
+            }
         });
 
         return () => {
@@ -246,6 +337,7 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                 address: correctedAddress.trim() || place.address || place.description,
                 originalLocation: place.originalLocation || place.location,
                 location: currentCoords,
+                entranceLocation: currentCoords, // Anchor micro-geofence to the driveway curb cut
                 imageUrl: finalPhotoUrl,
                 entranceType,
                 entranceNotes: entranceNotes.trim() || undefined,
@@ -440,6 +532,20 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                                         {/* Elevation Shadow underneath */}
                                         <div className="w-5 h-2 rounded-full bg-black/50 blur-[2px] mt-1" />
                                     </div>
+                                </div>
+
+                                {/* Geofence & Departure Hysteresis Legend Badge */}
+                                <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between px-3 py-1.5 rounded-xl bg-slate-950/85 border border-white/15 backdrop-blur-md shadow-lg pointer-events-none z-10">
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-2.5 h-2.5 rounded-full bg-indigo-500 border border-white/80" />
+                                        <span className="text-[10px] font-bold text-white">Safe Zone ({Math.round(place.radius ? (place.radius > 5 ? place.radius : place.radius * 1000) : 15)}m)</span>
+                                    </div>
+                                    {(place.radius ? (place.radius > 5 ? place.radius : place.radius * 1000) : 15) <= 30 && (
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-4 h-0 border-t-2 border-dashed border-sky-400" />
+                                            <span className="text-[10px] font-bold text-sky-300">Departure Buffer (+3m)</span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Map Floating Tools Overlay */}

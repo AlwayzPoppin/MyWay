@@ -2331,18 +2331,29 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }, [maintenancePlaces, onSelectPlace, isMapReady, styleVersion, theme]);
 
     // ==========================================
-    // UNIFIED WEBGL GEOFENCE POLYGONS
+    // UNIFIED WEBGL GEOFENCE POLYGONS & HYSTERESIS BUFFER
     // ==========================================
     useEffect(() => {
         if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'places-geofences-source';
-        const features = places.filter(place => !place.isAmbient).map(place => {
+        const hysteresisSourceId = 'places-geofences-hysteresis-source';
+
+        const features: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+        const hysteresisFeatures: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+
+        places.filter(place => !place.isAmbient).forEach(place => {
             const rawRadius = place.radius;
             const radiusKm = rawRadius ? (rawRadius > 5 ? rawRadius / 1000 : rawRadius) : 0.05;
             const effectiveRadiusKm = Math.max(0.015, radiusKm);
-            const coords = getCircleCoords(place.location, effectiveRadiusKm, 64);
-            return {
+
+            // Entrance-Specific Geofencing: Anchor circle to driveway curb cut if present, else centroid
+            const anchorLoc = (place.entranceLocation && typeof place.entranceLocation.lat === 'number')
+                ? place.entranceLocation
+                : place.location;
+
+            const coords = getCircleCoords(anchorLoc, effectiveRadiusKm, 64);
+            features.push({
                 type: 'Feature' as const,
                 id: place.id,
                 properties: { id: place.id, name: place.name },
@@ -2350,7 +2361,22 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     type: 'Polygon' as const,
                     coordinates: [coords]
                 }
-            };
+            });
+
+            // Visual Hysteresis Ring: Render faint dotted outer ring (+3m) for micro-geofences (<= 30m, like 15m driveway)
+            if (effectiveRadiusKm <= 0.030) {
+                const hystKm = effectiveRadiusKm + 0.003; // +3 meters departure buffer
+                const hystCoords = getCircleCoords(anchorLoc, hystKm, 64);
+                hysteresisFeatures.push({
+                    type: 'Feature' as const,
+                    id: `${place.id}-hysteresis`,
+                    properties: { id: `${place.id}-hysteresis`, name: `${place.name} (+3m Departure Buffer)` },
+                    geometry: {
+                        type: 'Polygon' as const,
+                        coordinates: [hystCoords]
+                    }
+                });
+            }
         });
 
         const geojsonData: GeoJSON.FeatureCollection = {
@@ -2358,6 +2384,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             features
         };
 
+        const hysteresisData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: hysteresisFeatures
+        };
+
+        // 1. Primary Safe Zone Geofence Layer
         const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
         if (source) {
             source.setData(geojsonData);
@@ -2386,6 +2418,29 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     'line-width': 1.5,
                     'line-opacity': theme === 'dark' ? 0.25 : 0.38,
                     'line-dasharray': [3, 3]
+                }
+            });
+        }
+
+        // 2. Faint Dotted Outer Hysteresis Ring (+3m Departure Buffer for 15m Micro-Geofences)
+        const hystSource = map.current.getSource(hysteresisSourceId) as maplibregl.GeoJSONSource;
+        if (hystSource) {
+            hystSource.setData(hysteresisData);
+        } else {
+            map.current.addSource(hysteresisSourceId, {
+                type: 'geojson',
+                data: hysteresisData
+            });
+
+            map.current.addLayer({
+                id: `${hysteresisSourceId}-outline`,
+                type: 'line',
+                source: hysteresisSourceId,
+                paint: {
+                    'line-color': theme === 'dark' ? '#38bdf8' : '#0284c7', // Sky-blue / cyan subtle departure ring
+                    'line-width': 1.8,
+                    'line-opacity': theme === 'dark' ? 0.75 : 0.65,
+                    'line-dasharray': [2, 3] // Faint dotted outer ring
                 }
             });
         }

@@ -220,6 +220,32 @@ export const updateUserPlace = async (
     }
 };
 
+/**
+ * Broadcast place radius update across active circle WebSockets
+ */
+export const broadcastPlaceGeofenceUpdate = async (
+    circleId: string,
+    placeId: string,
+    placeName: string,
+    radiusMeters: number,
+    updatedBy: string
+): Promise<void> => {
+    if (!circleId) return;
+    try {
+        const eventsRef = ref(database, `circle_events/${circleId}`);
+        await push(eventsRef, {
+            type: 'geofence_updated',
+            placeId,
+            placeName,
+            radiusMeters,
+            updatedBy,
+            timestamp: Date.now()
+        });
+    } catch (e) {
+        console.warn('[UserPlaces] Failed broadcasting geofence event:', e);
+    }
+};
+
 // Delete a user place
 export const deleteUserPlace = async (
     circleId: string,
