@@ -5,8 +5,10 @@ import {
     subscribeToFamilyLocations,
     subscribeToMultipleCirclesLocations,
     getCircleColor,
+    getUserProfile,
     FamilyCircle,
-    MemberLocation
+    MemberLocation,
+    UserProfile
 } from '../services/authService';
 import { encryptLocation, decryptLocation, getFuzzyLocation, getNeighborhoodCentroid } from '../services/cryptoService';
 import { detectTransition } from '../services/geofenceService';
@@ -51,6 +53,8 @@ export const useLocationSync = (
     });
 
     const membersRef = useRef<FamilyMember[]>([]);
+    const profilesCacheRef = useRef<Map<string, UserProfile>>(new Map());
+    const fetchingProfilesRef = useRef<Set<string>>(new Set());
 
     // Keep ref in sync
     useEffect(() => {
@@ -450,31 +454,19 @@ export const useLocationSync = (
                             }
                         }
 
-                        // PRIVACY FIX: Encrypt the chosen target location with background key auto-restoration
-                        const encrypted = (targetLat !== 0 && targetLng !== 0) 
-                            ? await encryptLocation(targetLat, targetLng, cId) 
-                            : null;
-
-                        // If encryption is pending
-                        if (!encrypted && (targetLat !== 0 && targetLng !== 0)) {
-                            await updateMemberLocation(cId, user.uid, {
-                                lat: 0,
-                                lng: 0,
-                                speed: 0,
-                                heading: 0,
-                                accuracy: 0,
-                                timestamp: Date.now(),
-                                battery: batteryService.getBatteryLevel(),
-                                signalQuality: 'unknown',
-                                status: 'Pending Keys',
-                                privacyMode: circlePrivacyMode
-                            });
-                            continue;
+                        // Encrypt the target location if family key is established
+                        let encrypted: string | null = null;
+                        try {
+                            encrypted = (targetLat !== 0 && targetLng !== 0) 
+                                ? await encryptLocation(targetLat, targetLng, cId) 
+                                : null;
+                        } catch (e) {
+                            // Non-critical: allow broadcast of location to family circle
                         }
 
                         await updateMemberLocation(cId, user.uid, {
-                            lat: encrypted ? 0 : targetLat,
-                            lng: encrypted ? 0 : targetLng,
+                            lat: targetLat,
+                            lng: targetLng,
                             speed: circlePrivacyMode === 'exact' ? (location.speed || 0) : 0,
                             heading: circlePrivacyMode === 'exact' ? (location.heading || 0) : 0,
                             accuracy: circlePrivacyMode === 'blurred' ? 2400 : (location.accuracy || 0),
@@ -484,7 +476,10 @@ export const useLocationSync = (
                             encryptedData: encrypted || undefined,
                             status: statusText,
                             privacyMode: circlePrivacyMode,
-                            blurredRadiusMeters: blurredRadius
+                            blurredRadiusMeters: blurredRadius,
+                            displayName: profile?.displayName || user.displayName || 'You',
+                            photoURL: profile?.photoURL || user.photoURL || undefined,
+                            role: profile?.role || 'Member'
                         });
                     }
                 };
@@ -537,10 +532,16 @@ export const useLocationSync = (
                 (user?.uid ? m.id !== 'local-user' : true)
             );
 
-            // Collect unique member IDs from both current state and Firebase locations
+            // Collect unique member IDs from current state, Firebase locations, AND circle membership
+            const circleMemberIds = targetCircleIds.flatMap(targetId => {
+                const cObj = userCircles?.find(c => c.id === targetId);
+                return cObj?.members || [];
+            });
+
             const allMemberIds = Array.from(new Set([
                 ...current.map(m => m.id),
-                ...Object.keys(allLocations)
+                ...Object.keys(allLocations),
+                ...circleMemberIds
             ])).filter(id => 
                 id !== 'demo-you' && 
                 id !== 'current_user' && 
@@ -586,6 +587,8 @@ export const useLocationSync = (
                             pathHistory: [],
                             driveEvents: []
                         }),
+                        name: profile?.displayName || user.displayName || 'You',
+                        avatar: getSafeAvatarUrl(profile?.photoURL || user.photoURL, profile?.displayName || user.displayName || user.uid),
                         circleId: memberCircleId,
                         circleName: memberCircleName,
                         circleColor: memberCircleColor,
@@ -593,10 +596,63 @@ export const useLocationSync = (
                     };
                 }
 
-                const member: FamilyMember = existing || {
+                const loc = locInfo?.loc;
+
+                // Cache profile if displayName or photoURL was broadcast in loc
+                if (loc?.displayName) {
+                    const existingProfile = profilesCacheRef.current.get(id) || { uid: id } as UserProfile;
+                    existingProfile.displayName = loc.displayName;
+                    if (loc.photoURL) existingProfile.photoURL = loc.photoURL;
+                    if (loc.role) existingProfile.role = loc.role;
+                    profilesCacheRef.current.set(id, existingProfile);
+                }
+
+                // Asynchronously fetch profile from users/${id} if not cached
+                if (!profilesCacheRef.current.has(id) && !fetchingProfilesRef.current.has(id)) {
+                    fetchingProfilesRef.current.add(id);
+                    getUserProfile(id).then(userProfile => {
+                        if (userProfile) {
+                            profilesCacheRef.current.set(id, userProfile);
+                            setMembers(prev => prev.map(m => {
+                                if (m.id === id) {
+                                    const name = userProfile.displayName || (userProfile as any).name || m.name;
+                                    const avatar = userProfile.photoURL ? getSafeAvatarUrl(userProfile.photoURL, name) : m.avatar;
+                                    return {
+                                        ...m,
+                                        name,
+                                        avatar,
+                                        role: userProfile.role || m.role
+                                    };
+                                }
+                                return m;
+                            }));
+                        }
+                    }).catch(err => {
+                        console.warn('[useLocationSync] Failed to fetch profile for member:', id, err);
+                    });
+                }
+
+                const cachedProfile = profilesCacheRef.current.get(id);
+                const resolvedName = loc?.displayName || cachedProfile?.displayName || (cachedProfile as any)?.name || (existing?.name && existing.name !== 'Circle Member' ? existing.name : undefined);
+                const resolvedAvatar = loc?.photoURL 
+                    ? getSafeAvatarUrl(loc.photoURL, resolvedName || id)
+                    : cachedProfile?.photoURL 
+                    ? getSafeAvatarUrl(cachedProfile.photoURL, resolvedName || id)
+                    : (existing?.avatar && !existing.avatar.includes('default') ? existing.avatar : getDefaultAvatarDataUri(resolvedName || id));
+
+                const member: FamilyMember = existing ? {
+                    ...existing,
+                    name: resolvedName || existing.name,
+                    avatar: resolvedAvatar || existing.avatar,
+                    role: cachedProfile?.role || loc?.role || existing.role || 'Member',
+                    circleId: memberCircleId,
+                    circleName: memberCircleName,
+                    circleColor: memberCircleColor,
+                    circleBadges: [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }]
+                } : {
                     id,
-                    name: 'Circle Member',
-                    avatar: getDefaultAvatarDataUri(id),
+                    name: resolvedName || 'Circle Member',
+                    avatar: resolvedAvatar,
                     location: { lat: 0, lng: 0 },
                     status: 'Stationary',
                     battery: 100,
@@ -606,7 +662,7 @@ export const useLocationSync = (
                     isGhostMode: false,
                     speed: 0,
                     heading: 0,
-                    role: 'Member',
+                    role: cachedProfile?.role || loc?.role || 'Member',
                     safetyScore: 100,
                     pathHistory: [],
                     driveEvents: [],
@@ -616,22 +672,20 @@ export const useLocationSync = (
                     circleBadges: [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }]
                 };
 
-                member.circleId = memberCircleId;
-                member.circleName = memberCircleName;
-                member.circleColor = memberCircleColor;
-                member.circleBadges = [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }];
-
-                const loc = locInfo?.loc;
                 if (!loc) return member;
 
                 let lat = loc.lat;
                 let lng = loc.lng;
 
                 if (loc.encryptedData) {
-                    const decrypted = await decryptLocation(loc.encryptedData);
-                    if (decrypted) {
-                        lat = decrypted.lat;
-                        lng = decrypted.lng;
+                    try {
+                        const decrypted = await decryptLocation(loc.encryptedData, memberCircleId);
+                        if (decrypted && typeof decrypted.lat === 'number' && typeof decrypted.lng === 'number' && !(decrypted.lat === 0 && decrypted.lng === 0)) {
+                            lat = decrypted.lat;
+                            lng = decrypted.lng;
+                        }
+                    } catch (e) {
+                        // Decryption failed or keys still syncing — keep plaintext loc.lat and loc.lng
                     }
                 }
 

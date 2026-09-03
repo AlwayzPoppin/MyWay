@@ -611,6 +611,9 @@ export interface MemberLocation {
     privacyMode?: PrivacyMode;
     blurredRadiusMeters?: number;
     currentTrip?: MemberTrip | null;
+    displayName?: string;
+    photoURL?: string;
+    role?: string;
 }
 
 export const updateMemberLocation = async (
@@ -633,6 +636,15 @@ export const updateMemberLocation = async (
     };
     if (location.encryptedData !== undefined) {
         payload.encryptedData = location.encryptedData;
+    }
+    if (location.displayName) {
+        payload.displayName = location.displayName;
+    }
+    if (location.photoURL) {
+        payload.photoURL = location.photoURL;
+    }
+    if (location.role) {
+        payload.role = location.role;
     }
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
