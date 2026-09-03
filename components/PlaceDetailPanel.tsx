@@ -5,8 +5,10 @@ import { fetchRouteOptions, fetchDetourDeltas } from '../services/osrmService';
 import { vehicleFuelService } from '../services/vehicleFuelService';
 import { convoyService } from '../services/convoyService';
 import { placeCorrectionService } from '../services/placeCorrectionService';
+import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
 import { searchPlacesText, searchGasStations, searchCoffeeShops, searchRestaurants } from '../services/placesService';
 import { audioService } from '../services/audioService';
+import { hapticSuccess, hapticTick } from '../utils/haptics';
 import BrandIcon from './BrandIcon';
 
 interface PlaceDetailPanelProps {
@@ -285,17 +287,45 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const textColor = theme === 'dark' ? 'text-white' : 'text-slate-900';
     const subTextColor = theme === 'dark' ? 'text-slate-400' : 'text-slate-500';
 
-    // Submitter Attribution & "Helpful" Upvote state
-    const [isUpvoting, setIsUpvoting] = useState(false);
+    // Submitter Attribution & "Helpful" / "Not there" Voting state
+    const [isVoting, setIsVoting] = useState(false);
+    const [hasDownvoted, setHasDownvoted] = useState(false);
     const [localHelpfulCount, setLocalHelpfulCount] = useState(place?.helpfulCount || 0);
     const [hasUpvoted, setHasUpvoted] = useState(() => {
         return Array.isArray(place?.helpfulUserIds) && currentUserId ? place.helpfulUserIds.includes(currentUserId) : false;
     });
 
+    // Look up crowdsourced public map report for this place
+    const [publicReport, setPublicReport] = useState<PublicMapReport | null>(() => {
+        return publicMapReportService.getReportForPlace(place);
+    });
+
+    useEffect(() => {
+        setPublicReport(publicMapReportService.getReportForPlace(place));
+        const unsub = publicMapReportService.subscribe(() => {
+            setPublicReport(publicMapReportService.getReportForPlace(place));
+        });
+        return unsub;
+    }, [place?.id, place?.name]);
+
     useEffect(() => {
         setLocalHelpfulCount(place?.helpfulCount || 0);
         setHasUpvoted(Array.isArray(place?.helpfulUserIds) && currentUserId ? place.helpfulUserIds.includes(currentUserId) : false);
     }, [place?.id, place?.helpfulCount, place?.helpfulUserIds, currentUserId]);
+
+    const isVerified = Boolean(place?.isCorrected || publicReport);
+
+    const trustScore = useMemo(() => {
+        if (publicReport?.trustScore !== undefined) return publicReport.trustScore;
+        return (localHelpfulCount ? localHelpfulCount + 1 : 1);
+    }, [publicReport?.trustScore, localHelpfulCount]);
+
+    const isCommunityReport = useMemo(() => {
+        if (place?.visibility === 'public') return true;
+        if (publicReport && publicReport.visibility === 'public') return true;
+        if (place?.submitterName === 'MyWay Community') return true;
+        return false;
+    }, [place?.visibility, publicReport, place?.submitterName]);
 
     const submitterMember = useMemo(() => {
         if (!place?.submitterId || !members.length) return null;
@@ -303,26 +333,55 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     }, [place?.submitterId, members]);
 
     const submitterDisplayName = useMemo(() => {
+        // Enforce anonymous community branding for public reports
+        if (isCommunityReport) return 'MyWay Community';
         if (place?.submitterId && currentUserId && place.submitterId === currentUserId) return 'You';
         if (submitterMember?.name) return submitterMember.name;
-        return place?.submitterName || 'Circle Member';
-    }, [place?.submitterId, currentUserId, submitterMember, place?.submitterName]);
+        return place?.submitterName || 'MyWay Community';
+    }, [isCommunityReport, place?.submitterId, currentUserId, submitterMember, place?.submitterName]);
 
     const submitterAvatar = useMemo(() => {
+        if (isCommunityReport) return null; // Anonymize avatar for public reports
         return submitterMember?.avatar || place?.submitterAvatar || null;
-    }, [submitterMember, place?.submitterAvatar]);
+    }, [isCommunityReport, submitterMember, place?.submitterAvatar]);
 
     const handleToggleHelpful = async () => {
-        if (!place || isUpvoting) return;
-        setIsUpvoting(true);
+        if (!place || isVoting) return;
+        setIsVoting(true);
         try {
+            hapticSuccess();
+            if (publicReport) {
+                const updated = await publicMapReportService.voteReport(publicReport.id, currentUserId || 'driver', 'up');
+                if (updated) setPublicReport(updated);
+            }
             const nextCount = await placeCorrectionService.toggleHelpful(place, currentUserId || 'driver');
             setLocalHelpfulCount(nextCount);
-            setHasUpvoted(prev => !prev);
+            setHasUpvoted(true);
+            setHasDownvoted(false);
         } catch (err) {
             console.error('Failed to toggle helpful upvote:', err);
         } finally {
-            setIsUpvoting(false);
+            setIsVoting(false);
+        }
+    };
+
+    const handleDownvote = async () => {
+        if (!place || isVoting) return;
+        setIsVoting(true);
+        try {
+            hapticTick();
+            if (publicReport) {
+                const updated = await publicMapReportService.voteReport(publicReport.id, currentUserId || 'driver', 'down');
+                if (updated) setPublicReport(updated);
+            } else {
+                setLocalHelpfulCount(prev => Math.max(0, prev - 1));
+            }
+            setHasDownvoted(true);
+            setHasUpvoted(false);
+        } catch (err) {
+            console.error('Failed to submit downvote:', err);
+        } finally {
+            setIsVoting(false);
         }
     };
 
@@ -1016,10 +1075,18 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         📏 {distance}
                                     </span>
                                 )}
-                                {place.isCorrected && (
-                                    <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                                        <span>⭐</span> Verified Pin
-                                    </span>
+                                {isVerified && (
+                                    <>
+                                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                            <span>⭐</span> Verified Pin
+                                        </span>
+                                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                                            <span>{place.entranceType ? '🚪' : '📍'}</span> {place.entranceType ? 'Verified Entrance Fix' : 'Verified Location Fix'}
+                                        </span>
+                                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
+                                            <span>⭐</span> Trust: {trustScore}
+                                        </span>
+                                    </>
                                 )}
                                 {place.entranceType && (
                                     <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border flex items-center gap-1 ${
@@ -1053,23 +1120,23 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 </p>
                             )}
 
-                            {/* Circle Attribution & "👍 Helpful" Inline Row (Mobile) */}
-                            {place.isCorrected && (
-                                <div className={`flex items-center justify-between gap-2 px-2.5 py-1 rounded-xl border mt-1.5 text-[10px] ${
+                            {/* Crowdsourced Verification & Voting Row (Mobile) */}
+                            {isVerified && (
+                                <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border mt-1.5 text-[10px] ${
                                     theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
                                 }`}>
                                     <div className="flex items-center gap-1.5 min-w-0">
-                                        {submitterAvatar ? (
+                                        {submitterAvatar && !isCommunityReport ? (
                                             <img
                                                 src={submitterAvatar}
                                                 alt={submitterDisplayName}
                                                 className="w-4 h-4 rounded-full object-cover border border-amber-400/60 shrink-0"
                                             />
                                         ) : (
-                                            <span className="text-xs shrink-0">⭐</span>
+                                            <span className="text-xs shrink-0">🌐</span>
                                         )}
                                         <span className={`font-bold truncate ${textColor}`}>
-                                            Verified by <span className="text-amber-400 font-black">{submitterDisplayName}</span>
+                                            Reported by <span className="text-amber-400 font-black">{isCommunityReport ? 'MyWay Community' : submitterDisplayName}</span>
                                         </span>
                                         {place.correctedAt && (
                                             <span className={`text-[9px] font-medium shrink-0 opacity-70 ${subTextColor}`}>
@@ -1078,27 +1145,46 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         )}
                                     </div>
 
-                                    <button
-                                        type="button"
-                                        onClick={handleToggleHelpful}
-                                        disabled={isUpvoting}
-                                        className={`px-2 py-0.5 rounded-lg border font-bold text-[9px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer shrink-0 ${
-                                            hasUpvoted
-                                                ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
-                                                : theme === 'dark'
-                                                ? 'bg-white/10 hover:bg-white/15 border-white/15 text-slate-200'
-                                                : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700'
-                                        }`}
-                                        title="Thank the circle member who verified this entrance"
-                                    >
-                                        <span>👍</span>
-                                        <span>{hasUpvoted ? 'Helpful' : 'Helpful'}</span>
-                                        {localHelpfulCount > 0 && (
-                                            <span className="text-[8px] font-mono font-black opacity-90">
-                                                ({localHelpfulCount})
-                                            </span>
-                                        )}
-                                    </button>
+                                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
+                                        <button
+                                            type="button"
+                                            onClick={handleToggleHelpful}
+                                            disabled={isVoting}
+                                            className={`px-2.5 py-1 rounded-lg border font-bold text-[9px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer ${
+                                                hasUpvoted
+                                                    ? 'bg-emerald-500/25 border-emerald-400/70 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                                                    : theme === 'dark'
+                                                    ? 'bg-white/10 hover:bg-white/15 border-white/15 text-slate-200'
+                                                    : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700'
+                                            }`}
+                                            title="Confirm location is accurate and helpful"
+                                        >
+                                            <span>👍</span>
+                                            <span>Helpful</span>
+                                            {trustScore > 0 && (
+                                                <span className="text-[8px] font-mono font-black opacity-90">
+                                                    ({trustScore})
+                                                </span>
+                                            )}
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={handleDownvote}
+                                            disabled={isVoting}
+                                            className={`px-2.5 py-1 rounded-lg border font-bold text-[9px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer ${
+                                                hasDownvoted
+                                                    ? 'bg-rose-500/25 border-rose-400/70 text-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
+                                                    : theme === 'dark'
+                                                    ? 'bg-white/5 hover:bg-white/10 border-white/15 text-slate-400'
+                                                    : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-600'
+                                            }`}
+                                            title="Report location is incorrect or not there"
+                                        >
+                                            <span>👎</span>
+                                            <span>Not there</span>
+                                        </button>
+                                    </div>
                                 </div>
                             )}
 
@@ -1452,10 +1538,18 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             {typeLabel}
                         </span>
                     )}
-                    {distance && (
-                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
-                            📏 {distance}
-                        </span>
+                    {isVerified && (
+                        <>
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                <span>⭐</span> Verified Pin
+                            </span>
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                                <span>{place.entranceType ? '🚪' : '📍'}</span> {place.entranceType ? 'Verified Entrance Fix' : 'Verified Location Fix'}
+                            </span>
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
+                                <span>⭐</span> Trust: {trustScore}
+                            </span>
+                        </>
                     )}
                     {place.entranceType && (
                         <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border flex items-center gap-1 ${
@@ -1489,23 +1583,23 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </p>
                 )}
 
-                {/* Circle Attribution & "👍 Helpful" Inline Row (Desktop) */}
-                {place.isCorrected && (
+                {/* Crowdsourced Verification & Voting Row (Desktop) */}
+                {isVerified && (
                     <div className={`flex items-center justify-between gap-2.5 px-3 py-1.5 rounded-xl border mb-2.5 text-xs ${
                         theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
                     }`}>
                         <div className="flex items-center gap-2 min-w-0">
-                            {submitterAvatar ? (
+                            {submitterAvatar && !isCommunityReport ? (
                                 <img
                                     src={submitterAvatar}
                                     alt={submitterDisplayName}
                                     className="w-5 h-5 rounded-full object-cover border border-amber-400/60 shadow-sm shrink-0"
                                 />
                             ) : (
-                                <span className="text-sm shrink-0">⭐</span>
+                                <span className="text-sm shrink-0">🌐</span>
                             )}
                             <span className={`font-bold truncate ${textColor}`}>
-                                Verified by <span className="text-amber-400 font-black">{submitterDisplayName}</span>
+                                Reported by <span className="text-amber-400 font-black">{isCommunityReport ? 'MyWay Community' : submitterDisplayName}</span>
                             </span>
                             {place.correctedAt && (
                                 <span className={`text-[10px] font-medium shrink-0 opacity-70 ${subTextColor}`}>
@@ -1514,27 +1608,46 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             )}
                         </div>
 
-                        <button
-                            type="button"
-                            onClick={handleToggleHelpful}
-                            disabled={isUpvoting}
-                            className={`px-2.5 py-0.5 rounded-lg border font-bold text-xs flex items-center gap-1 transition-all active:scale-95 cursor-pointer shrink-0 ${
-                                hasUpvoted
-                                    ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
-                                    : theme === 'dark'
-                                    ? 'bg-white/10 hover:bg-white/15 border-white/15 text-slate-200'
-                                    : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700'
-                            }`}
-                            title="Thank the circle member who verified this entrance"
-                        >
-                            <span>👍</span>
-                            <span>{hasUpvoted ? 'Helpful' : 'Helpful'}</span>
-                            {localHelpfulCount > 0 && (
-                                <span className="text-[10px] font-mono font-black opacity-90">
-                                    ({localHelpfulCount})
-                                </span>
-                            )}
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <button
+                                type="button"
+                                onClick={handleToggleHelpful}
+                                disabled={isVoting}
+                                className={`px-2.5 py-1 rounded-lg border font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer ${
+                                    hasUpvoted
+                                        ? 'bg-emerald-500/25 border-emerald-400/70 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                                        : theme === 'dark'
+                                        ? 'bg-white/10 hover:bg-white/15 border-white/15 text-slate-200'
+                                        : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700'
+                                }`}
+                                title="Confirm location is accurate and helpful"
+                            >
+                                <span>👍</span>
+                                <span>Helpful</span>
+                                {trustScore > 0 && (
+                                    <span className="text-[10px] font-mono font-black opacity-90">
+                                        ({trustScore})
+                                    </span>
+                                )}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={handleDownvote}
+                                disabled={isVoting}
+                                className={`px-2.5 py-1 rounded-lg border font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer ${
+                                    hasDownvoted
+                                        ? 'bg-rose-500/25 border-rose-400/70 text-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+                                        : theme === 'dark'
+                                        ? 'bg-white/5 hover:bg-white/10 border-white/15 text-slate-400'
+                                        : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-600'
+                                }`}
+                                title="Report location is incorrect or not there"
+                            >
+                                <span>👎</span>
+                                <span>Not there</span>
+                            </button>
+                        </div>
                     </div>
                 )}
 

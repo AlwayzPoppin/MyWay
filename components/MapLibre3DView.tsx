@@ -2415,7 +2415,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
 
         const sourceId = 'public-reports-source';
-        const validReports = (publicReports || []).filter(r => r && r.coordinates && typeof r.coordinates.lat === 'number' && typeof r.coordinates.lng === 'number');
+        // Only render standalone road hazards on the map canvas.
+        // "Entrance Fix" and "Pin Move" reports are tied to destination places and their verification
+        // data is displayed exclusively in PlaceDetailPanel, eliminating hovering popups and duplicate map pins.
+        const validReports = (publicReports || []).filter(r =>
+            r && r.coordinates &&
+            typeof r.coordinates.lat === 'number' &&
+            typeof r.coordinates.lng === 'number' &&
+            r.reportType === 'hazard'
+        );
 
         const geojsonData: GeoJSON.FeatureCollection = {
             type: 'FeatureCollection',

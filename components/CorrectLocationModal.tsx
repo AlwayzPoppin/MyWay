@@ -203,6 +203,10 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                 finalPhotoUrl = await placeCorrectionService.uploadPlacePhoto(place.id, photoPreview);
             }
 
+            const isPublicReport = visibility === 'public';
+            const publicDisplayName = isPublicReport ? 'MyWay Community' : (userName || 'You');
+            const publicAvatar = isPublicReport ? undefined : userAvatar;
+
             const correction = await placeCorrectionService.saveCorrection({
                 place,
                 correctedLocation: currentCoords,
@@ -211,20 +215,20 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                 imageUrl: finalPhotoUrl,
                 entranceType,
                 entranceNotes: entranceNotes.trim() || undefined,
-                userId,
-                submitterName: userName || 'You',
-                submitterAvatar: userAvatar
+                userId: isPublicReport ? 'community' : userId,
+                submitterName: publicDisplayName,
+                submitterAvatar: publicAvatar
             });
 
             // If Public is selected, route the report to the root-level public_map_reports collection
-            if (visibility === 'public') {
+            if (isPublicReport) {
                 const reportType = (editMode === 'entrance' || entranceType) ? 'entrance_fix' : 'pin_move';
                 await publicMapReportService.submitReport({
                     reportType,
                     coordinates: currentCoords,
                     userId: userId || 'anonymous',
-                    userName: userName || 'Community Driver',
-                    userAvatar,
+                    userName: 'MyWay Community',
+                    userAvatar: '',
                     placeId: place.id,
                     placeName: correctedName.trim() || place.name,
                     details: correctedAddress.trim() || place.description,
@@ -247,11 +251,11 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                 entranceNotes: entranceNotes.trim() || undefined,
                 isCorrected: true,
                 correctedAt: Date.now(),
-                submitterId: userId,
-                submitterName: userName || 'You',
-                submitterAvatar: userAvatar,
-                helpfulCount: 0,
-                helpfulUserIds: []
+                submitterId: isPublicReport ? 'community' : userId,
+                submitterName: publicDisplayName,
+                submitterAvatar: publicAvatar,
+                helpfulCount: correction.helpfulCount || 0,
+                helpfulUserIds: correction.helpfulUserIds || []
             };
 
             onSave(updatedPlace, correction);

@@ -65,8 +65,26 @@ class PublicMapReportService {
             if (raw) {
                 const list: PublicMapReport[] = JSON.parse(raw);
                 const now = Date.now();
+                // Deduplicate by placeId or placeName for pin fixes/entrance fixes
+                const seenPlaceKeys = new Set<string>();
+                // Sort newest first
+                list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
                 list.forEach(report => {
                     if (this.isValidReport(report, now)) {
+                        // Enforce anonymized name for public reports
+                        if (report.visibility === 'public') {
+                            report.reporterName = 'MyWay Community';
+                            report.reporterAvatar = '';
+                        }
+
+                        if (report.reportType === 'entrance_fix' || report.reportType === 'pin_move') {
+                            const dedupKey = report.placeId || (report.placeName ? report.placeName.toLowerCase().trim() : report.id);
+                            if (seenPlaceKeys.has(dedupKey)) {
+                                return; // Skip older duplicate
+                            }
+                            seenPlaceKeys.add(dedupKey);
+                        }
                         this.localCache.set(report.id, report);
                     }
                 });
@@ -93,7 +111,22 @@ class PublicMapReportService {
     }
 
     /**
-     * Submit a new public map report or edit
+     * Look up a public report by place ID or matching name
+     */
+    public getReportForPlace(place: { id?: string; name?: string }): PublicMapReport | null {
+        if (!place) return null;
+        const cleanName = (place.name || '').toLowerCase().trim();
+        for (const report of this.localCache.values()) {
+            if (place.id && report.placeId === place.id) return report;
+            if (cleanName && report.placeName && report.placeName.toLowerCase().trim() === cleanName) {
+                return report;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Submit a new public map report or edit (with upsert deduplication)
      */
     public async submitReport(params: {
         reportType: PublicReportType;
@@ -124,7 +157,30 @@ class PublicMapReportService {
             visibility = 'public'
         } = params;
 
-        const id = `pub_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const isPublic = visibility === 'public';
+        // HARDCODE anonymous display name for public reports to protect user privacy
+        const reporterDisplayName = isPublic ? 'MyWay Community' : (userName || 'Circle Member');
+        const reporterAvatarUrl = isPublic ? '' : (userAvatar || '');
+
+        // Deduplication: Check if a report already exists for this place
+        let existingReport: PublicMapReport | null = null;
+        for (const cached of this.localCache.values()) {
+            if (placeId && cached.placeId === placeId) {
+                existingReport = cached;
+                break;
+            }
+            if (
+                placeName &&
+                cached.placeName &&
+                cached.placeName.toLowerCase().trim() === placeName.toLowerCase().trim() &&
+                (cached.reportType === 'entrance_fix' || cached.reportType === 'pin_move')
+            ) {
+                existingReport = cached;
+                break;
+            }
+        }
+
+        const id = existingReport ? existingReport.id : `pub_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const geohash = encodeGeohash(coordinates.lat, coordinates.lng, 7);
         const timestamp = Date.now();
 
@@ -140,18 +196,20 @@ class PublicMapReportService {
             },
             geohash,
             reportedBy: userId || 'anonymous',
-            reporterName: userName || 'Community Driver',
-            reporterAvatar: userAvatar || '',
+            reporterName: reporterDisplayName,
+            reporterAvatar: reporterAvatarUrl,
             timestamp,
-            trustScore: 1, // Default trust score
-            upvoterIds: [userId].filter(Boolean),
-            downvoterIds: [],
+            trustScore: existingReport?.trustScore ?? 1,
+            upvoterIds: existingReport
+                ? Array.from(new Set([...(existingReport.upvoterIds || []), userId].filter(Boolean)))
+                : [userId].filter(Boolean),
+            downvoterIds: existingReport?.downvoterIds || [],
             placeId,
             placeName,
             details,
-            imageUrl,
-            entranceType,
-            entranceNotes,
+            imageUrl: imageUrl || existingReport?.imageUrl,
+            entranceType: entranceType || existingReport?.entranceType,
+            entranceNotes: entranceNotes || existingReport?.entranceNotes,
             expiresAt,
             visibility
         };

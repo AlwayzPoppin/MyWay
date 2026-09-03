@@ -205,13 +205,19 @@ class PlaceCorrectionService {
         submitterAvatar?: string;
     }): Promise<PlaceCorrection> {
         const { place, correctedLocation, correctedName, correctedAddress, imageUrl, entranceType, entranceNotes, userId, submitterName, submitterAvatar } = params;
-        const normalizedKey = normalizePlaceKey(place.name, place.description, place.location);
+        const anchorLocation = place.originalLocation || place.location;
+        const normalizedKey = normalizePlaceKey(place.name, place.description, anchorLocation);
+
+        // Check if existing correction exists to preserve helpful count & voters
+        const existing = this.getCorrection(place);
+        const helpfulCount = existing?.helpfulCount || 0;
+        const helpfulUserIds = existing?.helpfulUserIds || [];
 
         const correction: PlaceCorrection = {
             placeId: place.id,
             placeName: place.name,
             description: place.description,
-            originalLocation: place.originalLocation || place.location,
+            originalLocation: anchorLocation,
             correctedLocation,
             correctedName,
             correctedAddress,
@@ -220,10 +226,10 @@ class PlaceCorrectionService {
             entranceNotes: entranceNotes || place.entranceNotes,
             timestamp: Date.now(),
             submittedBy: userId || 'community',
-            submitterName: submitterName || 'Circle Member',
+            submitterName: submitterName || 'MyWay Community',
             submitterAvatar: submitterAvatar || undefined,
-            helpfulCount: 0,
-            helpfulUserIds: [],
+            helpfulCount,
+            helpfulUserIds,
             normalizedKey
         };
 
