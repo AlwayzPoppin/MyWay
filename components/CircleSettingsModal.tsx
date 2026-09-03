@@ -57,6 +57,8 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     const [newCircleColor, setNewCircleColor] = useState<string>(CIRCLE_COLORS[0].hex);
     const [isJoiningCircle, setIsJoiningCircle] = useState(false);
     const [joinInviteCode, setJoinInviteCode] = useState('');
+    const [manualInviteCode, setManualInviteCode] = useState('');
+    const [joinError, setJoinError] = useState<string | null>(null);
     const [editingCircleName, setEditingCircleName] = useState('');
     const [isRenaming, setIsRenaming] = useState(false);
     const [editingMemberRole, setEditingMemberRole] = useState<string | null>(null);
@@ -67,6 +69,9 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             setActiveTab(initialTab);
             setIsCreatingCircle(false);
             setIsJoiningCircle(false);
+            setJoinInviteCode('');
+            setManualInviteCode('');
+            setJoinError(null);
             setEditingCircleName(currentCircle?.name || '');
             setIsRenaming(false);
             const defaultColor = currentCircle?.color || (currentCircle ? getCircleColor(currentCircle.id).hex : CIRCLE_COLORS[0].hex);
@@ -101,22 +106,51 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         }
     };
 
-    const handleJoinCircle = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!joinInviteCode.trim() || isSubmitting) return;
+    const handleJoinCircle = async (codeToJoin?: string, e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        const rawCode = typeof codeToJoin === 'string' ? codeToJoin : joinInviteCode;
+        const cleanCode = rawCode.trim().toUpperCase();
+
+        if (!cleanCode) {
+            setJoinError('Please enter an 8-character invite code.');
+            return;
+        }
+
+        if (cleanCode.length !== 8) {
+            const err = `Invite code must be exactly 8 characters (entered ${cleanCode.length}).`;
+            setJoinError(err);
+            showNotification?.(`⚠️ ${err}`, 3500);
+            return;
+        }
+
+        // Validate if user is already a member of this circle
+        const alreadyInCircle = userCircles.some(c => c.inviteCode?.toUpperCase() === cleanCode);
+        if (alreadyInCircle) {
+            const err = 'Already in this circle.';
+            setJoinError(err);
+            showNotification?.(`⚠️ ${err}`, 3500);
+            return;
+        }
+
         setIsSubmitting(true);
+        setJoinError(null);
         try {
-            const circle = await onJoinCircle(joinInviteCode.trim().toUpperCase());
+            const circle = await onJoinCircle(cleanCode);
             if (circle) {
-                showNotification?.(`✅ Joined circle "${circle.name}"!`, 3000);
+                showNotification?.(`🎉 Successfully joined circle "${circle.name}"!`, 3000);
                 setJoinInviteCode('');
+                setManualInviteCode('');
                 setIsJoiningCircle(false);
                 setActiveTab('circles');
             } else {
-                showNotification?.(`⚠️ Invalid invite code. Please check and try again.`, 4000);
+                const err = 'Invalid code. No matching circle found.';
+                setJoinError(err);
+                showNotification?.(`⚠️ ${err}`, 4000);
             }
         } catch (err: any) {
-            showNotification?.(`⚠️ Could not join circle: ${err.message || err}`, 4000);
+            const errMsg = err?.message || 'Could not join circle';
+            setJoinError(errMsg);
+            showNotification?.(`⚠️ ${errMsg}`, 4000);
         } finally {
             setIsSubmitting(false);
         }
@@ -551,14 +585,17 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
                                 {/* Join Circle Inline Form */}
                                 {isJoiningCircle && (
-                                    <form onSubmit={handleJoinCircle} className={`p-4 rounded-2xl border space-y-3 animate-in fade-in duration-150 ${cardBg}`}>
+                                    <form onSubmit={(e) => handleJoinCircle(joinInviteCode, e)} className={`p-4 rounded-2xl border space-y-3 animate-in fade-in duration-150 ${cardBg}`}>
                                         <div className="flex items-center justify-between">
                                             <span className="text-xs font-black text-purple-400 uppercase tracking-wider">
-                                                Join with Invite Code
+                                                Join a Circle
                                             </span>
                                             <button
                                                 type="button"
-                                                onClick={() => setIsJoiningCircle(false)}
+                                                onClick={() => {
+                                                    setIsJoiningCircle(false);
+                                                    setJoinError(null);
+                                                }}
                                                 className="text-xs text-slate-400 hover:text-white"
                                             >
                                                 ✕ Cancel
@@ -567,21 +604,29 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
                                         <input
                                             type="text"
-                                            placeholder="Enter 6-8 Character Code (e.g. A1B2C3)"
+                                            placeholder="ENTER 8-CHARACTER CODE"
+                                            maxLength={8}
                                             value={joinInviteCode}
-                                            onChange={(e) => setJoinInviteCode(e.target.value.toUpperCase())}
+                                            onChange={(e) => {
+                                                setJoinInviteCode(e.target.value.toUpperCase());
+                                                if (joinError) setJoinError(null);
+                                            }}
                                             autoFocus
-                                            className={`w-full px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black text-center tracking-widest outline-none focus:border-purple-500 transition-colors ${
+                                            className={`w-full px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black text-center tracking-widest uppercase outline-none focus:border-purple-500 transition-colors ${
                                                 isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
                                             }`}
                                         />
+
+                                        {joinError && (
+                                            <p className="text-[10px] font-bold text-red-400 mt-1">{joinError}</p>
+                                        )}
 
                                         <button
                                             type="submit"
                                             disabled={!joinInviteCode.trim() || isSubmitting}
                                             className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
                                         >
-                                            {isSubmitting ? 'Joining...' : 'Join Circle'}
+                                            {isSubmitting ? 'Joining...' : 'Join'}
                                         </button>
                                     </form>
                                 )}
@@ -821,6 +866,54 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                         </div>
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* Join a Circle Section */}
+                            <div className={`p-3.5 rounded-2xl border space-y-3 ${cardBg}`}>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-base">🔗</span>
+                                    <div>
+                                        <h4 className={`text-xs font-black uppercase tracking-wider ${textColor}`}>
+                                            Join a Circle
+                                        </h4>
+                                        <p className={`text-[10px] ${subTextColor}`}>
+                                            Enter an 8-character invite code manually
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="8-CHAR CODE"
+                                        maxLength={8}
+                                        value={manualInviteCode}
+                                        onChange={(e) => {
+                                            setManualInviteCode(e.target.value.toUpperCase());
+                                            if (joinError) setJoinError(null);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                handleJoinCircle(manualInviteCode);
+                                            }
+                                        }}
+                                        className={`flex-1 px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black tracking-widest text-center uppercase outline-none focus:border-indigo-500 transition-colors ${
+                                            isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
+                                        }`}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => handleJoinCircle(manualInviteCode)}
+                                        disabled={isSubmitting || manualInviteCode.trim().length === 0}
+                                        className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0"
+                                    >
+                                        {isSubmitting ? 'Joining...' : 'Join'}
+                                    </button>
+                                </div>
+                                {joinError && (
+                                    <p className="text-[10px] font-bold text-red-400 mt-1">{joinError}</p>
+                                )}
                             </div>
 
                             {/* Danger Zone: Leave / Delete Circle */}
