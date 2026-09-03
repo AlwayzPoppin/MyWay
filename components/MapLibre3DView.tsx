@@ -793,21 +793,40 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         layers.forEach((layer: any) => {
             if (layer.type === 'symbol' && layer.id !== wazeMajorLabelsId && layer.id !== wazeMinorLabelsId && !defaultRoadLayers.includes(layer.id)) {
                 const id = layer.id.toLowerCase();
-                const isPlaceOrPoi = id.includes('poi') || id.includes('place') || id.includes('park') || 
-                                     id.includes('school') || id.includes('hospital') || id.includes('suburb') || id.includes('neighborhood');
+                const isEmergency = id.includes('hospital') || id.includes('police') || id.includes('emergency') || id.includes('ambulance') || id.includes('fire');
+                const isGasOrStore = id.includes('gas') || id.includes('fuel') || id.includes('petrol') || id.includes('convenience') || id.includes('shop') || id.includes('store') || id.includes('commercial');
+                const isPlaceOrPoi = isEmergency || isGasOrStore || id.includes('poi') || id.includes('place') || id.includes('park') || 
+                                     id.includes('school') || id.includes('suburb') || id.includes('neighborhood');
                 try {
                     if (isPlaceOrPoi) {
-                        // POI / Landmark Billboard Alignment
+                        // Strict minzoom restraints: 12.5 for emergency (hospitals/police), 13.5 for gas stations and convenience stores/POIs
+                        const poiMinZ = isEmergency ? 12.5 : 13.5;
+                        try {
+                            map.current!.setLayerZoomRange(layer.id, poiMinZ, 24);
+                        } catch {}
+
+                        // POI / Landmark Billboard Alignment & Dynamic Icon/Text Scaling
                         try {
                             map.current!.setLayoutProperty(layer.id, 'text-pitch-alignment', 'viewport');
                             map.current!.setLayoutProperty(layer.id, 'text-rotation-alignment', 'viewport');
                             map.current!.setLayoutProperty(layer.id, 'text-padding', 3);
                             map.current!.setLayoutProperty(layer.id, 'text-size', [
                                 'interpolate', ['linear'], ['zoom'],
-                                12, 10,
-                                15, 12,
-                                18, 14
+                                poiMinZ, 0,
+                                poiMinZ + 0.5, 10,
+                                16, 13,
+                                18, 15
                             ]);
+
+                            // Dynamic Icon Scaling without hard pop-in
+                            try {
+                                map.current!.setLayoutProperty(layer.id, 'icon-size', [
+                                    'interpolate', ['linear'], ['zoom'],
+                                    poiMinZ, 0,
+                                    poiMinZ + 0.5, 0.8,
+                                    16, 1.2
+                                ]);
+                            } catch {}
                         } catch {}
 
                         const poiColor = isWarmLightSkin ? '#334155' : '#cbd5e1';
@@ -1977,6 +1996,21 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const isSelected = !!selectedPlaceId && selectedPlaceId === place.id;
             const isSearchResult = place.type === 'search_result' || (place.id && (place.id.startsWith('photon-') || place.id.startsWith('nominatim-') || place.id.startsWith('google-')));
 
+            // Determine strict minzoom for POIs while protecting critical markers:
+            // - Circle members (rendered in separate memberMarkersRef with no minzoom)
+            // - User's Home base (isHome -> minzoom 0)
+            // - Selected place (isSelected -> minzoom 0)
+            // - Active search results (isSearchResult -> minzoom 0)
+            // - Custom saved circle places (!isAmbient -> minzoom 0)
+            // - Hazards (incidents/reports -> minzoom 0)
+            const isEmergency = place.type === 'hospital' || place.type === 'emergency' || place.type === 'police' || place.type === 'fire_station';
+            const isGasOrStore = place.type === 'gas' || place.type === 'grocery' || place.type === 'convenience' || place.type === 'coffee' || place.type === 'food';
+            
+            let markerMinZoom = 0;
+            if (isAmbient && !isHome && !isSelected && !isSearchResult) {
+                markerMinZoom = isEmergency ? 12.5 : 13.5;
+            }
+
             const markerHtml = isAmbient ? `
                 <div class="myway-ambient-poi-text" style="display: flex; align-items: center; justify-content: center; padding: 2px 4px; pointer-events: auto; user-select: none;">
                     <span style="
@@ -2083,6 +2117,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 el.style.alignItems = 'center';
                 el.style.cursor = 'pointer';
                 el.style.transform = 'translate3d(0,0,0)';
+                el.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+                el.dataset.minzoom = String(markerMinZoom);
                 el.style.zIndex = isSelected ? '60' : isSearchResult ? '35' : isAmbient ? '10' : '25';
                 el.innerHTML = markerHtml;
 
@@ -2122,11 +2158,52 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     .addTo(map.current!);
                 placesMarkersRef.current.set(place.id, marker);
             } else {
-                marker.getElement().innerHTML = markerHtml;
-                marker.getElement().style.zIndex = isSelected ? '60' : isSearchResult ? '35' : isAmbient ? '10' : '25';
+                const el = marker.getElement();
+                el.innerHTML = markerHtml;
+                el.dataset.minzoom = String(markerMinZoom);
+                el.style.zIndex = isSelected ? '60' : isSearchResult ? '35' : isAmbient ? '10' : '25';
                 marker.setLngLat([place.location.lng, place.location.lat]);
             }
         });
+
+        // Dynamic smooth scaling & visibility updater for POI markers based on map zoom
+        const updatePoiMarkerVisibility = () => {
+            if (!map.current) return;
+            const currentZoom = map.current.getZoom();
+            for (const [id, marker] of placesMarkersRef.current.entries()) {
+                const el = marker.getElement();
+                if (!el) continue;
+                const minZStr = el.dataset.minzoom;
+                if (!minZStr) continue;
+                const minZ = parseFloat(minZStr);
+                if (minZ === 0) {
+                    el.style.display = 'flex';
+                    el.style.opacity = '1';
+                    el.style.transform = 'translate3d(0,0,0) scale(1)';
+                    continue;
+                }
+
+                if (currentZoom < minZ) {
+                    el.style.display = 'none';
+                } else {
+                    el.style.display = 'flex';
+                    // Smooth zoom scaling between minZ and minZ + 1.5 without abrupt pop-in
+                    const zoomDelta = currentZoom - minZ;
+                    const scale = Math.min(1.15, Math.max(0.65, 0.65 + (zoomDelta / 1.5) * 0.5));
+                    const opacity = Math.min(1, Math.max(0.2, zoomDelta / 0.5));
+                    el.style.opacity = String(opacity);
+                    el.style.transform = `translate3d(0,0,0) scale(${scale.toFixed(2)})`;
+                }
+            }
+        };
+
+        updatePoiMarkerVisibility();
+
+        const onZoom = () => updatePoiMarkerVisibility();
+        map.current.on('zoom', onZoom);
+        return () => {
+            map.current?.off('zoom', onZoom);
+        };
     }, [places, isMapReady, theme, styleVersion, onSelectPlace, selectedPlaceId]);
 
     // ==========================================
@@ -2170,6 +2247,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 id: 'ambient-maintenance-glow',
                 type: 'circle',
                 source: sourceId,
+                minzoom: 13.5,
                 paint: {
                     'circle-color': '#f59e0b',
                     'circle-radius': 18,
@@ -2184,6 +2262,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 id: 'ambient-maintenance-badge',
                 type: 'circle',
                 source: sourceId,
+                minzoom: 13.5,
                 paint: {
                     'circle-color': '#d97706',
                     'circle-radius': 12,
@@ -2198,9 +2277,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 id: 'ambient-maintenance-symbol',
                 type: 'symbol',
                 source: sourceId,
+                minzoom: 13.5,
                 layout: {
                     'text-field': ['get', 'icon'],
-                    'text-size': 13,
+                    'text-size': [
+                        'interpolate', ['linear'], ['zoom'],
+                        13.5, 0,
+                        14, 11,
+                        16, 14
+                    ],
                     'text-allow-overlap': true,
                     'text-ignore-placement': true
                 }
@@ -2211,10 +2296,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 id: 'ambient-maintenance-label',
                 type: 'symbol',
                 source: sourceId,
+                minzoom: 13.5,
                 layout: {
                     'text-field': ['get', 'label'],
                     'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
-                    'text-size': 10.5,
+                    'text-size': [
+                        'interpolate', ['linear'], ['zoom'],
+                        13.5, 0,
+                        14, 9,
+                        16, 11
+                    ],
                     'text-offset': [0, 1.6],
                     'text-anchor': 'top',
                     'text-optional': true
@@ -2338,6 +2429,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 id: 'incidents-circle',
                 type: 'circle',
                 source: sourceId,
+                minzoom: 0,
                 paint: {
                     'circle-color': '#ef4444',
                     'circle-radius': 12,
@@ -2350,6 +2442,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 id: 'incidents-symbol',
                 type: 'symbol',
                 source: sourceId,
+                minzoom: 0,
                 layout: {
                     'text-field': '⚠️',
                     'text-size': 14,
@@ -2486,11 +2579,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 data: geojsonData
             });
 
-            // Halo layer
+            // Halo layer (Protected from minzoom: visible at all zoom levels)
             map.current.addLayer({
                 id: 'public-reports-halo',
                 type: 'circle',
                 source: sourceId,
+                minzoom: 0,
                 paint: {
                     'circle-color': ['get', 'color'],
                     'circle-radius': 18,
@@ -2499,11 +2593,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             });
 
-            // Badge circle
+            // Badge circle (Protected from minzoom: visible at all zoom levels)
             map.current.addLayer({
                 id: 'public-reports-badge',
                 type: 'circle',
                 source: sourceId,
+                minzoom: 0,
                 paint: {
                     'circle-color': ['get', 'color'],
                     'circle-radius': 13,
@@ -2513,11 +2608,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             });
 
-            // Emoji icon
+            // Emoji icon (Protected from minzoom: visible at all zoom levels)
             map.current.addLayer({
                 id: 'public-reports-symbol',
                 type: 'symbol',
                 source: sourceId,
+                minzoom: 0,
                 layout: {
                     'text-field': ['get', 'icon'],
                     'text-size': 13,
