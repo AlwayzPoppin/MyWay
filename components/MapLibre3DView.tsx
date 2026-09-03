@@ -3359,6 +3359,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 visualRotation = Math.round(visualRotation);
 
                 const circleColor = member.circleColor || '#6366f1';
+                const isLightSkin = effectiveSkin === 'warm_cream';
+                const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
+                const isDriving = (member.speed || 0) > 10 || !!(member as any).isDriving;
+                const isStale = !!(member as any).isStale;
+                const isBlurred = (member as any).privacyMode === 'blurred' || (member as any).privacyMode === 'approximate';
+                const isFrozen = (member as any).privacyMode === 'frozen' || (member as any).privacyMode === 'ghost';
+
                 const borderColor = isCarbonAmber
                     ? '#f59e0b'
                     : isBlurred 
@@ -3372,8 +3379,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                                     : circleColor;
 
                 const initials = (member.name || 'M').charAt(0).toUpperCase();
-
-                const isLightSkin = effectiveSkin === 'warm_cream';
                 const markerHtml = isSelfNavigating ? `
                     <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
                         <!-- Dynamic Forward Vision Headlight Beam (Electric Cyan) -->
