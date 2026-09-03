@@ -28,25 +28,31 @@ export interface GeofenceTransition {
 export const getDistance = getDistanceFromCoords;
 
 /**
- * Checks if a point is inside a geofence.
+ * Checks if a point is inside a geofence with optional departure hysteresis.
  */
 export const isPointInGeofence = (
     point: { lat: number; lng: number },
-    geofence: Geofence
+    geofence: Geofence,
+    hysteresisMeters: number = 0
 ): boolean => {
     const distance = getDistance(point.lat, point.lng, geofence.lat, geofence.lng);
-    return distance <= geofence.radius;
+    return distance <= (geofence.radius + hysteresisMeters);
 };
 
 /**
  * Detects transitions between states (INSIDE/OUTSIDE).
+ * Applies departure hysteresis (+3m for micro-geofences <= 30m, up to 15m for larger zones)
+ * to prevent border jitter when parked at driveway edges.
  */
 export const detectTransition = (
     currentLocation: { lat: number; lng: number },
     geofence: Geofence,
     previousStatus: GeofenceStatus = 'OUTSIDE'
 ): GeofenceTransition | null => {
-    const isNowInside = isPointInGeofence(currentLocation, geofence);
+    const departureHysteresis = previousStatus === 'INSIDE'
+        ? (geofence.radius <= 30 ? 3 : Math.min(15, Math.round(geofence.radius * 0.1)))
+        : 0;
+    const isNowInside = isPointInGeofence(currentLocation, geofence, departureHysteresis);
     const currentStatus: GeofenceStatus = isNowInside ? 'INSIDE' : 'OUTSIDE';
 
     if (currentStatus !== previousStatus) {

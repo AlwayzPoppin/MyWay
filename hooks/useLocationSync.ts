@@ -155,12 +155,18 @@ export const useLocationSync = (
 
                 const distance = getDistanceFromCoords(location.latitude, location.longitude, gfLat, gfLng);
                 const radius = gf.radius || 150;
-                const isInsideNow = distance <= radius;
-                const rawStatus: 'INSIDE' | 'OUTSIDE' = isInsideNow ? 'INSIDE' : 'OUTSIDE';
 
                 const storedStatus = localStorage.getItem(`gf_state_${gf.id}`);
                 const isKnown = storedStatus !== null;
                 const confirmedStatus = (storedStatus || 'OUTSIDE') as 'INSIDE' | 'OUTSIDE';
+
+                // Departure Hysteresis Buffer: +3m for micro-geofences (<= 30m), scaled up to max 15m for larger zones
+                // When already confirmed INSIDE, exit requires crossing (radius + 3m) to eliminate driveway edge jitter
+                const departureHysteresis = confirmedStatus === 'INSIDE'
+                    ? (radius <= 30 ? 3 : Math.min(15, Math.round(radius * 0.1)))
+                    : 0;
+                const isInsideNow = distance <= (radius + departureHysteresis);
+                const rawStatus: 'INSIDE' | 'OUTSIDE' = isInsideNow ? 'INSIDE' : 'OUTSIDE';
 
                 if (!isKnown) {
                     // Prime initial state immediately on first run without triggering arrival/departure noise
@@ -743,8 +749,15 @@ export const useLocationSync = (
                         if (typeof gfLat === 'number' && typeof gfLng === 'number') {
                             const distance = getDistanceFromCoords(lat, lng, gfLat, gfLng);
                             const radius = gf.radius || 150;
-                            const isInsideNow = distance <= radius;
                             const wasInside = currentInside!.has(gf.id);
+                            const confirmedStatus: 'INSIDE' | 'OUTSIDE' = wasInside ? 'INSIDE' : 'OUTSIDE';
+
+                            // Departure Hysteresis Buffer: +3m for micro-geofences (<= 30m), scaled up to max 15m for larger zones
+                            // When already confirmed INSIDE, exit requires crossing (radius + 3m) to eliminate driveway edge jitter
+                            const departureHysteresis = confirmedStatus === 'INSIDE'
+                                ? (radius <= 30 ? 3 : Math.min(15, Math.round(radius * 0.1)))
+                                : 0;
+                            const isInsideNow = distance <= (radius + departureHysteresis);
                             const candidateStatus: 'INSIDE' | 'OUTSIDE' = isInsideNow ? 'INSIDE' : 'OUTSIDE';
 
                             if (isInsideNow) {
