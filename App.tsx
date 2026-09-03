@@ -1294,6 +1294,7 @@ const App: React.FC = () => {
                 const selectedMember = members.find(m => m.id === selectedMemberId);
                 if (!selectedMember) return null;
                 const isSelf = selectedMember.id === user?.uid || selectedMember.id === 'demo-you';
+                const isUnresolved = !selectedMember.location || (selectedMember.location.lat === 0 && selectedMember.location.lng === 0);
 
                 return (
                   <OverlayManager>
@@ -1310,19 +1311,32 @@ const App: React.FC = () => {
                                 (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(selectedMember.name || selectedMember.id);
                               }}
                               alt={selectedMember.name}
-                              className="w-11 h-11 rounded-full object-cover border-2 border-indigo-500 shadow-md bg-slate-800"
+                              className={`w-11 h-11 rounded-full object-cover border-2 shadow-md bg-slate-800 ${
+                                isUnresolved ? 'border-amber-400 saturate-75' : 'border-indigo-500'
+                              }`}
                             />
                             {isSelf && (
                               <span className="absolute -bottom-1 -right-1 text-[8px] font-black px-1 rounded-full bg-indigo-600 text-white border border-slate-900">
                                 YOU
                               </span>
                             )}
+                            {isUnresolved && !isSelf && (
+                              <span className="absolute -bottom-1 -right-1 text-[8px] font-black w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center border border-slate-900 animate-pulse">
+                                📡
+                              </span>
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <div className={`font-bold text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                                 {selectedMember.name}
                               </div>
+                              {isUnresolved && (
+                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                  <span>Locating…</span>
+                                </span>
+                              )}
                               {selectedMember.privacyMode === 'blurred' && (
                                 <span className="text-[8px] font-black px-1 rounded bg-purple-500/20 text-purple-300">
                                   👻 Blur
@@ -1330,16 +1344,23 @@ const App: React.FC = () => {
                               )}
                             </div>
                             <div className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
-                              <span className="font-semibold text-slate-300">
-                                {selectedMember.currentPlace
-                                  ? (selectedMember.status === 'Stationary' ? `At ${selectedMember.currentPlace}` : `${selectedMember.status} • ${selectedMember.currentPlace}`)
-                                  : (selectedMember.status === 'Driving' ? `Driving` :
-                                     selectedMember.status === 'Walking' || selectedMember.status === 'Moving' ? `Walking` :
-                                     'Stationary')}
-                              </span>
+                              {isUnresolved ? (
+                                <span className="font-semibold text-amber-400 flex items-center gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+                                  <span>Waiting for device signal…</span>
+                                </span>
+                              ) : (
+                                <span className="font-semibold text-slate-300">
+                                  {selectedMember.currentPlace
+                                    ? (selectedMember.status === 'Stationary' ? `At ${selectedMember.currentPlace}` : `${selectedMember.status} • ${selectedMember.currentPlace}`)
+                                    : (selectedMember.status === 'Driving' ? `Driving` :
+                                       selectedMember.status === 'Walking' || selectedMember.status === 'Moving' ? `Walking` :
+                                       'Stationary')}
+                                </span>
+                              )}
                               <span>•</span>
                               <span>🔋 {selectedMember.battery}%</span>
-                              {selectedMember.speed > 0 && <><span>•</span><span>{Math.round(selectedMember.speed)} mph</span></>}
+                              {!isUnresolved && selectedMember.speed > 0 && <><span>•</span><span>{Math.round(selectedMember.speed)} mph</span></>}
                             </div>
                           </div>
                           <button
@@ -1370,8 +1391,18 @@ const App: React.FC = () => {
                               <span>📞</span> Call
                             </button>
                             <button
-                              onClick={() => { handleStartNavigation(selectedMember.name, selectedMember.location); setSelectedMemberId(null); }}
-                              className="py-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                              onClick={() => {
+                                if (isUnresolved) {
+                                  showNotification(`📡 Waiting for ${selectedMember.name}'s location before navigating…`, 3000);
+                                  return;
+                                }
+                                handleStartNavigation(selectedMember.name, selectedMember.location);
+                                setSelectedMemberId(null);
+                              }}
+                              className={`py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1 ${
+                                isUnresolved ? 'bg-slate-500/10 text-slate-500' : 'bg-indigo-500/20 text-indigo-400'
+                              }`}
+                              title={isUnresolved ? 'Location pending' : 'Start navigation'}
                             >
                               <span>🧭</span> Nav
                             </button>

@@ -325,20 +325,29 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                 <div className={`grid gap-3 ${isCollapsed ? 'grid-cols-1' : 'grid-cols-1'}`}>
                                     {members.map(member => {
                                         const memberCircleHex = member.circleColor || '#6366f1';
+                                        const isUnresolved = !member.location || (member.location.lat === 0 && member.location.lng === 0);
                                         return (
                                         <div
                                             key={member.id}
                                             onClick={() => onSelect(member.id)}
                                             className={`group relative flex items-center gap-3 rounded-2xl transition-all cursor-pointer border
                                             ${isCollapsed ? 'p-1.5 justify-center' : 'p-3'}
-                                            ${selectedId === member.id
+                                            ${isUnresolved
+                                                ? theme === 'dark'
+                                                    ? 'bg-amber-950/10 border-amber-500/30 border-dashed opacity-80 hover:opacity-100'
+                                                    : 'bg-amber-50/50 border-amber-300/60 border-dashed opacity-85 hover:opacity-100 shadow-sm'
+                                                : selectedId === member.id
                                                     ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border-indigo-500/50 glow-primary'
                                                     : theme === 'dark'
                                                         ? 'glass-card'
                                                         : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
                                                 }`}
                                             title={isCollapsed 
-                                                ? (member.currentTrip ? `${member.name} • 🚗 Driving to ${member.currentTrip.destinationName} (${member.currentTrip.totalTime})` : member.name)
+                                                ? (isUnresolved
+                                                    ? `${member.name} • 📡 Locating…`
+                                                    : member.currentTrip
+                                                        ? `${member.name} • 🚗 Driving to ${member.currentTrip.destinationName} (${member.currentTrip.totalTime})`
+                                                        : member.name)
                                                 : undefined}
                                         >
                                             <div className="relative shrink-0">
@@ -348,19 +357,22 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name || member.id);
                                                     }}
                                                     alt={member.name}
-                                                    style={{ borderColor: memberCircleHex }}
+                                                    style={{ borderColor: isUnresolved ? '#f59e0b' : memberCircleHex }}
                                                     className={`rounded-xl object-cover transition-all border-2 ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-100'}
                                                       ${isCollapsed ? 'w-10 h-10' : 'w-12 h-12'}
                                                       ${selectedId === member.id ? `ring-2 ring-indigo-500 ring-offset-2 ${theme === 'dark' ? 'ring-offset-slate-900' : 'ring-offset-white'}` : ''}
                                                       ${member.isGhostMode ? 'blur-sm grayscale opacity-70' : ''}
+                                                      ${isUnresolved ? 'saturate-75' : ''}
                                                     `}
                                                 />
                                                 <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] border ${
-                                                    member.currentTrip 
-                                                        ? 'bg-indigo-600 border-white text-white animate-pulse shadow-md' 
-                                                        : theme === 'dark' ? 'bg-slate-800 border-white/10' : 'bg-white border-slate-200 shadow-sm'
+                                                    isUnresolved
+                                                        ? 'bg-amber-500 text-slate-950 font-bold border-white/20 animate-pulse'
+                                                        : member.currentTrip 
+                                                            ? 'bg-indigo-600 border-white text-white animate-pulse shadow-md' 
+                                                            : theme === 'dark' ? 'bg-slate-800 border-white/10' : 'bg-white border-slate-200 shadow-sm'
                                                 }`}>
-                                                    {member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
+                                                    {isUnresolved ? '📡' : member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
                                                 </div>
 
                                                 {member.isGhostMode && (
@@ -373,11 +385,16 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                             {!isCollapsed && (
                                                 <div className="flex-1 text-left min-w-0 animate-in fade-in slide-in-from-left-2">
                                                     <div className="flex items-center justify-between gap-1">
-                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                                                             <h3 className={`font-black text-sm tracking-tight truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                                                                 {member.name}
                                                             </h3>
-                                                            {member.circleBadges && member.circleBadges.length > 0 ? (
+                                                            {isUnresolved ? (
+                                                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                                                    <span>Locating…</span>
+                                                                </span>
+                                                            ) : member.circleBadges && member.circleBadges.length > 0 ? (
                                                                 member.circleBadges.map(b => (
                                                                     <span
                                                                         key={b.id}
@@ -468,6 +485,13 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                         <span>Join Convoy</span>
                                                                     </button>
                                                                 </div>
+                                                            </div>
+                                                        </div>
+                                                    ) : isUnresolved ? (
+                                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                                            <div className="text-[10px] font-medium text-amber-400/90 flex items-center gap-1.5 truncate">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block shrink-0" />
+                                                                <span className="truncate">Waiting for device signal…</span>
                                                             </div>
                                                         </div>
                                                     ) : (

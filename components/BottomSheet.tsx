@@ -213,22 +213,26 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                 <div className="px-4 flex items-center justify-between gap-2 h-16 shrink-0">
                     {/* Avatars Carousel */}
                     <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-1">
-                        {members.map((member, index) => (
+                        {members.map((member, index) => {
+                            const isUnresolved = !member.location || (member.location.lat === 0 && member.location.lng === 0);
+                            return (
                             <button
                                 key={member.id}
                                 onClick={() => {
                                     onSelect(member.id);
                                     setExpanded(true);
                                 }}
-                                className={`relative transition-all duration-300 shrink-0 ${selectedId === member.id ? 'scale-110 z-10' : 'hover:scale-105 active:scale-95'}`}
+                                className={`relative transition-all duration-300 shrink-0 ${
+                                    isUnresolved ? 'opacity-70 hover:opacity-100' : ''
+                                } ${selectedId === member.id ? 'scale-110 z-10' : 'hover:scale-105 active:scale-95'}`}
                                 style={{ animationDelay: `${index * 50}ms` }}
-                                title={`${member.name} (${member.status})`}
+                                title={isUnresolved ? `${member.name} (📡 Locating…)` : `${member.name} (${member.status})`}
                             >
                                 {/* Status Ring */}
                                 <div
                                     className="absolute -inset-1 rounded-full"
                                     style={{
-                                        border: `2.5px solid ${getStatusColor(member.status)}`,
+                                        border: isUnresolved ? '2px dashed #f59e0b' : `2.5px solid ${getStatusColor(member.status)}`,
                                         opacity: selectedId === member.id ? 1 : 0.65
                                     }}
                                 />
@@ -241,21 +245,23 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                     alt={member.name}
                                     className={`w-11 h-11 rounded-full object-cover border-2 ${
                                         isDark ? 'border-slate-800 bg-slate-800' : 'border-white bg-slate-100'
-                                    } shadow-md ${member.isGhostMode ? 'blur-[1.5px] grayscale opacity-75' : ''}`}
+                                    } shadow-md ${member.isGhostMode ? 'blur-[1.5px] grayscale opacity-75' : ''} ${isUnresolved ? 'saturate-75' : ''}`}
                                 />
 
                                 {/* Status Icon Badge */}
                                 <div
-                                    className="absolute bottom-0 right-0 w-4 h-4 rounded-full border flex items-center justify-center text-[8px]"
+                                    className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border flex items-center justify-center text-[8px] ${
+                                        isUnresolved ? 'animate-pulse' : ''
+                                    }`}
                                     style={{
-                                        backgroundColor: getStatusColor(member.status),
+                                        backgroundColor: isUnresolved ? '#f59e0b' : getStatusColor(member.status),
                                         borderColor: isDark ? '#0f172a' : 'white'
                                     }}
                                 >
-                                    {member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
+                                    {isUnresolved ? '📡' : member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
                                 </div>
                             </button>
-                        ))}
+                        );})}
                     </div>
 
                     {/* Quick Places & Hub Toggle on Collapsed Bar */}
@@ -498,16 +504,21 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 <div className="space-y-2">
                                     {members.map(member => {
                                         const memberCircleHex = member.circleColor || '#6366f1';
+                                        const isUnresolved = !member.location || (member.location.lat === 0 && member.location.lng === 0);
                                         return (
                                         <div
                                             key={member.id}
                                             onClick={() => onSelect(member.id)}
                                             className={`p-3 rounded-2xl border flex flex-col gap-2 transition-all cursor-pointer ${
-                                                selectedId === member.id
-                                                    ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border-indigo-500/50'
-                                                    : isDark
-                                                        ? 'bg-white/5 border-white/5 hover:bg-white/10'
-                                                        : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
+                                                isUnresolved
+                                                    ? isDark
+                                                        ? 'bg-amber-950/10 border-amber-500/25 border-dashed opacity-80 hover:opacity-100'
+                                                        : 'bg-amber-50/40 border-amber-300/50 border-dashed opacity-85 hover:opacity-100 shadow-sm'
+                                                    : selectedId === member.id
+                                                        ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border-indigo-500/50'
+                                                        : isDark
+                                                            ? 'bg-white/5 border-white/5 hover:bg-white/10'
+                                                            : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
                                             }`}
                                         >
                                             <div className="flex items-center gap-3">
@@ -519,28 +530,35 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name || member.id);
                                                         }}
                                                         alt={member.name}
-                                                        style={{ borderColor: memberCircleHex }}
+                                                        style={{ borderColor: isUnresolved ? '#f59e0b' : memberCircleHex }}
                                                         className={`w-11 h-11 rounded-xl object-cover border-2 ${isDark ? 'bg-slate-800' : 'bg-slate-100'} ${
                                                             selectedId === member.id ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-900' : ''
-                                                        } ${member.isGhostMode ? 'blur-[1.5px] grayscale opacity-75' : ''}`}
+                                                        } ${member.isGhostMode ? 'blur-[1.5px] grayscale opacity-75' : ''} ${isUnresolved ? 'saturate-75' : ''}`}
                                                     />
                                                     <div
-                                                        className="absolute -bottom-1 -right-1 w-4.5 h-4.5 rounded-lg flex items-center justify-center text-[10px] border border-slate-900"
-                                                        style={{ backgroundColor: getStatusColor(member.status) }}
+                                                        className={`absolute -bottom-1 -right-1 w-4.5 h-4.5 rounded-lg flex items-center justify-center text-[10px] border border-slate-900 ${
+                                                            isUnresolved ? 'animate-pulse' : ''
+                                                        }`}
+                                                        style={{ backgroundColor: isUnresolved ? '#f59e0b' : getStatusColor(member.status) }}
                                                     >
-                                                        {member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
+                                                        {isUnresolved ? '📡' : member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
                                                     </div>
                                                 </div>
 
                                                 {/* Info */}
                                                 <div className="flex-1 text-left min-w-0">
                                                     <div className="flex items-center justify-between gap-1">
-                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                                                             <h4 className={`font-black text-sm truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
                                                                 {member.name}
                                                                 {member.name === 'You' && <span className="ml-1 text-xs text-indigo-400 font-bold">(You)</span>}
                                                             </h4>
-                                                            {member.circleBadges && member.circleBadges.length > 0 ? (
+                                                            {isUnresolved ? (
+                                                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                                                    <span>Locating…</span>
+                                                                </span>
+                                                            ) : member.circleBadges && member.circleBadges.length > 0 ? (
                                                                 member.circleBadges.map(b => (
                                                                     <span
                                                                         key={b.id}
@@ -592,19 +610,26 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             )}
                                                         </div>
                                                     </div>
-                                                    <div className={`text-[11px] font-medium truncate ${
-                                                        member.currentPlace && member.status === 'Stationary' ? 'text-emerald-400 font-semibold' :
-                                                        member.status === 'Driving' ? 'text-indigo-400' :
-                                                        member.status === 'Walking' || member.status === 'Moving' ? 'text-sky-400' :
-                                                        member.status === 'Stationary' ? 'text-emerald-400' :
-                                                        isDark ? 'text-slate-400' : 'text-slate-500'
-                                                    }`}>
-                                                        {member.currentPlace
-                                                            ? (member.status === 'Stationary' ? `At ${member.currentPlace}` : `${member.status} • ${member.currentPlace}`)
-                                                            : (member.status === 'Driving' ? `Driving ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
-                                                               member.status === 'Walking' || member.status === 'Moving' ? `Walking ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
-                                                               'Stationary')}
-                                                    </div>
+                                                    {isUnresolved ? (
+                                                        <div className="text-[11px] font-medium text-amber-400/90 flex items-center gap-1.5 truncate mt-0.5">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block shrink-0" />
+                                                            <span className="truncate">Waiting for device signal…</span>
+                                                        </div>
+                                                    ) : (
+                                                        <div className={`text-[11px] font-medium truncate ${
+                                                            member.currentPlace && member.status === 'Stationary' ? 'text-emerald-400 font-semibold' :
+                                                            member.status === 'Driving' ? 'text-indigo-400' :
+                                                            member.status === 'Walking' || member.status === 'Moving' ? 'text-sky-400' :
+                                                            member.status === 'Stationary' ? 'text-emerald-400' :
+                                                            isDark ? 'text-slate-400' : 'text-slate-500'
+                                                        }`}>
+                                                            {member.currentPlace
+                                                                ? (member.status === 'Stationary' ? `At ${member.currentPlace}` : `${member.status} • ${member.currentPlace}`)
+                                                                : (member.status === 'Driving' ? `Driving ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
+                                                                   member.status === 'Walking' || member.status === 'Moving' ? `Walking ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
+                                                                   'Stationary')}
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 {/* Speed Indicator */}
