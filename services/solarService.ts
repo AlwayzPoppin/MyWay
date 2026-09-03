@@ -108,7 +108,7 @@ export function calculateSolarInfo(location?: Location | null, date: Date = new 
         solarPhase = 'night';
     }
 
-    const recommendedSkin: MapSkinId = isDaylight ? 'warm_cream' : 'carbon-amber';
+    const recommendedSkin: MapSkinId = isDaylight ? 'default' : 'carbon-amber';
 
     const formatTime = (d: Date) => {
         try {

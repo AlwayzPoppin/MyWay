@@ -553,7 +553,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             <div className="text-right shrink-0">
                                 <span className="text-[9px] uppercase font-bold text-slate-400 block">Auto Skin</span>
                                 <span className="text-xs font-black text-emerald-400">
-                                    {solarInfo.isDaylight ? 'Warm Cream' : 'Carbon Amber'}
+                                    {solarInfo.isDaylight ? 'Default' : 'Carbon Amber'}
                                 </span>
                             </div>
                         </div>
@@ -568,7 +568,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                 {MAP_SKINS.map((skin) => {
-                                    const isSelected = (localSettings.mapSkin || 'default') === skin.id;
+                                    const selectedSkinId = localSettings.mapSkin || 'default';
+                                    const isSelected = selectedSkinId === skin.id || (selectedSkinId === 'warm_cream' && skin.id === 'default');
                                     return (
                                         <button
                                             key={skin.id}

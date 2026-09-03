@@ -322,17 +322,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         return solarService.subscribe(setSolarInfo);
     }, []);
 
-    // Resolve dynamic skin ID: 'default' automatically resolves to 'warm_cream' (Day) or 'muted_slate' (Night)
+    // Resolve dynamic skin ID: 'default' (Day) or 'carbon-amber' (Night)
     const effectiveSkin = useMemo<MapSkinId>(() => {
         return resolveMapSkinId(mapSkin as MapSkinId, solarInfo.isDaylight);
     }, [mapSkin, solarInfo.isDaylight]);
 
-    // Get the skin style URL
-    // Respects Low Data Mode vs Warm Cream (Day) vs Los Santos Radar (Night) vs Auto Solar Transition
+    // Respects Low Data Mode vs Default (Day) vs Carbon Amber (Night) vs Auto Solar Transition
     const styleUrl = useMemo(() => {
         if (isLowDataMode) {
             // Low Data Mode: Minimal vector 2D basemap
-            return effectiveSkin === 'warm_cream'
+            return (effectiveSkin === 'default' || effectiveSkin === 'warm_cream')
                 ? 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'
                 : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
         }
@@ -461,7 +460,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const baseHeight = Math.round(14 * heightMultiplier);
                 const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
 
-                const isWarmLight = effectiveSkin === 'warm_cream';
+                const isWarmLight = effectiveSkin === 'default' || effectiveSkin === 'warm_cream';
 
                 // 3D Architectural Lighting & Balanced Sun Shading (Viewport anchor prevents harsh shadow skewing on light themes)
                 try {
@@ -620,7 +619,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         // ==========================================
         // HIGH-CONTRAST HORIZONTAL ROAD LABELS ENGINE
         // ==========================================
-        const isWarmLightSkin = effectiveSkin === 'warm_cream';
+        const isWarmLightSkin = effectiveSkin === 'default' || effectiveSkin === 'warm_cream';
         const style = map.current.getStyle();
         const vectorSourceId = Object.keys(style?.sources || {}).find(id => {
             return style?.sources?.[id]?.type === 'vector';
@@ -1304,7 +1303,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             return;
         }
 
-        const isLightSkin = effectiveSkin === 'warm_cream';
+        const isLightSkin = effectiveSkin === 'default' || effectiveSkin === 'warm_cream';
         const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
 
         // Full coordinates array [[lng, lat], ...]
@@ -3359,7 +3358,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 visualRotation = Math.round(visualRotation);
 
                 const circleColor = member.circleColor || '#6366f1';
-                const isLightSkin = effectiveSkin === 'warm_cream';
+                const isLightSkin = effectiveSkin === 'default' || effectiveSkin === 'warm_cream';
                 const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
                 const isDriving = (member.speed || 0) > 10 || !!(member as any).isDriving;
                 const isStale = !!(member as any).isStale;

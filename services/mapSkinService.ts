@@ -7,7 +7,7 @@
 
 import { solarService } from './solarService';
 
-export type MapSkinId = 'default' | 'warm_cream' | 'carbon-amber' | 'los-santos' | 'muted_slate' | 'midnight-amber' | 'gta_radar' | 'midnight_amber';
+export type MapSkinId = 'default' | 'warm_cream' | 'auto' | 'carbon-amber' | 'los-santos' | 'muted_slate' | 'midnight-amber' | 'gta_radar' | 'midnight_amber';
 
 export interface MapSkin {
     id: MapSkinId;
@@ -69,16 +69,8 @@ export const TERRAIN_STYLE = {
 export const MAP_SKINS: MapSkin[] = [
     {
         id: 'default',
-        name: 'Auto Solar Transition',
-        description: 'Warm Cream by day, Carbon Amber by night (synced to sunrise/sunset)',
-        styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-        preview: '🌓',
-        isPremium: false
-    },
-    {
-        id: 'warm_cream',
-        name: 'Warm Cream (Day)',
-        description: 'Bright warm daylight with soft cream & off-white ivory tones',
+        name: 'Default',
+        description: 'Bright daylight with soft cream & off-white ivory tones',
         styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
         preview: '☀️',
         isPremium: false
@@ -90,6 +82,14 @@ export const MAP_SKINS: MapSkin[] = [
         styleUrl: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
         preview: '⚡',
         isPremium: false
+    },
+    {
+        id: 'auto',
+        name: 'Auto Solar Transition',
+        description: 'Default by day, Carbon Amber by night (synced to sunrise/sunset)',
+        styleUrl: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+        preview: '🌓',
+        isPremium: false
     }
 ];
 
@@ -100,14 +100,16 @@ export const resolveMapSkinId = (id: MapSkinId | string, isDaylight?: boolean): 
     if (id === 'los-santos' || id === 'muted_slate' || id === 'midnight-amber' || id === 'midnight_amber' || id === 'gta_radar') {
         return 'carbon-amber';
     }
-    if (id !== 'default') {
-        const found = MAP_SKINS.find(s => s.id === id);
-        if (found) return found.id;
+    if (id === 'auto') {
+        const daylight = typeof isDaylight === 'boolean' ? isDaylight : solarService.getSolarInfo().isDaylight;
+        return daylight ? 'default' : 'carbon-amber';
     }
-    if (typeof isDaylight === 'boolean') {
-        return isDaylight ? 'warm_cream' : 'carbon-amber';
+    if (id === 'warm_cream') {
+        return 'default';
     }
-    return solarService.getSolarInfo().isDaylight ? 'warm_cream' : 'carbon-amber';
+    const found = MAP_SKINS.find(s => s.id === id);
+    if (found) return found.id;
+    return 'default';
 };
 
 /**
@@ -115,7 +117,7 @@ export const resolveMapSkinId = (id: MapSkinId | string, isDaylight?: boolean): 
  */
 export const getMapSkin = (id: MapSkinId | string, isDaylight?: boolean): MapSkin => {
     const resolvedId = resolveMapSkinId(id, isDaylight);
-    return MAP_SKINS.find(s => s.id === resolvedId) || MAP_SKINS[1];
+    return MAP_SKINS.find(s => s.id === resolvedId) || MAP_SKINS[0];
 };
 
 /**
