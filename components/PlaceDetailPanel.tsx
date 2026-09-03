@@ -62,6 +62,13 @@ function formatRelativeTime(timestamp?: number): string {
     return `${Math.floor(diffDays / 7)}w ago`;
 }
 
+const GEOFENCE_PRESETS = [
+    { label: 'Driveway', value: 0.015, meters: '15m' },
+    { label: 'Street', value: 0.05, meters: '50m' },
+    { label: 'Neighborhood', value: 0.15, meters: '150m' },
+    { label: 'City Area', value: 1.0, meters: '1km' }
+];
+
 interface WaypointRowProps {
     wp: RouteWaypoint;
     wIdx: number;
@@ -823,6 +830,33 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 {Math.round(newPlaceRadius * 1000)}m
                             </span>
                         </div>
+
+                        {/* Quick-Preset Radius Chips */}
+                        <div className="flex flex-row overflow-x-auto gap-2 mb-3 pb-0.5 scrollbar-none">
+                            {GEOFENCE_PRESETS.map((preset) => {
+                                const isActive = Math.round(newPlaceRadius * 1000) === Math.round(preset.value * 1000);
+                                return (
+                                    <button
+                                        key={preset.label}
+                                        type="button"
+                                        onClick={() => setNewPlaceRadius(preset.value)}
+                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer shrink-0 border ${
+                                            isActive
+                                                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
+                                                : theme === 'dark'
+                                                    ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
+                                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900 shadow-2xs'
+                                        }`}
+                                    >
+                                        <span>{preset.label}</span>
+                                        <span className={`text-[9px] ${isActive ? 'text-indigo-200' : 'text-slate-400'}`}>
+                                            ({preset.meters})
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
                         <input
                             type="range"
                             min="0.015"
@@ -1414,6 +1448,34 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     {Math.round((place.radius && place.radius > 5 ? place.radius : (place.radius || 0.05) * 1000))}m
                                 </span>
                             </div>
+
+                            {/* Quick-Preset Radius Chips */}
+                            <div className="flex flex-row overflow-x-auto gap-2 mb-2.5 pb-0.5 scrollbar-none">
+                                {GEOFENCE_PRESETS.map((preset) => {
+                                    const currentKm = place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05);
+                                    const isActive = Math.round(currentKm * 1000) === Math.round(preset.value * 1000);
+                                    return (
+                                        <button
+                                            key={preset.label}
+                                            type="button"
+                                            onClick={() => onUpdateRadius(place.id, preset.value)}
+                                            className={`px-2.5 py-1 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer shrink-0 border ${
+                                                isActive
+                                                    ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
+                                                    : theme === 'dark'
+                                                        ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
+                                                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900 shadow-2xs'
+                                            }`}
+                                        >
+                                            <span>{preset.label}</span>
+                                            <span className={`text-[9px] ${isActive ? 'text-indigo-200' : 'text-slate-400'}`}>
+                                                ({preset.meters})
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
                             <input
                                 type="range"
                                 min="0.015"
@@ -1838,6 +1900,34 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 {Math.round((place.radius && place.radius > 5 ? place.radius : (place.radius || 0.05) * 1000))}m
                             </span>
                         </div>
+
+                        {/* Quick-Preset Radius Chips */}
+                        <div className="flex flex-row overflow-x-auto gap-2 mb-3 pb-0.5 scrollbar-none">
+                            {GEOFENCE_PRESETS.map((preset) => {
+                                const currentKm = place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05);
+                                const isActive = Math.round(currentKm * 1000) === Math.round(preset.value * 1000);
+                                return (
+                                    <button
+                                        key={preset.label}
+                                        type="button"
+                                        onClick={() => onUpdateRadius(place.id, preset.value)}
+                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer shrink-0 border ${
+                                            isActive
+                                                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
+                                                : theme === 'dark'
+                                                    ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
+                                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900 shadow-2xs'
+                                        }`}
+                                    >
+                                        <span>{preset.label}</span>
+                                        <span className={`text-[9px] ${isActive ? 'text-indigo-200' : 'text-slate-400'}`}>
+                                            ({preset.meters})
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
                         <input
                             type="range"
                             min="0.015"
