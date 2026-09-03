@@ -33,7 +33,7 @@ import IncidentDetailModal from './components/IncidentDetailModal';
 import { incidentService } from './services/incidentService';
 import { ambientPoiService } from './services/ambientPoiService';
 import LoginScreen from './components/LoginScreen';
-import OnboardingFlow from './components/OnboardingFlow';
+import SetupWizardModal from './components/SetupWizardModal';
 import PlaceDetailPanel from './components/PlaceDetailPanel';
 import LoadingScreen from './components/LoadingScreen';
 import { useAuth } from './contexts/AuthContext';
@@ -1610,6 +1610,18 @@ const App: React.FC = () => {
               setCorrectingPlace(destinationPlace);
             }}
             theme={theme}
+          />
+
+          {/* New User Onboarding Setup Wizard Modal */}
+          <SetupWizardModal
+            isOpen={Boolean(user && profile && profile.hasCompletedSetup !== true && !authLoading)}
+            user={user}
+            profile={profile}
+            theme={theme as 'light' | 'dark'}
+            userLocation={userLocation}
+            onComplete={(_updatedProfile) => {
+              showNotification('🎉 Welcome to MyWay! Your profile and home base are set.', 4500);
+            }}
           />
 
           {/* Circle Settings & Multi-Circle Management Modal */}

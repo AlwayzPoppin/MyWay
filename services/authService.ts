@@ -46,6 +46,15 @@ export interface UserProfile {
         locationSharing: boolean;
     };
     ecdhPublicKey?: string;
+    hasCompletedSetup?: boolean;
+    dateOfBirth?: string;
+    gender?: 'male' | 'female' | 'non_binary' | 'prefer_not_to_say' | string;
+    preciseHomeLocation?: {
+        lat: number;
+        lng: number;
+        address?: string;
+        label?: string;
+    };
 }
 
 export interface CircleColorInfo {
