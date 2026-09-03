@@ -176,6 +176,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // Smooth Vehicle Puck & Camera 1Hz Linear Interpolation Refs
     const latestLocationRef = useRef<{ lng: number; lat: number } | null>(null);
     const latestBearingRef = useRef<number>(0);
+    const prevSelfLocationRef = useRef<Location | null>(null);
     const selfMarkerRef = useRef<maplibregl.Marker | null>(null);
     const puckInterpolationRef = useRef<{
         prevCoords: [number, number];
@@ -3090,20 +3091,39 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         // ── RENDER CLUSTERS ────────────────────────────────────────
         clusters.forEach(cluster => {
             if (cluster.members.length === 1) {
-                // ── SOLO MEMBER (existing logic) ──
+                // ── SOLO MEMBER ──
                 const member = cluster.members[0];
+                const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
+                const isSelfNavigating = isNavigating && isSelf;
                 let finalLocation = member.location;
-                let displayBearing = (member as any).bearing || 0;
 
-                // Snap-to-Road during navigation
+                // 1. Calculate delta movement distance & bearing between consecutive GPS pings
+                let movementBearing: number | null = null;
+                if (isSelf && prevSelfLocationRef.current) {
+                    const dMoved = getDistanceMeters(prevSelfLocationRef.current, member.location);
+                    if (dMoved >= 1.5) {
+                        movementBearing = getBearing(prevSelfLocationRef.current, member.location);
+                        prevSelfLocationRef.current = { lat: member.location.lat, lng: member.location.lng };
+                    }
+                } else if (isSelf) {
+                    prevSelfLocationRef.current = { lat: member.location.lat, lng: member.location.lng };
+                }
+
+                // 2. Geolocation true heading from device telemetry (valid when vehicle is moving)
+                const hasValidDeviceHeading = typeof member.heading === 'number' && member.heading >= 0 && !isNaN(member.heading) && (member.speed || 0) > 1.0;
+                const trueHeading = hasValidDeviceHeading ? member.heading! : null;
+
+                // 3. Fallback raw bearing
+                let displayBearing = trueHeading ?? movementBearing ?? (typeof member.heading === 'number' && member.heading >= 0 ? member.heading : (isSelf ? latestBearingRef.current : 0));
+
+                // 4. Snap-to-Road & Route Vector Alignment during active navigation
                 if (isNavigating && routeCoords.length >= 2) {
                     let minSegDist = Infinity;
                     let snappedPoint: Location | null = null;
                     let segBearing = 0;
 
-                    const startIdx = 0;
-                    const endIdx = Math.min(routeCoords.length - 1, currentStepIndex + 6);
-                    for (let i = startIdx; i < endIdx; i++) {
+                    // Scan entire route coordinates to find the exact nearest polyline segment
+                    for (let i = 0; i < routeCoords.length - 1; i++) {
                         const a = routeCoords[i];
                         const b = routeCoords[i + 1];
                         const snap = getPointOnSegmentNearestTo(member.location, a, b);
@@ -3118,24 +3138,40 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                     if (snappedPoint && minSegDist < SNAPPING_THRESHOLD_METERS) {
                         finalLocation = snappedPoint;
-                        displayBearing = segBearing;
-                    } else if (routeCoords.length >= 2) {
-                        displayBearing = getBearing(routeCoords[0], routeCoords[1]);
+
+                        // Align orientation cleanly to the route polyline vector
+                        // If device true heading or delta movement bearing indicates a sharp divergence (> 65°),
+                        // honor the vehicle's actual orientation (e.g. U-turns, sharp driveway maneuvers);
+                        // otherwise lock smoothly straight along the route polyline vector (segBearing)
+                        const candidateBearing = trueHeading ?? movementBearing;
+                        if (candidateBearing !== null) {
+                            let diff = Math.abs(candidateBearing - segBearing);
+                            if (diff > 180) diff = 360 - diff;
+                            if (diff <= 65) {
+                                displayBearing = segBearing;
+                            } else {
+                                displayBearing = candidateBearing;
+                            }
+                        } else {
+                            displayBearing = segBearing;
+                        }
+                    } else {
+                        // Off-route or outside snapping radius: prioritize device true heading, then movement bearing, then route forward vector
+                        if (trueHeading !== null) {
+                            displayBearing = trueHeading;
+                        } else if (movementBearing !== null) {
+                            displayBearing = movementBearing;
+                        } else if (segBearing !== 0) {
+                            displayBearing = segBearing;
+                        }
                     }
                 }
 
                 // Calculate rotation relative to map camera angle so vehicle arrow points directly along the road on-screen
                 const mapCamBearing = map.current ? map.current.getBearing() : 0;
-                const visualRotation = Math.round(((displayBearing - mapCamBearing) % 360 + 360) % 360);
-
-                const updatedMs = new Date(member.lastUpdated).getTime();
-                const ageMinutes = Math.floor((Date.now() - updatedMs) / 60000);
-                const isStale = ageMinutes >= 5;
-                const isBlurred = member.privacyMode === 'blurred' || member.isGhostMode;
-                const isFrozen = member.privacyMode === 'frozen';
-                const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
-                const isDriving = member.status === 'Driving' || (member.speed && member.speed > 5);
-                const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
+                let visualRotation = ((displayBearing - mapCamBearing) % 360 + 360) % 360;
+                if (visualRotation > 180) visualRotation -= 360;
+                visualRotation = Math.round(visualRotation);
 
                 const circleColor = member.circleColor || '#6366f1';
                 const borderColor = isCarbonAmber
@@ -3152,7 +3188,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                 const initials = (member.name || 'M').charAt(0).toUpperCase();
 
-                const isSelfNavigating = isNavigating && isSelf;
                 const isLightSkin = effectiveSkin === 'warm_cream';
                 const markerHtml = isSelfNavigating ? `
                     <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
@@ -3246,8 +3281,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             { lat: anim.currentCoords[1], lng: anim.currentCoords[0] },
                             finalLocation
                         );
-                        // If vehicle jumps > 300m (e.g. route restart, snapping jump), reset instantly
-                        if (dist > 300) {
+                        let deltaB = Math.abs(displayBearing - anim.currentBearing);
+                        if (deltaB > 180) deltaB = 360 - deltaB;
+
+                        // If vehicle jumps > 300m or makes a sharp >120° turn/recalculation, reset instantly to avoid slow 1s spinning
+                        if (dist > 300 || deltaB > 120) {
                             anim.prevCoords = [finalLocation.lng, finalLocation.lat];
                             anim.targetCoords = [finalLocation.lng, finalLocation.lat];
                             anim.currentCoords = [finalLocation.lng, finalLocation.lat];
@@ -3415,7 +3453,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                 // Sync vehicle arrow & headlight beam rotation with camera heading
                 const mapCamBearing = map.current.getBearing();
-                const visualRotation = Math.round(((bearing - mapCamBearing) % 360 + 360) % 360);
+                let visualRotation = ((bearing - mapCamBearing) % 360 + 360) % 360;
+                if (visualRotation > 180) visualRotation -= 360;
+                visualRotation = Math.round(visualRotation);
 
                 const el = marker.getElement();
                 const beamEl = el.querySelector('.myway-puck-beam') as HTMLElement | null;
@@ -3480,25 +3520,27 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 return;
             }
 
-            // Compute travel bearing from driver device heading or route polyline
-            let travelBearing = 0;
-            if (driver?.heading !== undefined && driver.heading >= 0 && (driver.speed || 0) > 1.5) {
-                travelBearing = driver.heading;
-            } else if (routeCoords.length >= 2) {
-                // Find nearest route segment ahead of driver
-                let minDist = Infinity;
-                let nearestIdx = 0;
-                for (let i = 0; i < routeCoords.length - 1; i++) {
-                    const snap = getPointOnSegmentNearestTo(driverLoc, routeCoords[i], routeCoords[i + 1]);
-                    const d = getDistanceMeters(driverLoc, snap);
-                    if (d < minDist) {
-                        minDist = d;
-                        nearestIdx = i;
+            // Compute travel bearing from synchronized puck bearing, driver device heading, or route polyline
+            let travelBearing = latestBearingRef.current || 0;
+            if (travelBearing === 0) {
+                if (driver?.heading !== undefined && driver.heading >= 0 && (driver.speed || 0) > 1.5) {
+                    travelBearing = driver.heading;
+                } else if (routeCoords.length >= 2) {
+                    // Find nearest route segment ahead of driver
+                    let minDist = Infinity;
+                    let nearestIdx = 0;
+                    for (let i = 0; i < routeCoords.length - 1; i++) {
+                        const snap = getPointOnSegmentNearestTo(driverLoc, routeCoords[i], routeCoords[i + 1]);
+                        const d = getDistanceMeters(driverLoc, snap);
+                        if (d < minDist) {
+                            minDist = d;
+                            nearestIdx = i;
+                        }
                     }
+                    travelBearing = getBearing(routeCoords[nearestIdx], routeCoords[Math.min(nearestIdx + 1, routeCoords.length - 1)]);
+                } else if (driver?.heading !== undefined && driver.heading >= 0) {
+                    travelBearing = driver.heading;
                 }
-                travelBearing = getBearing(routeCoords[nearestIdx], routeCoords[Math.min(nearestIdx + 1, routeCoords.length - 1)]);
-            } else if (driver?.heading !== undefined && driver.heading >= 0) {
-                travelBearing = driver.heading;
             }
 
             // On initial trip start: immediately align camera with the road bearing
