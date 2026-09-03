@@ -117,11 +117,11 @@ export const sanitizeGeofenceRadius = (radius?: number | null): number => {
     if (radius === undefined || radius === null || isNaN(radius) || radius <= 0) {
         return 0.05; // 50m safe default
     }
-    // If value is stored in meters (>= 1)
-    if (radius >= 1) {
+    // If value is stored in meters (> 5)
+    if (radius > 5) {
         return Math.max(15, Math.min(5000, radius));
     }
-    // Stored in kilometers (< 1)
+    // Stored in kilometers (<= 5)
     return Math.max(0.015, Math.min(5.0, radius));
 };
 
@@ -144,7 +144,7 @@ export const addUserPlace = async (
         id,
         circleId: targetCircleKey,
         createdAt: Date.now(),
-        createdBy: userId
+        createdBy: userId || 'local-user'
     };
 
     // Save to primary circle
@@ -162,33 +162,60 @@ export const addUserPlace = async (
     return id;
 };
 
-// Update an existing user place
+// Update an existing user place across all associated circles and personal store
 export const updateUserPlace = async (
     circleId: string,
     placeId: string,
     updates: Partial<Omit<UserPlace, 'id' | 'createdAt' | 'createdBy'>>,
-    userId?: string
+    userId?: string,
+    allCircleIds: string[] = []
 ): Promise<void> => {
-    const targetCircleKey = circleId || (userId ? `user_${userId}` : 'default');
-    const placeRef = ref(database, `places/${targetCircleKey}/${placeId}`);
-    const snapshot = await get(placeRef);
-
     const sanitizedUpdates: typeof updates = { ...updates };
     if (updates.radius !== undefined) {
         sanitizedUpdates.radius = sanitizeGeofenceRadius(updates.radius);
     }
 
-    if (snapshot.exists()) {
-        const existing = snapshot.val();
-        await set(placeRef, { ...existing, ...sanitizedUpdates });
+    const candidateTargets = Array.from(new Set([
+        circleId,
+        ...(userId ? [`user_${userId}`] : []),
+        ...allCircleIds,
+        'default'
+    ].filter(Boolean)));
+
+    let updatedAny = false;
+
+    // 1. Search and update across all known targets where this place exists
+    for (const targetKey of candidateTargets) {
+        try {
+            const placeRef = ref(database, `places/${targetKey}/${placeId}`);
+            const snapshot = await get(placeRef);
+            if (snapshot.exists()) {
+                const existing = snapshot.val();
+                await set(placeRef, { ...existing, ...sanitizedUpdates });
+                updatedAny = true;
+            }
+        } catch (e) {
+            console.warn(`[UserPlaces] Failed updating in ${targetKey}:`, e);
+        }
     }
 
-    if (userId) {
-        const userPlaceRef = ref(database, `places/user_${userId}/${placeId}`);
-        const userSnapshot = await get(userPlaceRef);
-        if (userSnapshot.exists()) {
-            const existingUser = userSnapshot.val();
-            await set(userPlaceRef, { ...existingUser, ...sanitizedUpdates });
+    // 2. Fallback: If not found in any existing snapshot, write directly to primary target and personal store
+    if (!updatedAny && candidateTargets.length > 0) {
+        const primaryTarget = candidateTargets[0];
+        try {
+            const placeRef = ref(database, `places/${primaryTarget}/${placeId}`);
+            await set(placeRef, { id: placeId, ...sanitizedUpdates });
+        } catch (e) {
+            console.warn(`[UserPlaces] Failed writing fallback to ${primaryTarget}:`, e);
+        }
+
+        if (userId && primaryTarget !== `user_${userId}`) {
+            try {
+                const userPlaceRef = ref(database, `places/user_${userId}/${placeId}`);
+                await set(userPlaceRef, { id: placeId, ...sanitizedUpdates });
+            } catch (e) {
+                console.warn(`[UserPlaces] Failed writing fallback to personal store:`, e);
+            }
         }
     }
 };

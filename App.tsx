@@ -763,16 +763,30 @@ const App: React.FC = () => {
   }, [profile, currentCircle, userCircles, user, showNotification]);
 
   const handleUpdatePlace = useCallback(async (placeId: string, updates: Partial<Place>) => {
-    setUserPlaces(prev => prev.map(p => p.id === placeId ? { ...p, ...updates } : p));
+    setUserPlaces(prev => {
+      const next = prev.map(p => p.id === placeId ? { ...p, ...updates } : p);
+      try {
+        localStorage.setItem('myway_user_places', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
     showNotification(`✅ Updated "${updates.name || 'Place'}"`, 3000);
 
-    const targetCircleId = currentCircle?.id || profile?.familyCircleId || '';
+    const targetPlace = userPlaces.find(p => p.id === placeId);
+    const targetCircleId = targetPlace?.circleId || currentCircle?.id || profile?.familyCircleId || userCircles[0]?.id || '';
+    const allCircleIds = Array.from(new Set([
+      targetCircleId,
+      ...(userCircles.map(c => c.id)),
+      ...(profile?.familyCircleId ? [profile.familyCircleId] : []),
+      ...(currentCircle?.id ? [currentCircle.id] : [])
+    ].filter(Boolean)));
+
     try {
-      await updateUserPlace(targetCircleId, placeId, updates, user?.uid);
+      await updateUserPlace(targetCircleId, placeId, updates, user?.uid, allCircleIds);
     } catch (e) {
       console.warn('⚠️ Failed to sync place update to Firebase:', e);
     }
-  }, [profile, currentCircle, user, showNotification]);
+  }, [profile, currentCircle, userCircles, userPlaces, user, showNotification]);
 
   const handleSelectMember = useCallback((id: string) => {
     setSelectedMemberId(id);
@@ -808,23 +822,54 @@ const App: React.FC = () => {
   }, [user, profile, showNotification, logActivity, setMembers]);
 
   const handleUpdatePlaceRadius = useCallback((placeId: string, radius: number) => {
-    // 1. Update selected place state
-    setSelectedPlace(prev => prev && prev.id === placeId ? { ...prev, radius } : prev);
-    
-    // 2. Update discovered places state so the geofence circle on the 3D Map updates live
-    setDiscoveredPlaces(prev => prev.map(p => p.id === placeId ? { ...p, radius } : p));
-    
-    // 3. If place is a saved circle place, update local userPlaces and sync to Firebase
-    const isSavedPlace = userPlaces.some(p => p.id === placeId);
-    if (isSavedPlace) {
-      setUserPlaces(prev => prev.map(p => p.id === placeId ? { ...p, radius } : p));
-      if (user && profile?.familyCircleId) {
-        updateUserPlace(profile.familyCircleId, placeId, { radius }).catch(err => {
-          console.warn('Could not update saved place radius in DB:', err);
-        });
+    // 1. Resolve matching saved place in userPlaces (by ID or coordinates)
+    const targetSavedPlace = userPlaces.find(p => 
+      p.id === placeId || 
+      (selectedPlace && (p.id === selectedPlace.id || 
+        (Math.abs(p.location.lat - selectedPlace.location.lat) < 0.0002 && Math.abs(p.location.lng - selectedPlace.location.lng) < 0.0002)))
+    );
+
+    const actualPlaceId = targetSavedPlace?.id || placeId;
+
+    // 2. Update selected place state immediately
+    setSelectedPlace(prev => {
+      if (!prev) return null;
+      if (prev.id === placeId || prev.id === actualPlaceId || 
+          (targetSavedPlace && Math.abs(prev.location.lat - targetSavedPlace.location.lat) < 0.0002 && Math.abs(prev.location.lng - targetSavedPlace.location.lng) < 0.0002)) {
+        return { ...prev, radius };
       }
-    }
-  }, [user, profile, userPlaces]);
+      return prev;
+    });
+    
+    // 3. Update discovered places state so the geofence circle on the 3D Map updates live
+    setDiscoveredPlaces(prev => prev.map(p => 
+      (p.id === placeId || p.id === actualPlaceId) ? { ...p, radius } : p
+    ));
+    
+    // 4. Update userPlaces and persist to localStorage immediately
+    setUserPlaces(prev => {
+      const next = prev.map(p => 
+        (p.id === placeId || p.id === actualPlaceId) ? { ...p, radius } : p
+      );
+      try {
+        localStorage.setItem('myway_user_places', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+
+    // 5. Sync to Firebase across all target circles and user personal store
+    const targetCircleId = targetSavedPlace?.circleId || currentCircle?.id || profile?.familyCircleId || userCircles[0]?.id || '';
+    const allCircleIds = Array.from(new Set([
+      targetCircleId,
+      ...(userCircles.map(c => c.id)),
+      ...(profile?.familyCircleId ? [profile.familyCircleId] : []),
+      ...(currentCircle?.id ? [currentCircle.id] : [])
+    ].filter(Boolean)));
+
+    updateUserPlace(targetCircleId, actualPlaceId, { radius }, user?.uid, allCircleIds).catch(err => {
+      console.warn('Could not update saved place radius in DB:', err);
+    });
+  }, [user, profile, currentCircle, userCircles, userPlaces, selectedPlace]);
 
   const handleTriggerSOS = useCallback((impact?: CrashImpactMetadata) => {
     const memberName = profile?.displayName || user?.displayName || 'You';
