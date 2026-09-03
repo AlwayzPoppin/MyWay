@@ -1053,13 +1053,7 @@ const App: React.FC = () => {
         {/* Map and overlay container */}
         <div className="flex-1 relative overflow-hidden" style={{ perspective: is3DMode ? '1000px' : 'none' }}>
           {/* Map layer - z-0 to ensure overlays appear on top */}
-          <div
-            className="absolute inset-0 z-0 transition-transform duration-500"
-            style={{
-              transform: is3DMode ? 'none' : 'none', // MapLibre handles its own 3D transform
-              transformOrigin: 'center center'
-            }}
-          >
+          <div className="absolute inset-0 z-0 overflow-hidden">
             {/* UNIFIED MAP: Single MapLibre3DView handles both 2D and 3D modes */}
             <MapLibre3DView
               members={members}

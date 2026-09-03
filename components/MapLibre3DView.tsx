@@ -878,6 +878,93 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         } catch (e) {}
     }, [mapStyle, isLowDataMode, mapSkin, theme, buildingScale]);
 
+    // ==========================================
+    // ORIENTATION & VIEWPORT RESIZE LIFECYCLE HANDLER
+    // Prevents UI freezes, layout deadlocks, or component unmounting/remounting
+    // when rotating between landscape and portrait during active navigation.
+    // ==========================================
+    const isOrientingRef = useRef<boolean>(false);
+    const resizeRafRef = useRef<number | null>(null);
+    const resizeTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+    const performCleanMapResize = useCallback((realignNavigationCamera: boolean = true) => {
+        if (!map.current || !mapContainer.current) return;
+        const container = mapContainer.current;
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        // Skip resizing if container has collapsed to 0 during DOM tree restructuring
+        if (width <= 0 || height <= 0) return;
+
+        try {
+            map.current.resize();
+            map.current.triggerRepaint();
+        } catch (err) {
+            console.warn('[MapLibre3DView] Soft resize warning (non-fatal):', err);
+        }
+
+        // Re-align 3D chase camera cleanly along active route vector if navigating
+        if (realignNavigationCamera && isNavigating && activeRoute && routeCoords.length > 0) {
+            try {
+                const driverLoc = prevSelfLocationRef.current || (userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null);
+                if (driverLoc && driverLoc.lat !== 0 && driverLoc.lng !== 0) {
+                    const navTopPadding = Math.round(height * 0.52);
+                    map.current.easeTo({
+                        center: [driverLoc.lng, driverLoc.lat],
+                        bearing: prevBearingRef.current,
+                        pitch: 60,
+                        zoom: isMobile ? 18.2 : 18.4,
+                        padding: {
+                            top: navTopPadding,
+                            bottom: 0,
+                            left: isMobile ? 0 : 120,
+                            right: 0
+                        },
+                        duration: 350,
+                        easing: (t: number) => t
+                    });
+                }
+            } catch (err) {
+                // Non-fatal if camera easing fails during layout rotation
+            }
+        }
+    }, [isNavigating, activeRoute, routeCoords.length, isMobile, userLocation]);
+
+    const scheduleMapResize = useCallback((isOrientationFlip: boolean = false) => {
+        if (resizeRafRef.current) {
+            cancelAnimationFrame(resizeRafRef.current);
+            resizeRafRef.current = null;
+        }
+        resizeTimeoutsRef.current.forEach(t => clearTimeout(t));
+        resizeTimeoutsRef.current = [];
+
+        if (isOrientationFlip) {
+            isOrientingRef.current = true;
+        }
+
+        // Phase 1: Schedule on next animation frame after browser has registered the event
+        resizeRafRef.current = requestAnimationFrame(() => {
+            resizeRafRef.current = null;
+            performCleanMapResize(false); // First pass resizes canvas without abrupt camera snap
+
+            // Phase 2 & 3: Phased follow-ups at 100ms, 250ms, and 450ms
+            // Allows Android Activity and iOS UIWindow orientation transitions and safe-area insets to fully settle
+            const delays = [100, 250, 450];
+            delays.forEach((delay, index) => {
+                const isFinalPass = index === delays.length - 1;
+                const tid = setTimeout(() => {
+                    requestAnimationFrame(() => {
+                        performCleanMapResize(isFinalPass); // Final pass realigns active navigation chase camera
+                        if (isFinalPass) {
+                            isOrientingRef.current = false;
+                        }
+                    });
+                }, delay);
+                resizeTimeoutsRef.current.push(tid);
+            });
+        });
+    }, [performCleanMapResize]);
+
     useEffect(() => {
         if (map.current) return;
         if (!mapContainer.current) return;
@@ -952,9 +1039,19 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         canvas.addEventListener('webglcontextrestored', handleContextRestored, false);
 
         mapInstance.on('error', (e: any) => {
-            const msg = e?.error?.message || '';
-            if (msg.includes('WebGL') || msg.includes('context lost') || msg.includes('GL_OUT_OF_MEMORY')) {
-                console.warn('⚠️ MapLibre3DView: WebGL error on map instance:', e.error);
+            const msg = (e?.error?.message || '').toLowerCase();
+            const isFatalContextLoss = msg.includes('context lost') || msg.includes('gl_out_of_memory');
+
+            // If device is actively undergoing orientation transition, transient WebGL sizing warnings
+            // must NOT trigger a destructive map reboot
+            if (isOrientingRef.current && !isFatalContextLoss) {
+                console.warn('⚠️ MapLibre3DView: Non-fatal WebGL warning caught during orientation transition:', e.error);
+                scheduleMapResize(true);
+                return;
+            }
+
+            if (isFatalContextLoss) {
+                console.warn('⚠️ MapLibre3DView: Fatal WebGL context error on map instance:', e.error);
                 scheduleMapReboot();
             }
         });
@@ -973,7 +1070,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         console.warn('⚠️ MapLibre3DView: WebGL context lost detected on app resume.');
                         scheduleMapReboot();
                     } else {
-                        map.current.resize();
+                        scheduleMapResize(false);
                     }
                 } catch {
                     scheduleMapReboot();
@@ -1058,6 +1155,94 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         };
     }, [mapEpoch]);
+
+    // ==========================================
+    // MULTI-PRONGED VIEWPORT & ORIENTATION LIFECYCLE LISTENER
+    // Listens to window resize, orientationchange, ScreenOrientation API,
+    // media queries for portrait/landscape, and ResizeObserver on the container.
+    // ==========================================
+    useEffect(() => {
+        if (!isMapReady || !mapContainer.current) return;
+
+        const handleResizeEvent = () => {
+            scheduleMapResize(false);
+        };
+
+        const handleOrientationChange = () => {
+            scheduleMapResize(true);
+        };
+
+        // 1. Window resize & legacy orientationchange
+        window.addEventListener('resize', handleResizeEvent, { passive: true });
+        window.addEventListener('orientationchange', handleOrientationChange, { passive: true });
+
+        // 2. Modern ScreenOrientation API
+        if (typeof screen !== 'undefined' && screen.orientation) {
+            screen.orientation.addEventListener('change', handleOrientationChange, { passive: true });
+        }
+
+        // 3. Media query matchers for orientation: portrait / landscape
+        const mqlPortrait = window.matchMedia('(orientation: portrait)');
+        const mqlLandscape = window.matchMedia('(orientation: landscape)');
+        const handleMqlChange = () => handleOrientationChange();
+
+        if (mqlPortrait.addEventListener) {
+            mqlPortrait.addEventListener('change', handleMqlChange);
+            mqlLandscape.addEventListener('change', handleMqlChange);
+        } else if ((mqlPortrait as any).addListener) {
+            (mqlPortrait as any).addListener(handleMqlChange);
+            (mqlLandscape as any).addListener(handleMqlChange);
+        }
+
+        // 4. ResizeObserver on the container element itself
+        let resizeObserver: ResizeObserver | null = null;
+        if (typeof ResizeObserver !== 'undefined' && mapContainer.current) {
+            try {
+                resizeObserver = new ResizeObserver((entries) => {
+                    for (const entry of entries) {
+                        if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+                            scheduleMapResize(false);
+                        }
+                    }
+                });
+                resizeObserver.observe(mapContainer.current);
+            } catch (err) {
+                console.warn('[MapLibre3DView] ResizeObserver initialization skipped:', err);
+            }
+        }
+
+        return () => {
+            if (resizeRafRef.current) {
+                cancelAnimationFrame(resizeRafRef.current);
+                resizeRafRef.current = null;
+            }
+            resizeTimeoutsRef.current.forEach(t => clearTimeout(t));
+            resizeTimeoutsRef.current = [];
+
+            window.removeEventListener('resize', handleResizeEvent);
+            window.removeEventListener('orientationchange', handleOrientationChange);
+            if (typeof screen !== 'undefined' && screen.orientation) {
+                screen.orientation.removeEventListener('change', handleOrientationChange);
+            }
+            if (mqlPortrait.removeEventListener) {
+                mqlPortrait.removeEventListener('change', handleMqlChange);
+                mqlLandscape.removeEventListener('change', handleMqlChange);
+            } else if ((mqlPortrait as any).removeListener) {
+                (mqlPortrait as any).removeListener(handleMqlChange);
+                (mqlLandscape as any).removeListener(handleMqlChange);
+            }
+            if (resizeObserver) {
+                resizeObserver.disconnect();
+            }
+        };
+    }, [isMapReady, scheduleMapResize]);
+
+    // Trigger clean debounced map resize when isMobile prop updates (e.g. tablet/phone breakpoint)
+    useEffect(() => {
+        if (isMapReady) {
+            scheduleMapResize(true);
+        }
+    }, [isMobile, isMapReady, scheduleMapResize]);
 
     // Audit Fix: Reactively update styleUrl when skin or style changes
     useEffect(() => {
@@ -3554,6 +3739,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const smoothedBearing = prevBearingRef.current + delta * 0.6;
                 prevBearingRef.current = ((smoothedBearing % 360) + 360) % 360;
             }
+
+            // During active orientation flip, allow the phased resize handler to smoothly settle the camera
+            if (isOrientingRef.current) return;
 
             // --- FLEET-AWARE DYNAMIC CONVOY FRAMING ---
             const activeConvoy = convoyService.getActiveConvoy();

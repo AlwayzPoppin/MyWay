@@ -38,7 +38,16 @@ export const useUI = () => {
 
 export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [theme, setTheme] = useState<'light' | 'dark'>('dark');
-    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+    const checkIsMobileDevice = () => {
+        if (typeof window === 'undefined') return false;
+        const isTouch = 'ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
+        const shortEdge = Math.min(window.innerWidth, window.innerHeight);
+        // Handheld phone devices have a short edge < 600px; they remain mobile in both portrait and landscape
+        if (isTouch && shortEdge < 600) return true;
+        return window.innerWidth < 768;
+    };
+
+    const [isMobile, setIsMobile] = useState(checkIsMobileDevice);
     const [isUpsellOpen, setUpsellOpen] = useState(false);
     const [isRewardsOpen, setRewardsOpen] = useState(false);
     const [isPrivacyOpen, setPrivacyOpen] = useState(false);
@@ -55,9 +64,20 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [notification, setNotification] = useState<string | null>(null);
 
     useEffect(() => {
-        const handleResize = () => setIsMobile(window.innerWidth < 768);
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const handleResize = () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+                setIsMobile(checkIsMobileDevice());
+            }, 100);
+        };
+        window.addEventListener('resize', handleResize, { passive: true });
+        window.addEventListener('orientationchange', handleResize, { passive: true });
+        return () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            window.removeEventListener('resize', handleResize);
+            window.removeEventListener('orientationchange', handleResize);
+        };
     }, []);
 
     const showNotification = useCallback((msg: string | null, duration = 5000) => {
