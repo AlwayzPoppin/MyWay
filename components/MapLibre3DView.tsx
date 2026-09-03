@@ -172,6 +172,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const trafficControlMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const incidentMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const membersMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const clusterMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     // Smooth Vehicle Puck & Camera 1Hz Linear Interpolation Refs
     const latestLocationRef = useRef<{ lng: number; lat: number } | null>(null);
     const latestBearingRef = useRef<number>(0);
@@ -265,6 +266,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     renderedGeofenceIdsRef.current.clear();
                     membersMarkersRef.current.forEach(m => m.remove());
                     membersMarkersRef.current.clear();
+                    clusterMarkersRef.current.forEach(m => m.remove());
+                    clusterMarkersRef.current.clear();
                     placesMarkersRef.current.forEach(m => m.remove());
                     placesMarkersRef.current.clear();
                     if (destinationMarkerRef.current) {
@@ -1038,6 +1041,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             canvas.removeEventListener('webglcontextrestored', handleContextRestored);
             membersMarkersRef.current.forEach(m => m.remove());
             membersMarkersRef.current.clear();
+            clusterMarkersRef.current.forEach(m => m.remove());
+            clusterMarkersRef.current.clear();
             placesMarkersRef.current.forEach(m => m.remove());
             placesMarkersRef.current.clear();
             if (destinationMarkerRef.current) {
@@ -3005,195 +3010,373 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             new Map<string, FamilyMember>(allMembersToRender.map(m => [m.id, m])).values()
         );
 
+
         const currentMemberIds = new Set(dedupedMembers.map(m => m.id));
 
-        // Remove stale member markers
+        // ── CLUSTER DETECTION ──────────────────────────────────────
+        // Group members within 15m of each other into clusters.
+        // Self-navigating user is always kept solo so the arrow puck is never obscured.
+        const CLUSTER_THRESHOLD_METERS = 15;
+        type MemberCluster = { members: FamilyMember[]; centroid: Location };
+        const clusters: MemberCluster[] = [];
+        const clustered = new Set<string>();
+
+        dedupedMembers.forEach(member => {
+            if (clustered.has(member.id)) return;
+            const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
+            const isSelfNav = isNavigating && isSelf;
+            // Self-navigating user is always rendered solo
+            if (isSelfNav) {
+                clusters.push({ members: [member], centroid: member.location });
+                clustered.add(member.id);
+                return;
+            }
+            const group: FamilyMember[] = [member];
+            clustered.add(member.id);
+
+            dedupedMembers.forEach(other => {
+                if (clustered.has(other.id)) return;
+                const otherIsSelf = other.id === currentUserId || other.id === 'demo-you' || other.id === 'current_user' || other.id === 'local-user';
+                const otherIsSelfNav = isNavigating && otherIsSelf;
+                if (otherIsSelfNav) return; // don't cluster with nav puck
+                const dist = getDistanceMeters(member.location, other.location);
+                if (dist < CLUSTER_THRESHOLD_METERS) {
+                    group.push(other);
+                    clustered.add(other.id);
+                }
+            });
+
+            // Compute centroid of the group
+            const centroid: Location = {
+                lat: group.reduce((sum, m) => sum + m.location.lat, 0) / group.length,
+                lng: group.reduce((sum, m) => sum + m.location.lng, 0) / group.length
+            };
+            clusters.push({ members: group, centroid });
+        });
+
+        // Determine which individual member IDs are NOT in a cluster (solo)
+        const soloMemberIds = new Set<string>();
+        const clusteredMemberIds = new Set<string>();
+        const activeClusterKeys = new Set<string>();
+
+        clusters.forEach(cluster => {
+            if (cluster.members.length === 1) {
+                soloMemberIds.add(cluster.members[0].id);
+            } else {
+                const key = 'cluster_' + cluster.members.map(m => m.id).sort().join('_');
+                activeClusterKeys.add(key);
+                cluster.members.forEach(m => clusteredMemberIds.add(m.id));
+            }
+        });
+
+        // Remove stale individual member markers (not in current set OR now clustered)
         for (const [id, marker] of membersMarkersRef.current.entries()) {
-            if (!currentMemberIds.has(id)) {
+            if (!currentMemberIds.has(id) || clusteredMemberIds.has(id)) {
                 marker.remove();
                 membersMarkersRef.current.delete(id);
             }
         }
 
-        dedupedMembers.forEach(member => {
-            let finalLocation = member.location;
-            let displayBearing = (member as any).bearing || 0;
+        // Remove stale cluster markers (cluster key no longer active)
+        for (const [key, marker] of clusterMarkersRef.current.entries()) {
+            if (!activeClusterKeys.has(key)) {
+                marker.remove();
+                clusterMarkersRef.current.delete(key);
+            }
+        }
 
-            // Snap-to-Road during navigation
-            if (isNavigating && routeCoords.length >= 2) {
-                let minSegDist = Infinity;
-                let snappedPoint: Location | null = null;
-                let segBearing = 0;
+        // ── RENDER CLUSTERS ────────────────────────────────────────
+        clusters.forEach(cluster => {
+            if (cluster.members.length === 1) {
+                // ── SOLO MEMBER (existing logic) ──
+                const member = cluster.members[0];
+                let finalLocation = member.location;
+                let displayBearing = (member as any).bearing || 0;
 
-                const startIdx = 0;
-                const endIdx = Math.min(routeCoords.length - 1, currentStepIndex + 6);
-                for (let i = startIdx; i < endIdx; i++) {
-                    const a = routeCoords[i];
-                    const b = routeCoords[i + 1];
-                    const snap = getPointOnSegmentNearestTo(member.location, a, b);
-                    const dist = getDistanceMeters(member.location, snap);
-                    
-                    if (dist < minSegDist) {
-                        minSegDist = dist;
-                        snappedPoint = snap;
-                        segBearing = getBearing(a, b);
+                // Snap-to-Road during navigation
+                if (isNavigating && routeCoords.length >= 2) {
+                    let minSegDist = Infinity;
+                    let snappedPoint: Location | null = null;
+                    let segBearing = 0;
+
+                    const startIdx = 0;
+                    const endIdx = Math.min(routeCoords.length - 1, currentStepIndex + 6);
+                    for (let i = startIdx; i < endIdx; i++) {
+                        const a = routeCoords[i];
+                        const b = routeCoords[i + 1];
+                        const snap = getPointOnSegmentNearestTo(member.location, a, b);
+                        const dist = getDistanceMeters(member.location, snap);
+                        
+                        if (dist < minSegDist) {
+                            minSegDist = dist;
+                            snappedPoint = snap;
+                            segBearing = getBearing(a, b);
+                        }
+                    }
+
+                    if (snappedPoint && minSegDist < SNAPPING_THRESHOLD_METERS) {
+                        finalLocation = snappedPoint;
+                        displayBearing = segBearing;
+                    } else if (routeCoords.length >= 2) {
+                        displayBearing = getBearing(routeCoords[0], routeCoords[1]);
                     }
                 }
 
-                if (snappedPoint && minSegDist < SNAPPING_THRESHOLD_METERS) {
-                    finalLocation = snappedPoint;
-                    displayBearing = segBearing;
-                } else if (routeCoords.length >= 2) {
-                    displayBearing = getBearing(routeCoords[0], routeCoords[1]);
-                }
-            }
+                // Calculate rotation relative to map camera angle so vehicle arrow points directly along the road on-screen
+                const mapCamBearing = map.current ? map.current.getBearing() : 0;
+                const visualRotation = Math.round(((displayBearing - mapCamBearing) % 360 + 360) % 360);
 
-            // Calculate rotation relative to map camera angle so vehicle arrow points directly along the road on-screen
-            const mapCamBearing = map.current ? map.current.getBearing() : 0;
-            const visualRotation = Math.round(((displayBearing - mapCamBearing) % 360 + 360) % 360);
+                const updatedMs = new Date(member.lastUpdated).getTime();
+                const ageMinutes = Math.floor((Date.now() - updatedMs) / 60000);
+                const isStale = ageMinutes >= 5;
+                const isBlurred = member.privacyMode === 'blurred' || member.isGhostMode;
+                const isFrozen = member.privacyMode === 'frozen';
+                const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
+                const isDriving = member.status === 'Driving' || (member.speed && member.speed > 5);
+                const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
 
-            const updatedMs = new Date(member.lastUpdated).getTime();
-            const ageMinutes = Math.floor((Date.now() - updatedMs) / 60000);
-            const isStale = ageMinutes >= 5;
-            const isBlurred = member.privacyMode === 'blurred' || member.isGhostMode;
-            const isFrozen = member.privacyMode === 'frozen';
-            const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
-            const isDriving = member.status === 'Driving' || (member.speed && member.speed > 5);
-            const isSelf = member.id === currentUserId || member.id === 'demo-you' || member.id === 'current_user' || member.id === 'local-user';
+                const circleColor = member.circleColor || '#6366f1';
+                const borderColor = isCarbonAmber
+                    ? '#f59e0b'
+                    : isBlurred 
+                        ? '#a855f7' 
+                        : isFrozen 
+                            ? '#38bdf8' 
+                            : isStale 
+                                ? '#9ca3af' 
+                                : isDriving 
+                                    ? '#6366f1' 
+                                    : circleColor;
 
-            const circleColor = member.circleColor || '#6366f1';
-            const borderColor = isCarbonAmber
-                ? '#f59e0b'
-                : isBlurred 
-                    ? '#a855f7' 
-                    : isFrozen 
-                        ? '#38bdf8' 
-                        : isStale 
-                            ? '#9ca3af' 
-                            : isDriving 
-                                ? '#6366f1' 
-                                : circleColor;
+                const initials = (member.name || 'M').charAt(0).toUpperCase();
 
-            const initials = (member.name || 'M').charAt(0).toUpperCase();
-
-            const isSelfNavigating = isNavigating && isSelf;
-            const isLightSkin = effectiveSkin === 'warm_cream';
-            const markerHtml = isSelfNavigating ? `
-                <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
-                    <!-- Dynamic Forward Vision Headlight Beam (Electric Cyan) -->
-                    <div class="myway-puck-beam" style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${visualRotation}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, ${isCarbonAmber ? 'rgba(0, 242, 254, 0.65)' : 'rgba(56, 189, 248, 0.45)'} 0%, ${isCarbonAmber ? 'rgba(6, 182, 212, 0.25)' : 'rgba(56, 189, 248, 0.12)'} 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
-                    
-                    <!-- Radar Pulse Beacon (Electric Cyan) -->
-                    <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isCarbonAmber ? '#00f2fe' : isLightSkin ? '#0284c7' : circleColor}; opacity: 0.4; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; box-shadow: ${isCarbonAmber ? '0 0 16px #00f2fe' : 'none'};"></div>
-                    
-                    <!-- 3D Navigation Vehicle Arrow Puck with Solid Black Casing -->
-                    <div class="myway-puck-arrow" style="position: relative; width: 46px; height: 46px; transform: rotate(${visualRotation}deg); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.8));">
-                        <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-                            <!-- 2px Solid Pure Black Outer Casing Border -->
-                            <path d="M22 2 L40 40 L22 31 L4 40 Z" fill="#000000" />
-                            <!-- Electric Cyan Primary Arrow -->
-                            <path d="M22 4 L38 38 L22 30 L6 38 Z" fill="${isCarbonAmber ? '#00f2fe' : isLightSkin ? '#0284c7' : '#4f46e5'}" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round" />
-                            <!-- Inner Cyan Core Accent -->
-                            <path d="M22 8 L33 34 L22 27 L11 34 Z" fill="${isCarbonAmber ? '#06b6d4' : isLightSkin ? '#38bdf8' : circleColor}" />
-                            <circle cx="22" cy="22" r="4" fill="#ffffff" />
-                        </svg>
-                    </div>
-                </div>
-            ` : `
-                <div class="myway-member-avatar-container select-none" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-                    <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
-                        ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${circleColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
-                        <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3px solid ${circleColor}; background: #0f172a; box-shadow: 0 6px 18px rgba(0,0,0,0.5); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
-                            ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
-                            <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
+                const isSelfNavigating = isNavigating && isSelf;
+                const isLightSkin = effectiveSkin === 'warm_cream';
+                const markerHtml = isSelfNavigating ? `
+                    <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
+                        <!-- Dynamic Forward Vision Headlight Beam (Electric Cyan) -->
+                        <div class="myway-puck-beam" style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%) rotate(${visualRotation}deg); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, ${isCarbonAmber ? 'rgba(0, 242, 254, 0.65)' : 'rgba(56, 189, 248, 0.45)'} 0%, ${isCarbonAmber ? 'rgba(6, 182, 212, 0.25)' : 'rgba(56, 189, 248, 0.12)'} 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
+                        
+                        <!-- Radar Pulse Beacon (Electric Cyan) -->
+                        <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isCarbonAmber ? '#00f2fe' : isLightSkin ? '#0284c7' : circleColor}; opacity: 0.4; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; box-shadow: ${isCarbonAmber ? '0 0 16px #00f2fe' : 'none'};"></div>
+                        
+                        <!-- 3D Navigation Vehicle Arrow Puck with Solid Black Casing -->
+                        <div class="myway-puck-arrow" style="position: relative; width: 46px; height: 46px; transform: rotate(${visualRotation}deg); display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.8));">
+                            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+                                <!-- 2px Solid Pure Black Outer Casing Border -->
+                                <path d="M22 2 L40 40 L22 31 L4 40 Z" fill="#000000" />
+                                <!-- Electric Cyan Primary Arrow -->
+                                <path d="M22 4 L38 38 L22 30 L6 38 Z" fill="${isCarbonAmber ? '#00f2fe' : isLightSkin ? '#0284c7' : '#4f46e5'}" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round" />
+                                <!-- Inner Cyan Core Accent -->
+                                <path d="M22 8 L33 34 L22 27 L11 34 Z" fill="${isCarbonAmber ? '#06b6d4' : isLightSkin ? '#38bdf8' : circleColor}" />
+                                <circle cx="22" cy="22" r="4" fill="#ffffff" />
+                            </svg>
                         </div>
-                        ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${circleColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
-                        ${member.circleName ? `<div style="position: absolute; bottom: -1px; right: -1px; width: 13px; height: 13px; border-radius: 50%; background: ${circleColor}; border: 2px solid #0f172a; box-shadow: 0 2px 6px rgba(0,0,0,0.5);"></div>` : ''}
                     </div>
-                    <div style="margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); border: 1px solid ${circleColor}88; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
-                        <span style="width: 5px; height: 5px; border-radius: 50%; background: ${circleColor}; shrink: 0;"></span>
-                        <span>${member.name || 'Member'}</span>
+                ` : `
+                    <div class="myway-member-avatar-container select-none" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                        <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
+                            ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${circleColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
+                            <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3px solid ${circleColor}; background: #0f172a; box-shadow: 0 6px 18px rgba(0,0,0,0.5); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
+                                ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
+                                <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
+                            </div>
+                            ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${circleColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                            ${member.circleName ? `<div style="position: absolute; bottom: -1px; right: -1px; width: 13px; height: 13px; border-radius: 50%; background: ${circleColor}; border: 2px solid #0f172a; box-shadow: 0 2px 6px rgba(0,0,0,0.5);"></div>` : ''}
+                        </div>
+                        <div style="margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); border: 1px solid ${circleColor}88; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
+                            <span style="width: 5px; height: 5px; border-radius: 50%; background: ${circleColor}; shrink: 0;"></span>
+                            <span>${member.name || 'Member'}</span>
+                        </div>
                     </div>
-                </div>
-            `;
+                `;
 
-            let marker = membersMarkersRef.current.get(member.id);
-            if (!marker) {
-                const el = document.createElement('div');
-                el.className = 'myway-member-avatar-marker select-none';
-                el.style.cursor = 'pointer';
-                el.style.display = 'flex';
-                el.style.flexDirection = 'column';
-                el.style.alignItems = 'center';
-                el.style.transform = 'translate3d(0,0,0)';
-                el.innerHTML = markerHtml;
-                (el as any)._lastHtml = markerHtml;
+                let marker = membersMarkersRef.current.get(member.id);
+                if (!marker) {
+                    const el = document.createElement('div');
+                    el.className = 'myway-member-avatar-marker select-none';
+                    el.style.cursor = 'pointer';
+                    el.style.display = 'flex';
+                    el.style.flexDirection = 'column';
+                    el.style.alignItems = 'center';
+                    el.style.transform = 'translate3d(0,0,0)';
+                    el.innerHTML = markerHtml;
+                    (el as any)._lastHtml = markerHtml;
 
-                el.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    onSelectMember?.(member.id);
-                });
+                    el.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        onSelectMember?.(member.id);
+                    });
 
-                marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-                    .setLngLat([finalLocation.lng, finalLocation.lat])
-                    .addTo(map.current!);
-                membersMarkersRef.current.set(member.id, marker);
-            } else {
-                // Prevent destroying and recreating the marker inner DOM on every 1Hz GPS coordinate ping
-                if ((marker.getElement() as any)._lastHtml !== markerHtml) {
-                    marker.getElement().innerHTML = markerHtml;
-                    (marker.getElement() as any)._lastHtml = markerHtml;
-                }
-            }
-
-            if (isSelfNavigating) {
-                selfMarkerRef.current = marker;
-                latestLocationRef.current = { lng: finalLocation.lng, lat: finalLocation.lat };
-                latestBearingRef.current = displayBearing;
-
-                // Initialize or smoothly update puck linear interpolation targets
-                if (!puckInterpolationRef.current) {
-                    puckInterpolationRef.current = {
-                        prevCoords: [finalLocation.lng, finalLocation.lat],
-                        targetCoords: [finalLocation.lng, finalLocation.lat],
-                        prevBearing: displayBearing,
-                        targetBearing: displayBearing,
-                        startTime: performance.now(),
-                        duration: 1000,
-                        currentCoords: [finalLocation.lng, finalLocation.lat],
-                        currentBearing: displayBearing
-                    };
-                    marker.setLngLat([finalLocation.lng, finalLocation.lat]);
+                    marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+                        .setLngLat([finalLocation.lng, finalLocation.lat])
+                        .addTo(map.current!);
+                    membersMarkersRef.current.set(member.id, marker);
                 } else {
-                    const anim = puckInterpolationRef.current;
-                    const dist = getDistanceMeters(
-                        { lat: anim.currentCoords[1], lng: anim.currentCoords[0] },
-                        finalLocation
-                    );
-                    // If vehicle jumps > 300m (e.g. route restart, snapping jump), reset instantly
-                    if (dist > 300) {
-                        anim.prevCoords = [finalLocation.lng, finalLocation.lat];
-                        anim.targetCoords = [finalLocation.lng, finalLocation.lat];
-                        anim.currentCoords = [finalLocation.lng, finalLocation.lat];
-                        anim.prevBearing = displayBearing;
-                        anim.targetBearing = displayBearing;
-                        anim.currentBearing = displayBearing;
-                        anim.startTime = performance.now();
+                    // Prevent destroying and recreating the marker inner DOM on every 1Hz GPS coordinate ping
+                    if ((marker.getElement() as any)._lastHtml !== markerHtml) {
+                        marker.getElement().innerHTML = markerHtml;
+                        (marker.getElement() as any)._lastHtml = markerHtml;
+                    }
+                }
+
+                if (isSelfNavigating) {
+                    selfMarkerRef.current = marker;
+                    latestLocationRef.current = { lng: finalLocation.lng, lat: finalLocation.lat };
+                    latestBearingRef.current = displayBearing;
+
+                    // Initialize or smoothly update puck linear interpolation targets
+                    if (!puckInterpolationRef.current) {
+                        puckInterpolationRef.current = {
+                            prevCoords: [finalLocation.lng, finalLocation.lat],
+                            targetCoords: [finalLocation.lng, finalLocation.lat],
+                            prevBearing: displayBearing,
+                            targetBearing: displayBearing,
+                            startTime: performance.now(),
+                            duration: 1000,
+                            currentCoords: [finalLocation.lng, finalLocation.lat],
+                            currentBearing: displayBearing
+                        };
                         marker.setLngLat([finalLocation.lng, finalLocation.lat]);
                     } else {
-                        anim.prevCoords = [anim.currentCoords[0], anim.currentCoords[1]];
-                        anim.targetCoords = [finalLocation.lng, finalLocation.lat];
-                        anim.prevBearing = anim.currentBearing;
-                        anim.targetBearing = displayBearing;
-                        anim.startTime = performance.now();
-                        anim.duration = 1000;
+                        const anim = puckInterpolationRef.current;
+                        const dist = getDistanceMeters(
+                            { lat: anim.currentCoords[1], lng: anim.currentCoords[0] },
+                            finalLocation
+                        );
+                        // If vehicle jumps > 300m (e.g. route restart, snapping jump), reset instantly
+                        if (dist > 300) {
+                            anim.prevCoords = [finalLocation.lng, finalLocation.lat];
+                            anim.targetCoords = [finalLocation.lng, finalLocation.lat];
+                            anim.currentCoords = [finalLocation.lng, finalLocation.lat];
+                            anim.prevBearing = displayBearing;
+                            anim.targetBearing = displayBearing;
+                            anim.currentBearing = displayBearing;
+                            anim.startTime = performance.now();
+                            marker.setLngLat([finalLocation.lng, finalLocation.lat]);
+                        } else {
+                            anim.prevCoords = [anim.currentCoords[0], anim.currentCoords[1]];
+                            anim.targetCoords = [finalLocation.lng, finalLocation.lat];
+                            anim.prevBearing = anim.currentBearing;
+                            anim.targetBearing = displayBearing;
+                            anim.startTime = performance.now();
+                            anim.duration = 1000;
+                        }
+                    }
+                } else {
+                    marker.setLngLat([finalLocation.lng, finalLocation.lat]);
+                }
+
+            } else {
+                // ── GROUPED CLUSTER PILL MARKER ──
+                const clusterMembers = cluster.members;
+                const clusterKey = 'cluster_' + clusterMembers.map(m => m.id).sort().join('_');
+
+                // Hide individual markers for clustered members (they may exist from a previous frame)
+                clusterMembers.forEach(m => {
+                    const existing = membersMarkersRef.current.get(m.id);
+                    if (existing) {
+                        existing.remove();
+                        membersMarkersRef.current.delete(m.id);
+                    }
+                });
+
+                // Build group label: "Alice & Bob" or "3 Members" if too long / ≥3 members
+                const names = clusterMembers.map(m => (m.name || 'Member').split(' ')[0]);
+                let groupLabel: string;
+                if (clusterMembers.length >= 3 || names.join(' & ').length > 18) {
+                    groupLabel = `${clusterMembers.length} Members`;
+                } else {
+                    groupLabel = names.join(' & ');
+                }
+
+                // Find if the group is near a saved place for a context badge
+                let nearbyPlaceName = '';
+                if (places && places.length > 0) {
+                    for (const p of places) {
+                        if (p.location && getDistanceMeters(cluster.centroid, p.location) < 50) {
+                            nearbyPlaceName = p.name || '';
+                            break;
+                        }
                     }
                 }
-            } else {
-                marker.setLngLat([finalLocation.lng, finalLocation.lat]);
+
+                // Determine a shared accent color from the first member
+                const accentColor = clusterMembers[0].circleColor || '#6366f1';
+
+                // Build stacked avatar HTML: horizontal flex with negative margins for overlap
+                const avatarStackHtml = clusterMembers.slice(0, 4).map((m, i) => {
+                    const init = (m.name || 'M').charAt(0).toUpperCase();
+                    const marginLeft = i === 0 ? '0' : '-10px';
+                    const zIndex = 10 - i;
+                    const mColor = m.circleColor || '#6366f1';
+                    const hasAvatar = m.avatar && !m.avatar.includes('default');
+                    return `<div style="position: relative; z-index: ${zIndex}; margin-left: ${marginLeft}; width: 34px; height: 34px; border-radius: 50%; border: 2.5px solid #0f172a; background: #1e293b; box-shadow: 0 3px 10px rgba(0,0,0,0.5); overflow: hidden; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        ${hasAvatar ? `<img src="${m.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
+                        <span style="${hasAvatar ? 'display: none;' : 'display: flex;'} font-weight: 900; color: #ffffff; font-size: 13px;">${init}</span>
+                        <div style="position: absolute; bottom: 0; right: 0; width: 10px; height: 10px; border-radius: 50%; background: ${mColor}; border: 1.5px solid #0f172a;"></div>
+                    </div>`;
+                }).join('');
+
+                // Overflow indicator if more than 4 members
+                const overflowBadge = clusterMembers.length > 4
+                    ? `<div style="margin-left: -8px; z-index: 1; width: 28px; height: 28px; border-radius: 50%; background: rgba(100, 116, 139, 0.8); border: 2px solid #0f172a; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 900; color: #ffffff; flex-shrink: 0;">+${clusterMembers.length - 4}</div>`
+                    : '';
+
+                const clusterMarkerHtml = `
+                    <div class="myway-cluster-pill select-none" style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer; animation: fadeIn 0.2s ease-out;">
+                        <!-- Shared pulse ring -->
+                        <div style="position: absolute; top: 50%; left: 50%; width: 60px; height: 60px; transform: translate(-50%, -55%); border-radius: 50%; background: ${accentColor}; opacity: 0.2; animation: ping 2.5s cubic-bezier(0, 0, 0.2, 1) infinite; pointer-events: none;"></div>
+                        <!-- Avatar stack row -->
+                        <div style="position: relative; display: flex; flex-direction: row; align-items: center;">
+                            ${avatarStackHtml}
+                            ${overflowBadge}
+                        </div>
+                        <!-- Group label pill -->
+                        <div style="margin-top: 3px; padding: 1px 8px; border-radius: 999px; background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(6px); border: 1px solid ${accentColor}66; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 3px 12px rgba(0,0,0,0.6);">
+                            <span style="width: 5px; height: 5px; border-radius: 50%; background: ${accentColor}; flex-shrink: 0;"></span>
+                            <span>${groupLabel}</span>
+                            ${nearbyPlaceName ? `<span style="color: rgba(255,255,255,0.5); font-size: 8px; margin-left: 2px;">· ${nearbyPlaceName}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+
+                let clusterMarker = clusterMarkersRef.current.get(clusterKey);
+                if (!clusterMarker) {
+                    const el = document.createElement('div');
+                    el.className = 'myway-cluster-marker select-none';
+                    el.style.cursor = 'pointer';
+                    el.style.display = 'flex';
+                    el.style.flexDirection = 'column';
+                    el.style.alignItems = 'center';
+                    el.style.transform = 'translate3d(0,0,0)';
+                    el.innerHTML = clusterMarkerHtml;
+                    (el as any)._lastHtml = clusterMarkerHtml;
+
+                    // Click handler: select first member, cycle on repeated taps
+                    let tapIndex = 0;
+                    el.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const targetMember = clusterMembers[tapIndex % clusterMembers.length];
+                        onSelectMember?.(targetMember.id);
+                        tapIndex++;
+                    });
+
+                    clusterMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+                        .setLngLat([cluster.centroid.lng, cluster.centroid.lat])
+                        .addTo(map.current!);
+                    clusterMarkersRef.current.set(clusterKey, clusterMarker);
+                } else {
+                    // Update HTML only if changed (prevents DOM thrashing)
+                    if ((clusterMarker.getElement() as any)._lastHtml !== clusterMarkerHtml) {
+                        clusterMarker.getElement().innerHTML = clusterMarkerHtml;
+                        (clusterMarker.getElement() as any)._lastHtml = clusterMarkerHtml;
+                    }
+                    clusterMarker.setLngLat([cluster.centroid.lng, cluster.centroid.lat]);
+                }
             }
         });
-    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin, theme, styleVersion, onSelectMember]);
+    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin, theme, styleVersion, onSelectMember, places]);
 
     // ==========================================
     // SMOOTH 60FPS PUCK & BEARING INTERPOLATION (rAF LOOP)
