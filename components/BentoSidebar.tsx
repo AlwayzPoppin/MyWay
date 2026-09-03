@@ -590,9 +590,9 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 onClick={onOpenMaintenance}
                                                 className={`w-10 h-10 rounded-xl flex items-center justify-center border transition-all hover:scale-115 active:scale-90
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
-                                                title="My Maintenance"
+                                                title="My Garage & Maintenance"
                                             >
-                                                <span className="text-lg">🔧</span>
+                                                <span className="text-lg">🚘</span>
                                             </button>
                                         )}
                                     </div>
@@ -647,10 +647,10 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
                                                 >
-                                                    <span className="text-lg">🔧</span>
+                                                    <span className="text-lg">🚘</span>
                                                     <div>
-                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Maintenance</p>
-                                                        <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Expenses</p>
+                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Garage & Maintenance</p>
+                                                        <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Garage & Logs</p>
                                                     </div>
                                                 </button>
                                             )}

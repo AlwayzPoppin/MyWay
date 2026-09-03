@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import VehicleGarageModule from './VehicleGarageModule';
 import { vehicleFuelService, RollingFuelReport } from '../services/vehicleFuelService';
 import { getSavedTrips, formatDuration } from '../services/tripHistoryService';
 import { Vehicle, Trip } from '../types';
@@ -100,6 +101,7 @@ const INITIAL_WIZARD: WizardState = {
 type MakeCategoryFilter = 'all' | 'popular' | 'american' | 'asian' | 'european' | 'luxury' | 'electric';
 
 const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) => {
+    const [activeTab, setActiveTab] = useState<'garage' | 'maintenance'>('garage');
     const [timeFilter, setTimeFilter] = useState<TimeFilter>('month');
     const [showAddExpense, setShowAddExpense] = useState(false);
     const [showGarage, setShowGarage] = useState(false);
@@ -838,11 +840,11 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                 {/* Header */}
                 <div className={`flex items-center justify-between px-5 py-4 border-b shrink-0 ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
                     <div className="flex items-center gap-3">
-                        <span className="text-2xl">🔧</span>
+                        <span className="text-2xl">🚘</span>
                         <div>
-                            <h2 className={`text-base font-black tracking-tight ${text}`}>My Maintenance</h2>
+                            <h2 className={`text-base font-black tracking-tight ${text}`}>My Garage & Maintenance</h2>
                             <p className={`text-[10px] font-bold uppercase tracking-wider ${subtext}`}>
-                                {showWizard ? 'Vehicle Setup Wizard' : 'Predictive Mileage & Health'}
+                                {showWizard ? 'Vehicle Setup Wizard' : activeTab === 'garage' ? 'Garage & Fuel Economy' : 'Predictive Mileage & Health'}
                             </p>
                         </div>
                     </div>
@@ -852,8 +854,45 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                     </button>
                 </div>
 
-                {/* Wizard Mode */}
-                {showWizard ? renderWizard() : (
+                {/* Top-Level Tabs: My Garage vs Maintenance Logs */}
+                {!showWizard && (
+                    <div className={`flex p-1.5 mx-4 mt-3 rounded-2xl border gap-1.5 shrink-0 ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('garage')}
+                            className={`flex-1 py-2 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                                activeTab === 'garage'
+                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-500/25 scale-[1.01]'
+                                    : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                        >
+                            <span className="text-sm">🚘</span>
+                            <span>My Garage</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('maintenance')}
+                            className={`flex-1 py-2 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                                activeTab === 'maintenance'
+                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-500/25 scale-[1.01]'
+                                    : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                        >
+                            <span className="text-sm">🔧</span>
+                            <span>Maintenance Logs</span>
+                        </button>
+                    </div>
+                )}
+
+                {/* Wizard Mode vs Tabbed Content */}
+                {showWizard ? renderWizard() : activeTab === 'garage' ? (
+                    <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4">
+                        <VehicleGarageModule
+                            theme={theme}
+                            onVehicleChange={() => setVersionKey(k => k + 1)}
+                        />
+                    </div>
+                ) : (
                     /* Dashboard Mode */
                     <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4">
 

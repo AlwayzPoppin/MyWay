@@ -6,7 +6,6 @@ import StorageManager from './StorageManager';
 import { PrivacyMode } from '../types';
 import { useUI } from '../contexts/UIContext';
 
-const VehicleGarageModule = React.lazy(() => import('./VehicleGarageModule'));
 
 export interface UserSettings {
     theme: 'light' | 'dark' | 'auto';
@@ -79,7 +78,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     // Accordion State
     const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
         alerts: true, // open by default
-        vehicle_fuel: true, // Vehicle & Fuel Economy
         map_visuals: true, // 3D buildings & map customization
         system: false,
         account: false
@@ -439,17 +437,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     </SettingRow>
                 </AccordionSection>
 
-                {/* 🚗 Vehicle Profile & Fuel Economy */}
-                <AccordionSection
-                    id="vehicle_fuel"
-                    title="Vehicle & Fuel Economy"
-                    emoji="🚗"
-                    subtitle="Garage & Fuel Presets"
-                >
-                    <React.Suspense fallback={<div className="p-4 text-center text-xs text-slate-400">Loading garage...</div>}>
-                        <VehicleGarageModule theme={theme} />
-                    </React.Suspense>
-                </AccordionSection>
 
                 {/* 5. Map & 3D Visuals */}
                 <AccordionSection
