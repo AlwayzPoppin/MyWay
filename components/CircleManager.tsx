@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatSegmentedInviteCode, cleanInviteCode } from '../utils/inviteCode';
 
 interface CircleManagerProps {
     onCreateCircle: (name: string) => Promise<any>;
@@ -29,12 +30,16 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
 
     const handleJoin = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!code.trim()) return;
+        const cleaned = cleanInviteCode(code);
+        if (!cleaned || cleaned.length !== 8) {
+            setError(`Invite code must be exactly 8 characters (entered ${cleaned.length}/8).`);
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
-            const circle = await onJoinCircle(code);
-            if (!circle) setError('Invalid invite code');
+            const circle = await onJoinCircle(cleaned);
+            if (!circle) setError('Invalid invite code. Circle not found.');
         } catch (err: any) {
             setError(err.message);
         } finally {
@@ -125,10 +130,10 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
                     <input
                         type="text"
                         value={code}
-                        onChange={(e) => setCode(e.target.value.toUpperCase())}
-                        placeholder="A1B2C3D4"
-                        maxLength={8}
-                        className={`w-full p-4 rounded-2xl font-bold bg-transparent border outline-none transition-all text-center tracking-[0.5em]
+                        onChange={(e) => setCode(formatSegmentedInviteCode(e.target.value))}
+                        placeholder="ABCD - 1234"
+                        maxLength={11}
+                        className={`w-full p-4 rounded-2xl font-bold font-mono bg-transparent border outline-none transition-all text-center tracking-[0.25em]
                             ${isDark ? 'border-white/10 text-white focus:border-indigo-500' : 'border-slate-200 text-slate-900 focus:border-indigo-500'}`}
                         autoFocus
                     />

@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { FamilyMember } from '../types';
 import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo } from '../services/authService';
 import { getCirclePrivacyMode, PRIVACY_LEVELS } from '../services/privacyService';
+import { formatSegmentedInviteCode, cleanInviteCode, isValidInviteCode } from '../utils/inviteCode';
 
 interface CircleSettingsModalProps {
     isOpen: boolean;
@@ -109,7 +110,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     const handleJoinCircle = async (codeToJoin?: string, e?: React.FormEvent) => {
         if (e) e.preventDefault();
         const rawCode = typeof codeToJoin === 'string' ? codeToJoin : joinInviteCode;
-        const cleanCode = rawCode.trim().toUpperCase();
+        const cleanCode = cleanInviteCode(rawCode);
 
         if (!cleanCode) {
             setJoinError('Please enter an 8-character invite code.');
@@ -117,14 +118,14 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         }
 
         if (cleanCode.length !== 8) {
-            const err = `Invite code must be exactly 8 characters (entered ${cleanCode.length}).`;
+            const err = `Invite code must be exactly 8 characters (entered ${cleanCode.length}/8).`;
             setJoinError(err);
             showNotification?.(`⚠️ ${err}`, 3500);
             return;
         }
 
         // Validate if user is already a member of this circle
-        const alreadyInCircle = userCircles.some(c => c.inviteCode?.toUpperCase() === cleanCode);
+        const alreadyInCircle = userCircles.some(c => cleanInviteCode(c.inviteCode) === cleanCode);
         if (alreadyInCircle) {
             const err = 'Already in this circle.';
             setJoinError(err);
@@ -602,20 +603,29 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             </button>
                                         </div>
 
-                                        <input
-                                            type="text"
-                                            placeholder="ENTER 8-CHARACTER CODE"
-                                            maxLength={8}
-                                            value={joinInviteCode}
-                                            onChange={(e) => {
-                                                setJoinInviteCode(e.target.value.toUpperCase());
-                                                if (joinError) setJoinError(null);
-                                            }}
-                                            autoFocus
-                                            className={`w-full px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black text-center tracking-widest uppercase outline-none focus:border-purple-500 transition-colors ${
-                                                isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
-                                            }`}
-                                        />
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                placeholder="XXXX - XXXX"
+                                                maxLength={11}
+                                                value={joinInviteCode}
+                                                onChange={(e) => {
+                                                    setJoinInviteCode(formatSegmentedInviteCode(e.target.value));
+                                                    if (joinError) setJoinError(null);
+                                                }}
+                                                autoFocus
+                                                className={`w-full px-3.5 py-2.5 pr-14 rounded-xl border text-xs font-mono font-black text-center tracking-[0.2em] uppercase outline-none focus:border-purple-500 transition-colors ${
+                                                    isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
+                                                }`}
+                                            />
+                                            <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono font-black px-1.5 py-0.5 rounded-md ${
+                                                cleanInviteCode(joinInviteCode).length === 8
+                                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                    : isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-500'
+                                            }`}>
+                                                {cleanInviteCode(joinInviteCode).length === 8 ? '8/8 ✓' : `${cleanInviteCode(joinInviteCode).length}/8`}
+                                            </span>
+                                        </div>
 
                                         {joinError && (
                                             <p className="text-[10px] font-bold text-red-400 mt-1">{joinError}</p>
@@ -653,12 +663,12 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 </p>
                                 <div
                                     onClick={handleCopyCode}
-                                    className={`py-3 px-6 rounded-2xl border font-mono font-black text-2xl tracking-[0.25em] cursor-pointer transition-all hover:scale-105 active:scale-95 inline-flex items-center gap-2 ${
+                                    className={`py-3 px-6 rounded-2xl border font-mono font-black text-2xl tracking-[0.15em] cursor-pointer transition-all hover:scale-105 active:scale-95 inline-flex items-center gap-2 ${
                                         isDark ? 'bg-white/5 border-white/10 text-indigo-400' : 'bg-slate-50 border-slate-200 text-indigo-600'
                                     }`}
                                     title="Click to copy code"
                                 >
-                                    <span>{inviteCode}</span>
+                                    <span>{formatSegmentedInviteCode(inviteCode)}</span>
                                     <span className="text-xs">📋</span>
                                 </div>
                                 <p className="text-[10px] text-slate-400 mt-1">Tap code to copy</p>
@@ -870,26 +880,35 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
                             {/* Join a Circle Section */}
                             <div className={`p-3.5 rounded-2xl border space-y-3 ${cardBg}`}>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-base">🔗</span>
-                                    <div>
-                                        <h4 className={`text-xs font-black uppercase tracking-wider ${textColor}`}>
-                                            Join a Circle
-                                        </h4>
-                                        <p className={`text-[10px] ${subTextColor}`}>
-                                            Enter an 8-character invite code manually
-                                        </p>
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-base">🔗</span>
+                                        <div>
+                                            <h4 className={`text-xs font-black uppercase tracking-wider ${textColor}`}>
+                                                Join a Circle
+                                            </h4>
+                                            <p className={`text-[10px] ${subTextColor}`}>
+                                                Enter an 8-character invite code (e.g. ABCD - 1234)
+                                            </p>
+                                        </div>
                                     </div>
+                                    <span className={`text-[9px] font-mono font-black px-2 py-0.5 rounded-md ${
+                                        cleanInviteCode(manualInviteCode).length === 8
+                                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                            : isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-500'
+                                    }`}>
+                                        {cleanInviteCode(manualInviteCode).length === 8 ? '8/8 ✓' : `${cleanInviteCode(manualInviteCode).length} / 8`}
+                                    </span>
                                 </div>
 
                                 <div className="flex gap-2">
                                     <input
                                         type="text"
-                                        placeholder="8-CHAR CODE"
-                                        maxLength={8}
+                                        placeholder="XXXX - XXXX"
+                                        maxLength={11}
                                         value={manualInviteCode}
                                         onChange={(e) => {
-                                            setManualInviteCode(e.target.value.toUpperCase());
+                                            setManualInviteCode(formatSegmentedInviteCode(e.target.value));
                                             if (joinError) setJoinError(null);
                                         }}
                                         onKeyDown={(e) => {
@@ -898,14 +917,14 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                 handleJoinCircle(manualInviteCode);
                                             }
                                         }}
-                                        className={`flex-1 px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black tracking-widest text-center uppercase outline-none focus:border-indigo-500 transition-colors ${
+                                        className={`flex-1 px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black tracking-[0.2em] text-center uppercase outline-none focus:border-indigo-500 transition-colors ${
                                             isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
                                         }`}
                                     />
                                     <button
                                         type="button"
                                         onClick={() => handleJoinCircle(manualInviteCode)}
-                                        disabled={isSubmitting || manualInviteCode.trim().length === 0}
+                                        disabled={isSubmitting || cleanInviteCode(manualInviteCode).length === 0}
                                         className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0"
                                     >
                                         {isSubmitting ? 'Joining...' : 'Join'}

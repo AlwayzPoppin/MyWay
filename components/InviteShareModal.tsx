@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { formatSegmentedInviteCode } from '../utils/inviteCode';
 
 interface InviteShareModalProps {
     inviteCode: string;
@@ -90,11 +91,11 @@ const InviteShareModal: React.FC<InviteShareModalProps> = ({
                         <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Invite Code</p>
                         <button
                             onClick={handleCopyCode}
-                            className={`text-2xl font-mono font-black tracking-[0.3em] px-6 py-3 rounded-2xl transition-all hover:scale-105 ${
+                            className={`text-2xl font-mono font-black tracking-[0.2em] px-6 py-3 rounded-2xl transition-all hover:scale-105 ${
                                 isDark ? 'text-white bg-white/5 border border-white/10' : 'text-slate-900 bg-slate-50 border border-slate-200'
                             }`}
                         >
-                            {inviteCode}
+                            {formatSegmentedInviteCode(inviteCode)}
                         </button>
                     </div>
 
