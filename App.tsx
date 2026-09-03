@@ -789,9 +789,15 @@ const App: React.FC = () => {
   }, [profile, currentCircle, userCircles, userPlaces, user, showNotification]);
 
   const handleSelectMember = useCallback((id: string) => {
+    // Guard: prevent flying to Null Island (0, 0) for members without a valid location
+    const member = members.find(m => m.id === id);
+    if (member && member.location && member.location.lat === 0 && member.location.lng === 0) {
+      showNotification(`📡 Waiting for ${member.name || 'member'}'s location…`, 3000);
+      return;
+    }
     setSelectedMemberId(id);
     setMapCenter(undefined);
-  }, []);
+  }, [members, showNotification]);
 
   const handleZoomChange = useCallback((zoom: number) => {
     setMapZoom(zoom);

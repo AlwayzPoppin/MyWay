@@ -3400,7 +3400,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // Camera control — initial center and member selection
     useEffect(() => {
         if (map.current && members.length > 0 && !selectedMemberId && !center && !isNavigating) {
-            const you = members.find(m => m.id === 'demo-you' || m.id === members[0].id);
+            const you = members.find(m => (m.id === 'demo-you' || m.id === members[0].id) && !(m.location.lat === 0 && m.location.lng === 0));
             if (you) map.current.flyTo({ center: [you.location.lng, you.location.lat], zoom: 17, pitch: is3DMode ? 60 : 0, duration: 1500 });
         }
     }, [members.length > 0]);
@@ -3408,7 +3408,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     useEffect(() => {
         if (!map.current || !selectedMemberId) return;
         const member = members.find(m => m.id === selectedMemberId);
-        if (member) map.current.flyTo({ center: [member.location.lng, member.location.lat], zoom: 17, pitch: is3DMode ? 60 : 0, duration: 1500 });
+        // Guard: skip flying to Null Island (0, 0) for members without a valid location broadcast
+        if (!member || (member.location.lat === 0 && member.location.lng === 0)) return;
+        map.current.flyTo({ center: [member.location.lng, member.location.lat], zoom: 17, pitch: is3DMode ? 60 : 0, duration: 1500 });
     }, [selectedMemberId, members]);
 
     useEffect(() => {
