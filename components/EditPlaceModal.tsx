@@ -45,7 +45,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             setName(place.name || '');
             setIcon(place.icon || '📍');
             setType(place.type || 'other');
-            setRadius(place.radius || 0.3);
+            setRadius(place.radius ? (place.radius > 5 ? place.radius / 1000 : place.radius) : 0.05);
             setImageUrl(place.imageUrl || undefined);
         }
     }, [place]);
@@ -194,20 +194,20 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                                 <p className="text-[9px] text-slate-400">Arrival & departure alert radius</p>
                             </div>
                             <span className={`text-xs font-black ${textColor}`}>
-                                {Math.round(radius * 1000)}m
+                                {Math.round((radius && radius > 5 ? radius : (radius || 0.05) * 1000))}m
                             </span>
                         </div>
                         <input
                             type="range"
-                            min="0.05"
+                            min="0.015"
                             max="2.0"
-                            step="0.05"
-                            value={radius}
+                            step="0.005"
+                            value={radius && radius > 5 ? radius / 1000 : (radius || 0.05)}
                             onChange={(e) => setRadius(parseFloat(e.target.value))}
                             className="w-full h-1.5 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
                         />
                         <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-                            <span>50m</span>
+                            <span>15m (Driveway)</span>
                             <span>1km</span>
                             <span>2km</span>
                         </div>

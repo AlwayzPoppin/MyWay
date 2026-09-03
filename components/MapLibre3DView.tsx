@@ -23,8 +23,8 @@ const circleCoordsCache = new Map<string, [number, number][]>();
 const CIRCLE_CACHE_MAX = 100;
 
 export const getCircleCoords = (center: Location, radiusKm: number, points: number = 64): [number, number][] => {
-    // Quantize center to ~1m precision (5 decimals) and radius to 3 decimals
-    const key = `${center.lat.toFixed(5)},${center.lng.toFixed(5)}_${radiusKm.toFixed(3)}_${points}`;
+    // Quantize center to ~1m precision (5 decimals) and radius to 4 decimals (sub-meter precision)
+    const key = `${center.lat.toFixed(5)},${center.lng.toFixed(5)}_${radiusKm.toFixed(4)}_${points}`;
     if (circleCoordsCache.has(key)) {
         return circleCoordsCache.get(key)!;
     }
@@ -2247,8 +2247,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         const sourceId = 'places-geofences-source';
         const features = places.filter(place => !place.isAmbient).map(place => {
-            const radiusKm = place.radius || 0.3;
-            const coords = getCircleCoords(place.location, radiusKm, 48);
+            const rawRadius = place.radius;
+            const radiusKm = rawRadius ? (rawRadius > 5 ? rawRadius / 1000 : rawRadius) : 0.05;
+            const effectiveRadiusKm = Math.max(0.015, radiusKm);
+            const coords = getCircleCoords(place.location, effectiveRadiusKm, 64);
             return {
                 type: 'Feature' as const,
                 id: place.id,

@@ -428,7 +428,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         }
         return 'other';
     });
-    const [newPlaceRadius, setNewPlaceRadius] = useState<number>(place.radius || 0.3);
+    const [newPlaceRadius, setNewPlaceRadius] = useState<number>(() => {
+        if (!place.radius) return 0.05;
+        return place.radius > 5 ? place.radius / 1000 : place.radius;
+    });
 
     // Multi-route alternatives & multi-stop waypoints state
     const [routeOptions, setRouteOptions] = useState<NavigationRoute[]>([]);
@@ -646,7 +649,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     useEffect(() => {
         setNewPlaceName(place.name || '');
         setNewPlaceIcon(place.icon || '📍');
-        setNewPlaceRadius(place.radius || 0.3);
+        setNewPlaceRadius(place.radius ? (place.radius > 5 ? place.radius / 1000 : place.radius) : 0.05);
         if (place.type && place.type !== 'search_result' && place.type !== 'sponsored') {
             setNewPlaceType(place.type as any);
         } else {
@@ -822,15 +825,15 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         </div>
                         <input
                             type="range"
-                            min="0.05"
+                            min="0.015"
                             max="2.0"
-                            step="0.05"
+                            step="0.005"
                             value={newPlaceRadius}
                             onChange={(e) => setNewPlaceRadius(parseFloat(e.target.value))}
                             className="w-full h-1.5 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
                         />
                         <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-                            <span>50m</span>
+                            <span>15m (Driveway)</span>
                             <span>1km</span>
                             <span>2km</span>
                         </div>
@@ -1408,20 +1411,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     Geofence Zone
                                 </span>
                                 <span className={`text-xs font-bold ${textColor}`}>
-                                    {Math.round((place.radius || 0.3) * 1000)}m
+                                    {Math.round((place.radius && place.radius > 5 ? place.radius : (place.radius || 0.05) * 1000))}m
                                 </span>
                             </div>
                             <input
                                 type="range"
-                                min="0.05"
+                                min="0.015"
                                 max="2.0"
-                                step="0.05"
-                                value={place.radius || 0.3}
+                                step="0.005"
+                                value={place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05)}
                                 onChange={(e) => onUpdateRadius(place.id, parseFloat(e.target.value))}
                                 className="w-full h-1 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
                             />
                             <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-                                <span>50m</span>
+                                <span>15m (Driveway)</span>
                                 <span>1km</span>
                                 <span>2km</span>
                             </div>
@@ -1832,20 +1835,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 Geofence Zone
                             </span>
                             <span className={`text-xs font-bold ${textColor}`}>
-                                {Math.round((place.radius || 0.3) * 1000)}m
+                                {Math.round((place.radius && place.radius > 5 ? place.radius : (place.radius || 0.05) * 1000))}m
                             </span>
                         </div>
                         <input
                             type="range"
-                            min="0.05"
+                            min="0.015"
                             max="2.0"
-                            step="0.05"
-                            value={place.radius || 0.3}
+                            step="0.005"
+                            value={place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05)}
                             onChange={(e) => onUpdateRadius(place.id, parseFloat(e.target.value))}
                             className="w-full h-1 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
                         />
                         <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-                            <span>50m</span>
+                            <span>15m (Driveway)</span>
                             <span>1km</span>
                             <span>2km</span>
                         </div>

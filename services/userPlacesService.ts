@@ -108,6 +108,23 @@ export const getUserPlaces = async (circleId: string): Promise<UserPlace[]> => {
     }));
 };
 
+/**
+ * Validates and sanitizes geofence radius.
+ * Minimum allowed micro-geofence radius is 15 meters (0.015 km).
+ * Keeps 50m (0.05 km) as the safe default if undefined or zero.
+ */
+export const sanitizeGeofenceRadius = (radius?: number | null): number => {
+    if (radius === undefined || radius === null || isNaN(radius) || radius <= 0) {
+        return 0.05; // 50m safe default
+    }
+    // If value is stored in meters (>= 1)
+    if (radius >= 1) {
+        return Math.max(15, Math.min(5000, radius));
+    }
+    // Stored in kilometers (< 1)
+    return Math.max(0.015, Math.min(5.0, radius));
+};
+
 // Add a new user place
 export const addUserPlace = async (
     circleId: string,
@@ -119,8 +136,11 @@ export const addUserPlace = async (
     const newPlaceRef = push(placesRef);
     const id = newPlaceRef.key as string;
 
+    const sanitizedRadius = sanitizeGeofenceRadius(place.radius);
+
     const placeWithMeta: UserPlace = {
         ...place,
+        radius: sanitizedRadius,
         id,
         circleId: targetCircleKey,
         createdAt: Date.now(),
@@ -153,9 +173,14 @@ export const updateUserPlace = async (
     const placeRef = ref(database, `places/${targetCircleKey}/${placeId}`);
     const snapshot = await get(placeRef);
 
+    const sanitizedUpdates: typeof updates = { ...updates };
+    if (updates.radius !== undefined) {
+        sanitizedUpdates.radius = sanitizeGeofenceRadius(updates.radius);
+    }
+
     if (snapshot.exists()) {
         const existing = snapshot.val();
-        await set(placeRef, { ...existing, ...updates });
+        await set(placeRef, { ...existing, ...sanitizedUpdates });
     }
 
     if (userId) {
@@ -163,7 +188,7 @@ export const updateUserPlace = async (
         const userSnapshot = await get(userPlaceRef);
         if (userSnapshot.exists()) {
             const existingUser = userSnapshot.val();
-            await set(userPlaceRef, { ...existingUser, ...updates });
+            await set(userPlaceRef, { ...existingUser, ...sanitizedUpdates });
         }
     }
 };

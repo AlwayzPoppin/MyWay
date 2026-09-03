@@ -281,13 +281,17 @@ const App: React.FC = () => {
   // --- DOMAIN HOOKS ---
   // Map userPlaces to geofences
   const mappedGeofences = useMemo<Geofence[]>(() => {
-    return userPlaces.map(p => ({
-      id: p.id,
-      name: p.name,
-      lat: p.location.lat,
-      lng: p.location.lng,
-      radius: (p.radius || 0.3) * 1000 // Convert km to meters
-    }));
+    return userPlaces.map(p => {
+      const r = p.radius !== undefined && p.radius !== null ? p.radius : 0.05;
+      const radiusMeters = r > 5 ? r : r * 1000;
+      return {
+        id: p.id,
+        name: p.name,
+        lat: p.location.lat,
+        lng: p.location.lng,
+        radius: Math.max(15, radiusMeters)
+      };
+    });
   }, [userPlaces]);
 
   const {
