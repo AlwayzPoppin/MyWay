@@ -155,6 +155,7 @@ const App: React.FC = () => {
     renameCircle,
     updateCircleColor,
     deleteCircle,
+    deleteUserAccount,
     refreshCircles,
     logout
   } = useAuth();
@@ -1698,6 +1699,8 @@ const App: React.FC = () => {
                   onOpenOfflineMaps={() => setActiveModal('offline_maps')}
                   theme={theme}
                   userName={profile?.displayName || user?.displayName || 'User'}
+                  userId={user?.uid}
+                  circleId={profile?.familyCircleId || undefined}
                   userAvatar={profile?.photoURL || user?.photoURL || ''}
                   onUpgrade={() => setActiveModal('upsell')}
                   isPremium={profile?.membershipTier === 'gold' || profile?.membershipTier === 'platinum'}
@@ -1738,6 +1741,7 @@ const App: React.FC = () => {
                     setActiveModal('circle_settings');
                   }}
                   onOpenKeyRecovery={() => setActiveModal('key_recovery')}
+                  onDeleteAccount={deleteUserAccount}
                 />
               </div>
             </OverlayManager>

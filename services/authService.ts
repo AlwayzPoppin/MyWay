@@ -482,23 +482,45 @@ export const transferOwnership = async (circleId: string, currentOwnerId: string
  * AUDIT FIX: Delete user account and all associated data.
  * Required for Apple App Store and GDPR compliance.
  */
-export const deleteAccount = async (userId: string, circleId?: string): Promise<void> => {
+export const deleteAccount = async (userId?: string, circleId?: string): Promise<void> => {
+    const user = auth.currentUser;
+    const targetUid = user?.uid || userId;
+    if (!targetUid) throw new Error('No active user session found to delete.');
+
     // 1. Leave circle (auto-transfers ownership or deletes empty circle)
-    if (circleId) {
+    let targetCircleId = circleId;
+    if (!targetCircleId) {
         try {
-            await leaveCircle(circleId, userId);
-        } catch {
-            // Circle may already be deleted — continue cleanup
+            const snap = await get(ref(database, `users/${targetUid}/familyCircleId`));
+            if (snap.exists()) {
+                targetCircleId = snap.val();
+            }
+        } catch { /* best effort */ }
+    }
+
+    if (targetCircleId) {
+        try {
+            await leaveCircle(targetCircleId, targetUid);
+        } catch (circleErr) {
+            console.warn('Circle cleanup warning during account deletion:', circleErr);
         }
     }
 
     // 2. Delete user data from Firebase RTDB
-    await set(ref(database, `users/${userId}`), null);
-    await set(ref(database, `keys/${userId}`), null);
+    try {
+        await set(ref(database, `users/${targetUid}`), null);
+        await set(ref(database, `keys/${targetUid}`), null);
+        await set(ref(database, `locations/${targetUid}`), null);
+        await set(ref(database, `user_places/${targetUid}`), null);
+    } catch (rtdbErr) {
+        console.warn('RTDB user cleanup warning:', rtdbErr);
+    }
 
     // 3. Clear all local storage
-    const keysToRemove = Object.keys(localStorage).filter(k => k.startsWith('myway_'));
-    keysToRemove.forEach(k => localStorage.removeItem(k));
+    try {
+        const keysToRemove = Object.keys(localStorage).filter(k => k.startsWith('myway_'));
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch { /* best effort */ }
 
     // 4. Clear IndexedDB secure storage
     try {
@@ -506,11 +528,46 @@ export const deleteAccount = async (userId: string, circleId?: string): Promise<
         dbReq.onsuccess = () => console.log('🗑️ Secure key storage cleared');
     } catch { /* best effort */ }
 
-    // 5. Delete Firebase Auth account
-    const { auth } = await import('./firebase');
-    if (auth.currentUser) {
-        await auth.currentUser.delete();
-        console.log('🗑️ Account deleted successfully');
+    // 5. Delete Firebase Auth account with re-authentication handling
+    if (user) {
+        try {
+            await user.delete();
+            console.log('🗑️ Firebase Auth account deleted successfully');
+        } catch (deleteErr: any) {
+            console.warn('Initial user.delete() failed:', deleteErr.code, deleteErr.message);
+
+            const isRecentLoginReq =
+                deleteErr.code === 'auth/requires-recent-login' ||
+                deleteErr.message?.includes('CREDENTIAL_TOO_OLD') ||
+                deleteErr.message?.includes('requires-recent-login') ||
+                deleteErr.code === 'auth/user-token-expired';
+
+            if (isRecentLoginReq) {
+                const providerId = user.providerData?.[0]?.providerId;
+                if (providerId === 'google.com') {
+                    const { reauthenticateWithPopup } = await import('firebase/auth');
+                    await reauthenticateWithPopup(user, googleProvider);
+                    await user.delete();
+                    console.log('🗑️ Account deleted successfully after Google re-auth');
+                } else if (providerId === 'password') {
+                    const pwd = prompt('Security Check: Please enter your password to confirm account deletion:');
+                    if (!pwd) throw new Error('Password is required to delete your account.');
+                    const { EmailAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
+                    const cred = EmailAuthProvider.credential(user.email || '', pwd);
+                    await reauthenticateWithCredential(user, cred);
+                    await user.delete();
+                    console.log('🗑️ Account deleted successfully after password re-auth');
+                } else {
+                    // Sign out to clear session if auth delete is blocked
+                    await firebaseSignOut(auth);
+                    throw new Error('For security, deleting your account requires a recent login. Please sign in again and retry.');
+                }
+            } else if (deleteErr.code === 'auth/user-not-found') {
+                console.log('Auth user already removed');
+            } else {
+                throw deleteErr;
+            }
+        }
     }
 };
 

@@ -22,7 +22,8 @@ import {
     leaveCircle,
     renameFamilyCircle,
     deleteFamilyCircle,
-    updateCircleColor as updateCircleColorService
+    updateCircleColor as updateCircleColorService,
+    deleteAccount as deleteAccountService
 } from '../services/authService';
 
 interface AuthContextType {
@@ -47,6 +48,7 @@ interface AuthContextType {
     renameCircle: (circleId: string, name: string) => Promise<void>;
     updateCircleColor: (circleId: string, color: string) => Promise<void>;
     deleteCircle: (circleId: string) => Promise<void>;
+    deleteUserAccount: () => Promise<void>;
     refreshCircles: () => Promise<void>;
 }
 
@@ -290,6 +292,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         await refreshCircles();
     };
 
+    const handleDeleteUserAccount = async () => {
+        if (!user) return;
+        await deleteAccountService(user.uid, profile?.familyCircleId || undefined);
+        setUser(null);
+        setProfile(null);
+        setCurrentCircle(null);
+        setUserCircles([]);
+    };
+
     const value: AuthContextType = {
         user,
         profile,
@@ -312,6 +323,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         renameCircle: handleRenameCircle,
         updateCircleColor: handleUpdateCircleColor,
         deleteCircle: handleDeleteCircle,
+        deleteUserAccount: handleDeleteUserAccount,
         refreshCircles
     };
 

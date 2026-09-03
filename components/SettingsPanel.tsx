@@ -32,6 +32,8 @@ interface SettingsPanelProps {
     onOpenOfflineMaps?: () => void;
     theme: 'light' | 'dark';
     userName: string;
+    userId?: string;
+    circleId?: string;
     userAvatar: string;
     onUpgrade?: () => void;
     isPremium?: boolean;
@@ -42,6 +44,7 @@ interface SettingsPanelProps {
     onManageCircle?: () => void;
     onOpenKeyRecovery?: () => void;
     onUpdateProfile?: (name: string, avatarFile?: File) => Promise<void>;
+    onDeleteAccount?: () => Promise<void>;
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -51,6 +54,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onOpenOfflineMaps,
     theme,
     userName,
+    userId,
+    circleId,
     userAvatar,
     onUpgrade,
     isPremium = false,
@@ -59,7 +64,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onShowPrivacy,
     onManageCircle,
     onOpenKeyRecovery,
-    onUpdateProfile
+    onUpdateProfile,
+    onDeleteAccount
 }) => {
     const { isLowDataMode, setIsLowDataMode } = useUI();
     const [localSettings, setLocalSettings] = useState(settings);
@@ -736,9 +742,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 const typed = prompt('Type DELETE to confirm account deletion:');
                                 if (typed !== 'DELETE') return;
                                 try {
-                                    const { deleteAccount } = await import('../services/authService');
-                                    // @ts-ignore — circleId may be available from parent
-                                    await deleteAccount(userName, undefined);
+                                    if (onDeleteAccount) {
+                                        await onDeleteAccount();
+                                    } else {
+                                        const { deleteAccount } = await import('../services/authService');
+                                        await deleteAccount(userId, circleId);
+                                    }
                                     alert('Account deleted successfully.');
                                     onSignOut?.();
                                 } catch (err: any) {
