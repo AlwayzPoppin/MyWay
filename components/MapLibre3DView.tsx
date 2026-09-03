@@ -1414,17 +1414,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         🏁
                     </div>
                     
-                    <!-- Pin Needle Pointer -->
-                    <div style="
-                        width: 0;
-                        height: 0;
-                        border-left: 7px solid transparent;
-                        border-right: 7px solid transparent;
-                        border-top: 10px solid #7c3aed;
-                        margin-top: -2px;
+                    <!-- Pin Needle Pointer (Seamlessly anchored to pill with matching border & placeColor) -->
+                    <svg width="14" height="9" viewBox="0 0 14 9" style="
+                        display: block;
+                        margin-top: -2.5px;
                         z-index: 1;
-                        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
-                    "></div>
+                        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.45));
+                        overflow: visible;
+                    ">
+                        <polygon points="1,0 7,8 13,0" fill="#7c3aed" />
+                        <polyline points="1,0 7,8 13,0" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
 
                     <!-- Destination Name Pill -->
                     <div class="destination-label-text" style="
@@ -2034,16 +2034,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             </div>
                         ` : ''}
                     </div>
-                    <!-- Pin Needle Pointer -->
-                    <div style="
-                        width: 0;
-                        height: 0;
-                        border-left: 6px solid transparent;
-                        border-right: 6px solid transparent;
-                        border-top: 8px solid ${placeColor};
-                        margin-top: -2px;
-                        filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
-                    "></div>
+                    <!-- Pin Needle Pointer (Seamlessly anchored to pill with matching border & placeColor) -->
+                    <svg width="14" height="9" viewBox="0 0 14 9" style="
+                        display: block;
+                        margin-top: -2.5px;
+                        z-index: 1;
+                        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.45));
+                        overflow: visible;
+                    ">
+                        <polygon points="1,0 7,8 13,0" fill="${placeColor}" />
+                        <polyline points="1,0 7,8 13,0" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
                     <!-- Label Pill for Search Results and Selected Places -->
                     ${(isSelected || isSearchResult) && !isHome ? `
                         <div style="
