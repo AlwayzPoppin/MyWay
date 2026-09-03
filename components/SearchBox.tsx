@@ -557,7 +557,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       {/* Suggestions & History Dropdown — Anchored directly to top of input */}
       {isDropdownOpen && (
         <div className="absolute left-0 right-0 bottom-full mb-2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
-          <div className={`rounded-3xl shadow-2xl overflow-hidden border backdrop-blur-3xl p-1 flex flex-col max-h-[min(65vh,480px)]
+          <div className={`rounded-3xl shadow-2xl overflow-hidden border backdrop-blur-3xl p-1 flex flex-col max-h-[min(45vh,350px)] sm:max-h-[min(60vh,460px)]
             ${theme === 'dark' ? 'bg-slate-900/98 border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.8)]' : 'bg-white/98 border-slate-200 shadow-[0_30px_60px_rgba(0,0,0,0.2)]'}`}
           >
             {/* Predictive Smart Suggestion Banner (shown when search is empty) */}
@@ -696,7 +696,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 0: Live Suggestions List */}
             {activeTab === 'suggestions' && (
-              <div className="flex-1 overflow-y-auto no-scrollbar space-y-1.5">
+              <div className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5">
                 {isLoadingSuggestions ? (
                   <div className="py-6 text-center space-y-2">
                     <div className="w-7 h-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
@@ -801,7 +801,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 1: Recent Searches List */}
             {activeTab === 'recent' && (
-              <div className="flex-1 overflow-y-auto no-scrollbar space-y-1.5">
+              <div className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5">
                 {filteredHistory.length > 0 ? (
                   filteredHistory.map((item) => {
                     const branchInfo = extractBranchDistinction(item, filteredHistory, userLocation);
@@ -920,7 +920,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 3: Saved Places */}
             {activeTab === 'saved' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto no-scrollbar pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto overscroll-contain no-scrollbar pt-1">
                 {userPlaces.map((place) => (
                   <button
                     key={place.id}

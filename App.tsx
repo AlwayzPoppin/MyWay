@@ -2098,8 +2098,8 @@ const App: React.FC = () => {
         <OverlayManager>
           <div className={`absolute inset-x-0 bottom-0 z-[150] pointer-events-auto flex flex-col transition-all duration-300 ${
             selectedPlace
-              ? 'max-h-[85vh] bg-[#0f172a]/95 backdrop-blur-2xl border-t border-white/10 rounded-t-[2.5rem] shadow-[0_-15px_40px_rgba(0,0,0,0.6)] pb-[env(safe-area-inset-bottom,16px)]'
-              : 'bottom-[calc(116px+env(safe-area-inset-bottom,0px))] px-4 pb-1'
+              ? 'max-h-[min(60vh,420px)] sm:max-h-[min(65vh,480px)] bg-[#0f172a]/95 backdrop-blur-2xl border-t border-white/10 rounded-t-[2.5rem] shadow-[0_-15px_40px_rgba(0,0,0,0.6)] pb-[max(env(safe-area-inset-bottom,16px),16px)]'
+              : 'bottom-[calc(116px+env(safe-area-inset-bottom,0px))] px-4 pb-1 max-h-[min(50vh,360px)]'
           }`}>
             {/* Mobile Drag Handle (Only when place is selected) */}
             {selectedPlace && (
@@ -2138,7 +2138,7 @@ const App: React.FC = () => {
 
             {/* Mobile Place Detail Panel (Renders immediately below search in the exact same sheet) */}
             {selectedPlace && !correctingPlace && (
-              <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(78vh-65px)] animate-in slide-in-from-bottom-3 duration-300">
+              <div className="flex-1 overflow-y-auto overscroll-contain no-scrollbar max-h-[calc(min(60vh,420px)-65px)] animate-in slide-in-from-bottom-3 duration-300">
                 <PlaceDetailPanel
                   place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
                   onClose={handleClearSelectedPlace}

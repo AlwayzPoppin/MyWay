@@ -193,7 +193,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                     backdrop-blur-2xl border-t ${isDark ? 'border-white/10' : 'border-slate-200'}
                     rounded-t-[28px] shadow-[0_-10px_60px_rgba(0,0,0,0.35)] flex flex-col`}
                 style={{
-                    height: isExpanded ? '78vh' : 'calc(100px + env(safe-area-inset-bottom, 0px))',
+                    height: isExpanded ? 'min(62vh, 480px)' : 'calc(100px + env(safe-area-inset-bottom, 0px))',
+                    maxHeight: isExpanded ? 'min(62vh, 480px)' : undefined,
                     transform: 'translateY(0)'
                 }}
                 onTouchStart={handleTouchStart}

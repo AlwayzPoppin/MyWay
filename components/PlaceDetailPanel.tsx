@@ -753,8 +753,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     if (isSavingPlace) {
         return (
             <div
-                className={`w-full max-w-sm rounded-[2rem] shadow-[0_10px_50px_rgba(0,0,0,0.5)] border backdrop-blur-2xl overflow-hidden p-6 animate-in fade-in duration-200 ${bgColor}`}
-                style={isMobile ? { paddingBottom: 'env(safe-area-inset-bottom, 16px)' } : {}}
+                className={`w-full max-w-sm max-h-[min(60vh,420px)] overflow-y-auto overscroll-contain no-scrollbar rounded-[2rem] shadow-[0_10px_50px_rgba(0,0,0,0.5)] border backdrop-blur-2xl p-6 animate-in fade-in duration-200 pb-safe ${bgColor}`}
+                style={isMobile ? { paddingBottom: 'max(env(safe-area-inset-bottom, 16px), 16px)' } : {}}
             >
                 <div className="flex justify-between items-center mb-4">
                     <h3 className={`text-base font-black uppercase tracking-wider ${textColor}`}>Save to Circle</h3>
@@ -1100,8 +1100,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
         return (
             <div
-                className={`w-full rounded-t-[2rem] shadow-[0_-10px_50px_rgba(0,0,0,0.5)] border-t backdrop-blur-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 ${sheetBg}`}
-                style={{ paddingBottom: 'env(safe-area-inset-bottom, 16px)' }}
+                className={`w-full max-h-[min(60vh,420px)] overflow-y-auto overscroll-contain no-scrollbar rounded-t-[2rem] shadow-[0_-10px_50px_rgba(0,0,0,0.5)] border-t backdrop-blur-2xl animate-in slide-in-from-bottom duration-300 pb-safe ${sheetBg}`}
+                style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 16px), 16px)' }}
             >
                 {/* Drag Handle Pill */}
                 <div className="pt-3 pb-1">
