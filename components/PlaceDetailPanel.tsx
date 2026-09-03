@@ -27,6 +27,7 @@ interface PlaceDetailPanelProps {
     onCorrectLocation?: (place: Place) => void;
     members?: FamilyMember[];
     currentUserId?: string;
+    userPlaces?: Place[];
 }
 
 /**
@@ -281,7 +282,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     onSelectRoutePreview,
     onCorrectLocation,
     members = [],
-    currentUserId = ''
+    currentUserId = '',
+    userPlaces = []
 }) => {
     const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState(false);
     const textColor = theme === 'dark' ? 'text-white' : 'text-slate-900';
@@ -314,6 +316,30 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     }, [place?.id, place?.helpfulCount, place?.helpfulUserIds, currentUserId]);
 
     const isVerified = Boolean(place?.isCorrected || publicReport);
+    const hasPrecisionPin = Boolean(
+        place?.isCorrected ||
+        publicReport ||
+        place?.tags?.includes('Verified Precision Pin') ||
+        (place as any)?.isPrecisionPin
+    );
+
+    const isPrivatePlace = useMemo(() => {
+        if (!place) return false;
+        if (isSaved) return true;
+        if (place.category === 'home' || place.icon === 'home' || place.name?.toLowerCase().includes('home')) return true;
+        if (place.tags?.includes('home') || place.tags?.includes('private')) return true;
+        if (place.visibility === 'private' || (place as any)?.isPrivate) return true;
+        if (userPlaces && userPlaces.some(p => p.id === place.id || (p.location?.lat === place.location?.lat && p.location?.lng === place.location?.lng))) return true;
+        return false;
+    }, [place, isSaved, userPlaces]);
+
+    const isPrecisionNotes = Boolean(
+        place?.entranceNotes && (
+            place.entranceNotes.toLowerCase().includes('precision front door') ||
+            place.entranceNotes.toLowerCase().includes('driveway routing pin') ||
+            place.entranceNotes.toLowerCase().includes('precision pin')
+        )
+    );
 
     const trustScore = useMemo(() => {
         if (publicReport?.trustScore !== undefined) return publicReport.trustScore;
@@ -1064,7 +1090,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             )}
 
                             {/* Tags Row */}
-                            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                            <div className="flex flex-row flex-wrap items-center gap-2 mt-1.5">
                                 {typeLabel && (
                                     <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${tagColor}`}>
                                         {typeLabel}
@@ -1075,18 +1101,15 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         📏 {distance}
                                     </span>
                                 )}
-                                {isVerified && (
-                                    <>
-                                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                                            <span>⭐</span> Verified Pin
-                                        </span>
-                                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
-                                            <span>{place.entranceType ? '🚪' : '📍'}</span> {place.entranceType ? 'Verified Entrance Fix' : 'Verified Location Fix'}
-                                        </span>
-                                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
-                                            <span>⭐</span> Trust: {trustScore}
-                                        </span>
-                                    </>
+                                {hasPrecisionPin && (
+                                    <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                                        <span>🎯</span> Precision Routing Pin
+                                    </span>
+                                )}
+                                {!isPrivatePlace && isVerified && (
+                                    <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
+                                        <span>⭐</span> Trust: {trustScore}
+                                    </span>
                                 )}
                                 {place.entranceType && (
                                     <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border flex items-center gap-1 ${
@@ -1112,16 +1135,16 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 )}
                             </div>
 
-                            {/* Entrance Notes (if present) */}
-                            {place.entranceNotes && (
+                            {/* Entrance Notes (if present and not redundant default precision pin note) */}
+                            {place.entranceNotes && !isPrecisionNotes && (
                                 <p className="text-[10px] text-amber-300/90 font-bold mt-1 px-2 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1">
                                     <span>🚗</span>
                                     <span className="truncate">{place.entranceNotes}</span>
                                 </p>
                             )}
 
-                            {/* Crowdsourced Verification & Voting Row (Mobile) */}
-                            {isVerified && (
+                            {/* Crowdsourced Verification & Voting Row (Mobile - Hidden for private places) */}
+                            {!isPrivatePlace && isVerified && (
                                 <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border mt-1.5 text-[10px] ${
                                     theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
                                 }`}>
@@ -1531,25 +1554,27 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </div>
                 </div>
 
-                {/* Type Tag + Distance Badge */}
-                <div className="flex items-center gap-2 mb-3">
+                {/* Type Tag + Distance Badge + Consolidated Badges Row */}
+                <div className="flex flex-row flex-wrap items-center gap-2 mb-3">
                     {typeLabel && (
                         <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full ${tagColor}`}>
                             {typeLabel}
                         </span>
                     )}
-                    {isVerified && (
-                        <>
-                            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                                <span>⭐</span> Verified Pin
-                            </span>
-                            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
-                                <span>{place.entranceType ? '🚪' : '📍'}</span> {place.entranceType ? 'Verified Entrance Fix' : 'Verified Location Fix'}
-                            </span>
-                            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
-                                <span>⭐</span> Trust: {trustScore}
-                            </span>
-                        </>
+                    {distance && (
+                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                            📏 {distance}
+                        </span>
+                    )}
+                    {hasPrecisionPin && (
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                            <span>🎯</span> Precision Routing Pin
+                        </span>
+                    )}
+                    {!isPrivatePlace && isVerified && (
+                        <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
+                            <span>⭐</span> Trust: {trustScore}
+                        </span>
                     )}
                     {place.entranceType && (
                         <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border flex items-center gap-1 ${
@@ -1575,16 +1600,16 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     )}
                 </div>
 
-                {/* Entrance Guidance (Desktop) */}
-                {place.entranceNotes && (
+                {/* Entrance Guidance (Desktop - if not redundant default precision pin note) */}
+                {place.entranceNotes && !isPrecisionNotes && (
                     <p className="text-xs text-amber-300/90 font-bold mb-2.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
                         <span>🚗</span>
                         <span>{place.entranceNotes}</span>
                     </p>
                 )}
 
-                {/* Crowdsourced Verification & Voting Row (Desktop) */}
-                {isVerified && (
+                {/* Crowdsourced Verification & Voting Row (Desktop - Hidden for private places) */}
+                {!isPrivatePlace && isVerified && (
                     <div className={`flex items-center justify-between gap-2.5 px-3 py-1.5 rounded-xl border mb-2.5 text-xs ${
                         theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
                     }`}>

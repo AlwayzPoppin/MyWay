@@ -1397,6 +1397,7 @@ const App: React.FC = () => {
                           onCorrectLocation={(place) => setCorrectingPlace(place)}
                           members={liveMembers}
                           currentUserId={user?.uid}
+                          userPlaces={userPlaces}
                         />
                       </div>
                     )}
@@ -2056,6 +2057,7 @@ const App: React.FC = () => {
                   onCorrectLocation={(place) => setCorrectingPlace(place)}
                   members={liveMembers}
                   currentUserId={user?.uid}
+                  userPlaces={userPlaces}
                 />
               </div>
             )}
