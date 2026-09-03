@@ -14,6 +14,7 @@ import { maintenanceAlertService } from '../services/maintenanceAlertService';
 import { searchMaintenanceAlongRoute } from '../services/placesService';
 import { osmTrafficService } from '../services/osmTrafficService';
 import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
+import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
 const circleCoordsCache = new Map<string, [number, number][]>();
@@ -2516,6 +2517,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const feature = e.features?.[0];
                 if (!feature || !map.current) return;
 
+                hapticTick();
                 const props = feature.properties as any;
                 const coords = (feature.geometry as any).coordinates.slice();
                 const reportId = props.id;
@@ -2569,9 +2571,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     const trustEl = document.getElementById(`popup-trust-${reportId}`);
 
                     const handleVote = async (type: 'up' | 'down') => {
+                        if (type === 'up') {
+                            hapticSuccess();
+                        } else {
+                            hapticTick();
+                        }
                         if (statusEl) statusEl.textContent = 'Recording vote...';
                         const res = await publicMapReportService.voteReport(reportId, currentUserId || 'driver', type);
                         if (res.isDeleted) {
+                            hapticMilestone();
                             popup.remove();
                         } else {
                             if (trustEl) trustEl.textContent = `⭐ Trust: ${res.trustScore}`;

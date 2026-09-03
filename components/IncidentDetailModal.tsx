@@ -1,6 +1,7 @@
 import React from 'react';
 import { IncidentReport } from '../types';
 import { incidentService } from '../services/incidentService';
+import { hapticTick, hapticMilestone, hapticSuccess } from '../utils/haptics';
 
 interface IncidentDetailModalProps {
     incident: IncidentReport | null;
@@ -46,6 +47,7 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
 
     const handleRemoveIncident = async () => {
         try {
+            hapticTick();
             await incidentService.removeIncident(incident.id, currentUserId);
             showNotification?.(`🗑️ Removed "${meta.title}" from map`, 3000);
             onClose();
@@ -56,6 +58,7 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
 
     const handleClearIncident = async () => {
         try {
+            hapticMilestone();
             await incidentService.clearIncident(incident.id, currentUserId || 'driver');
             showNotification?.(`✅ Marked alert as cleared`, 3000);
             onClose();
@@ -66,6 +69,7 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
 
     const handleConfirmIncident = async () => {
         try {
+            hapticSuccess();
             await incidentService.upvoteIncident(incident.id, currentUserId || 'driver');
             showNotification?.(`👍 Confirmed "${meta.title}" (Verified)`, 3000);
             onClose();

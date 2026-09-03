@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { IncidentType, IncidentReport } from '../types';
+import { hapticSuccess } from '../utils/haptics';
 
 interface IncidentReporterProps {
   onReport: (type: IncidentType, details?: string) => void;
@@ -96,6 +97,7 @@ const IncidentReporter: React.FC<IncidentReporterProps> = ({
   const [submittedType, setSubmittedType] = useState<IncidentType | null>(null);
 
   const handleSelect = (type: IncidentType) => {
+    hapticSuccess();
     setSubmittedType(type);
     onReport(type);
     setTimeout(() => {

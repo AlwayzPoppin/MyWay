@@ -6,6 +6,7 @@ import { Place, Location, EntranceType } from '../types';
 import { placeCorrectionService, PlaceCorrection, compressImageFile } from '../services/placeCorrectionService';
 import { publicMapReportService } from '../services/publicMapReportService';
 import { getDistanceMeters, getBearing } from '../utils/geo';
+import { hapticTick, hapticSuccess, hapticError } from '../utils/haptics';
 
 export const ENTRANCE_CATEGORY_OPTIONS: { id: EntranceType; label: string; icon: string; description: string; defaultNote: string }[] = [
     { id: 'drive_thru', label: 'Drive-Thru Lane', icon: '🚗', description: 'Drive-thru order or pickup', defaultNote: 'Drive-thru entrance lane' },
@@ -254,8 +255,10 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
             };
 
             onSave(updatedPlace, correction);
+            hapticSuccess();
             onClose();
         } catch (err) {
+            hapticError();
             console.error('Failed to save location correction:', err);
         } finally {
             setIsSaving(false);
