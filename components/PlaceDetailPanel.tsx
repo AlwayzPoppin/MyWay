@@ -1489,12 +1489,12 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     // ──────────────────────────────────────────
 
     return (
-        <div className={`w-full max-w-full backdrop-blur-2xl rounded-[2rem] shadow-[0_25px_60px_rgba(0,0,0,0.4)] border overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300 ${bgColor}`}>
-            <div className="p-4 sm:p-5">
+        <div className={`w-full max-w-full backdrop-blur-2xl rounded-[1.75rem] sm:rounded-[2rem] shadow-[0_25px_60px_rgba(0,0,0,0.4)] border overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300 ${bgColor}`}>
+            <div className="p-3.5 sm:p-5 landscape:p-3">
                 {/* Header Row: Place Title & Action Icons (Save & Close) */}
-                <div className="flex items-start justify-between gap-3 mb-1.5">
+                <div className="flex items-start justify-between gap-3 mb-1.5 landscape:mb-1">
                     <div className="min-w-0 flex-1">
-                        <h3 className={`text-xl font-black leading-tight mb-1 truncate ${textColor}`}>{place.name}</h3>
+                        <h3 className={`text-lg sm:text-xl font-black leading-tight mb-0.5 sm:mb-1 truncate ${textColor}`}>{place.name}</h3>
                         {addressSubtitle && (
                             <p className={`text-xs leading-snug flex items-start gap-1.5 ${subTextColor}`}>
                                 <svg className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-60" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
@@ -1700,7 +1700,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 )}
 
                 {/* Route Options Selection (Desktop) */}
-                <div className="mb-4">
+                <div className="mb-3 sm:mb-4 landscape:mb-2">
                     <div className="flex items-center justify-between mb-1.5 px-0.5">
                         <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>
@@ -1741,7 +1741,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <span className="text-xs font-bold">Finding routes & toll costs...</span>
                         </div>
                     ) : routeOptions.length > 0 ? (
-                        <div className="space-y-1.5 max-h-48 overflow-y-auto no-scrollbar">
+                        <div className="space-y-1 sm:space-y-1.5 max-h-36 sm:max-h-48 landscape:max-h-24 overflow-y-auto no-scrollbar">
                             {routeOptions.map((route, idx) => {
                                 const isSelected = selectedRouteIdx === idx;
                                 return (
@@ -1752,7 +1752,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                             setSelectedRouteIdx(idx);
                                             if (onSelectRoutePreview) onSelectRoutePreview(route);
                                         }}
-                                        className={`w-full p-2.5 rounded-2xl border transition-all text-left flex items-center justify-between gap-2.5
+                                        className={`w-full p-2 sm:p-2.5 rounded-xl sm:rounded-2xl border transition-all text-left flex items-center justify-between gap-2.5
                                             ${isSelected
                                                 ? 'bg-indigo-600/20 border-indigo-500 shadow-md ring-1 ring-indigo-500/50'
                                                 : theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
@@ -1822,7 +1822,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
                 {/* Geofence Radius Slider (Only for Saved Circle Places) */}
                 {isSaved && onUpdateRadius && (
-                    <div className={`mb-4 p-3 rounded-2xl border ${
+                    <div className={`mb-3 sm:mb-4 p-2.5 sm:p-3 rounded-2xl border landscape:mb-2 ${
                         theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
                     }`}>
                         <div className="flex items-center justify-between mb-1">
@@ -1853,7 +1853,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 )}
 
                 {/* Action Buttons */}
-                <div className="flex items-center gap-1.5 mt-2.5">
+                <div className="flex items-center gap-1.5 mt-2 sm:mt-2.5">
                     <button
                         onClick={() => onNavigate(routeOptions[selectedRouteIdx] || undefined)}
                         className="flex-[1.5] min-w-fit h-10 px-3.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl font-black text-xs sm:text-sm shadow-md shadow-indigo-600/30 transition-all active:scale-95 flex flex-row items-center justify-center gap-2 whitespace-nowrap cursor-pointer"

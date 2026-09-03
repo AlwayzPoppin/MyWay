@@ -1345,80 +1345,76 @@ const App: React.FC = () => {
               })()}
 
               {/* ────────────────────────────────────────────────────────── */}
-              {/* UNIFIED INTERACTION CONTAINER (DESKTOP: LEFT ROUTING COLUMN) */}
+              {/* UNIFIED INTERACTION CONTAINER (DESKTOP / LANDSCAPE: MAP ROUTING COLUMN) */}
               {/* ────────────────────────────────────────────────────────── */}
               {!isMobile && !isDriveMode && !activeModal && !correctingPlace && (
-                <OverlayManager>
-                  <div className="absolute left-1/2 -translate-x-1/2 bottom-10 w-[560px] md:w-[620px] lg:w-[700px] max-w-[calc(100vw-360px)] z-[120] flex flex-col-reverse gap-3 pointer-events-auto max-h-[calc(100vh-120px)] justify-end transition-all duration-300">
-                    {/* Search Input Bar (Anchors dropdown directly above) */}
-                    <SearchBox
-                      onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
-                      onSearchResultsChange={setSearchResultPlaces}
-                      onNavigate={handleStartNavigation}
-                      onCategorySearch={handleQuickSearch}
-                      onLocate={() => {
-                        const targetId = user?.uid || 'demo-you';
-                        setSelectedMemberId(targetId);
-                        setMapCenter(undefined); // Reset specific search center to follow user
-                        showNotification("📍 Centered on your location", 2000);
-                      }}
-                      onQuickStop={() => setActiveModal('quickstop')}
-                      onOpenMessages={() => {
-                        setMessagingRecipientId(null);
-                        setActiveModal('messaging');
-                      }}
-                      theme={theme}
-                      userPlaces={userPlaces}
-                      onSelectSavedPlace={handleSelectPlace}
-                      onSelectPlace={handleSelectPlace}
-                      userLocation={userLocation}
-                      selectedPlace={selectedPlace}
-                      onClearSelectedPlace={handleClearSelectedPlace}
-                    />
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-2.5 sm:bottom-6 md:bottom-8 w-full max-w-[min(620px,calc(100%-2rem))] landscape:max-w-[min(500px,calc(100%-5rem))] z-[120] flex flex-col-reverse gap-2 sm:gap-3 pointer-events-auto max-h-[calc(100%-1.25rem)] sm:max-h-[calc(100%-3rem)] justify-end transition-all duration-300">
+                  {/* Search Input Bar (Anchors dropdown directly above) */}
+                  <SearchBox
+                    onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
+                    onSearchResultsChange={setSearchResultPlaces}
+                    onNavigate={handleStartNavigation}
+                    onCategorySearch={handleQuickSearch}
+                    onLocate={() => {
+                      const targetId = user?.uid || 'demo-you';
+                      setSelectedMemberId(targetId);
+                      setMapCenter(undefined); // Reset specific search center to follow user
+                      showNotification("📍 Centered on your location", 2000);
+                    }}
+                    onQuickStop={() => setActiveModal('quickstop')}
+                    onOpenMessages={() => {
+                      setMessagingRecipientId(null);
+                      setActiveModal('messaging');
+                    }}
+                    theme={theme}
+                    userPlaces={userPlaces}
+                    onSelectSavedPlace={handleSelectPlace}
+                    onSelectPlace={handleSelectPlace}
+                    userLocation={userLocation}
+                    selectedPlace={selectedPlace}
+                    onClearSelectedPlace={handleClearSelectedPlace}
+                  />
 
-                    {/* Place Detail Panel (Renders immediately below search in the exact same physical column) */}
-                    {selectedPlace && !correctingPlace && (
-                      <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(100vh-140px)] rounded-[2rem] animate-in fade-in slide-in-from-top-3 duration-300">
-                        <PlaceDetailPanel
-                          place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
-                          onClose={handleClearSelectedPlace}
-                          onNavigate={(selectedRoute) => {
-                            handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
-                            handleClearSelectedPlace();
-                          }}
-                          onSelectRoutePreview={(route) => setPreviewRoute(route)}
-                          theme={theme}
-                          userLocation={userLocation}
-                          onUpdateRadius={handleUpdatePlaceRadius}
-                          isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
-                          onAddPlace={handleAddPlace}
-                          onDeletePlace={handleDeletePlace}
-                          onEditPlace={(place) => setEditingPlace(place)}
-                          onCorrectLocation={(place) => setCorrectingPlace(place)}
-                          members={liveMembers}
-                          currentUserId={user?.uid}
-                          userPlaces={userPlaces}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </OverlayManager>
+                  {/* Place Detail Panel (Renders immediately below search in the exact same physical column) */}
+                  {selectedPlace && !correctingPlace && (
+                    <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(100vh-120px)] landscape:max-h-[calc(100vh-70px)] rounded-[1.75rem] sm:rounded-[2rem] animate-in fade-in slide-in-from-top-3 duration-300">
+                      <PlaceDetailPanel
+                        place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
+                        onClose={handleClearSelectedPlace}
+                        onNavigate={(selectedRoute) => {
+                          handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
+                          handleClearSelectedPlace();
+                        }}
+                        onSelectRoutePreview={(route) => setPreviewRoute(route)}
+                        theme={theme}
+                        userLocation={userLocation}
+                        onUpdateRadius={handleUpdatePlaceRadius}
+                        isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
+                        onAddPlace={handleAddPlace}
+                        onDeletePlace={handleDeletePlace}
+                        onEditPlace={(place) => setEditingPlace(place)}
+                        onCorrectLocation={(place) => setCorrectingPlace(place)}
+                        members={liveMembers}
+                        currentUserId={user?.uid}
+                        userPlaces={userPlaces}
+                      />
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* Safety Insights - Repositioned to Top Center Drawer as per Audit */}
               {!activeModal && !isBottomSheetExpanded && (
-                <OverlayManager>
-                  <div className={`absolute left-1/2 -translate-x-1/2 z-50 ${isMobile ? 'top-14 w-auto max-w-[90%]' : 'top-6 w-auto'}`}>
-                    <InsightsBar
-                      insights={insights}
-                      theme={theme}
-                      onReconnect={() => {
-                        showNotification("🔄 Attempting to reconnect...", 3000);
-                        setTimeout(() => setIsOffline(false), 1500);
-                      }}
-                    />
-                  </div>
-                </OverlayManager>
+                <div className={`absolute left-1/2 -translate-x-1/2 z-50 pointer-events-auto ${isMobile ? 'top-14 w-auto max-w-[90%]' : 'top-3 sm:top-6 w-auto max-w-[calc(100%-4rem)]'}`}>
+                  <InsightsBar
+                    insights={insights}
+                    theme={theme}
+                    onReconnect={() => {
+                      showNotification("🔄 Attempting to reconnect...", 3000);
+                      setTimeout(() => setIsOffline(false), 1500);
+                    }}
+                  />
+                </div>
               )}
             </>
           )}
