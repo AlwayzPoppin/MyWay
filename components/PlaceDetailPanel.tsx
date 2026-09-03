@@ -8,6 +8,7 @@ import { placeCorrectionService } from '../services/placeCorrectionService';
 import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
 import { searchPlacesText, searchGasStations, searchCoffeeShops, searchRestaurants } from '../services/placesService';
 import { audioService } from '../services/audioService';
+import { placePhotoService, PlacePhotoContribution } from '../services/placePhotoService';
 import { hapticSuccess, hapticTick } from '../utils/haptics';
 import BrandIcon from './BrandIcon';
 
@@ -295,6 +296,265 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState(false);
     const textColor = theme === 'dark' ? 'text-white' : 'text-slate-900';
     const subTextColor = theme === 'dark' ? 'text-slate-400' : 'text-slate-500';
+
+    // Location Photo Contributions (Firestore & Firebase Storage)
+    const [photos, setPhotos] = useState<PlacePhotoContribution[]>([]);
+    const [photoUrls, setPhotoUrls] = useState<string[]>(() => {
+        return place?.imageUrl ? [place.imageUrl] : [];
+    });
+    const [activePhotoIndex, setActivePhotoIndex] = useState<number>(0);
+    const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(false);
+    const [isManagePhotosOpen, setIsManagePhotosOpen] = useState<boolean>(false);
+    const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null);
+    const [editingCaptionText, setEditingCaptionText] = useState<string>('');
+    const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+    const cameraInputRef = useRef<HTMLInputElement | null>(null);
+
+    // Current user member details for attribution
+    const currentUserMember = useMemo(() => {
+        return members.find(m => m.id === currentUserId);
+    }, [members, currentUserId]);
+
+    const myContributions = useMemo(() => {
+        return photos.filter(p => p.userId && p.userId === currentUserId);
+    }, [photos, currentUserId]);
+
+    // Fetch photos from Firestore & Storage cache
+    useEffect(() => {
+        if (!place?.id) return;
+        let isMounted = true;
+        placePhotoService.getPhotosForPlace(place.id).then((fetched) => {
+            if (!isMounted) return;
+            setPhotos(fetched);
+            const urls = fetched.map(p => p.url);
+            if (place.imageUrl && !urls.includes(place.imageUrl)) {
+                urls.unshift(place.imageUrl);
+            }
+            setPhotoUrls(urls);
+            setActivePhotoIndex(0);
+        });
+        return () => {
+            isMounted = false;
+        };
+    }, [place?.id, place?.imageUrl]);
+
+    // Secure Camera Capture Trigger (No File System / Library Access)
+    const handleTriggerCamera = () => {
+        if (isUploadingPhoto) return;
+        cameraInputRef.current?.click();
+    };
+
+    const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !place?.id) return;
+
+        setIsUploadingPhoto(true);
+        try {
+            const newContribution = await placePhotoService.uploadPhotoContribution({
+                placeId: place.id,
+                placeName: place.name,
+                file,
+                userId: currentUserId || 'anonymous',
+                userName: currentUserMember?.name || 'You',
+                userAvatar: currentUserMember?.avatar
+            });
+
+            // Instant photo rendering on detail card:
+            setPhotoUrls(prev => [newContribution.url, ...prev.filter(u => u !== newContribution.url)]);
+            setPhotos(prev => [newContribution, ...prev.filter(p => p.id !== newContribution.id)]);
+            setActivePhotoIndex(0);
+            place.imageUrl = newContribution.url;
+            hapticSuccess();
+        } catch (err) {
+            console.error('[PlaceDetailPanel] Photo contribution failed:', err);
+        } finally {
+            setIsUploadingPhoto(false);
+            if (cameraInputRef.current) {
+                cameraInputRef.current.value = '';
+            }
+        }
+    };
+
+    const handleStartEditCaption = (photo: PlacePhotoContribution) => {
+        setEditingCaptionId(photo.id);
+        setEditingCaptionText(photo.caption || '');
+    };
+
+    const handleSaveCaption = async (photo: PlacePhotoContribution) => {
+        try {
+            await placePhotoService.updatePhotoCaption(photo.id, place.id, editingCaptionText.trim());
+            setPhotos(prev => prev.map(p => p.id === photo.id ? { ...p, caption: editingCaptionText.trim() } : p));
+            setEditingCaptionId(null);
+            hapticTick();
+        } catch (err) {
+            console.error('[PlaceDetailPanel] Failed to update caption:', err);
+        }
+    };
+
+    const handleDeletePhoto = async (photo: PlacePhotoContribution) => {
+        if (!window.confirm('Delete this photo contribution? This cannot be undone.')) return;
+        setDeletingPhotoId(photo.id);
+        try {
+            await placePhotoService.deletePhotoContribution(photo);
+            setPhotos(prev => prev.filter(p => p.id !== photo.id));
+            setPhotoUrls(prev => {
+                const next = prev.filter(u => u !== photo.url);
+                if (place.imageUrl === photo.url) {
+                    place.imageUrl = next[0] || undefined;
+                }
+                return next;
+            });
+            hapticSuccess();
+        } catch (err) {
+            console.error('[PlaceDetailPanel] Failed to delete photo:', err);
+        } finally {
+            setDeletingPhotoId(null);
+        }
+    };
+
+    const renderPhotoSection = (isMobileView: boolean) => {
+        const hasPhotos = photoUrls.length > 0;
+        const currentUrl = hasPhotos ? (photoUrls[activePhotoIndex] || photoUrls[0]) : null;
+        const currentPhotoObj = photos.find(p => p.url === currentUrl);
+
+        return (
+            <div className={`mt-2 mb-2 select-none ${isMobileView ? '' : 'mb-3'}`}>
+                {hasPhotos && currentUrl ? (
+                    <div className="relative rounded-2xl overflow-hidden border border-white/20 shadow-md bg-black/40">
+                        {/* Main Active Photo */}
+                        <div
+                            onClick={() => setIsPhotoLightboxOpen(true)}
+                            className="relative cursor-pointer group"
+                        >
+                            <img
+                                src={currentUrl}
+                                alt={place.name}
+                                className={`w-full ${isMobileView ? 'h-28' : 'h-36'} object-cover group-hover:scale-[1.02] transition-transform duration-300`}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+
+                            {/* Top Badges */}
+                            <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none">
+                                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 backdrop-blur-md flex items-center gap-1 shadow-sm">
+                                    <span>📸</span> Storefront & Entrance
+                                </span>
+                                {photoUrls.length > 1 && (
+                                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-black/70 text-white backdrop-blur-md border border-white/20 shadow-sm">
+                                        {activePhotoIndex + 1} / {photoUrls.length}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Bottom Metadata */}
+                            <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                    {currentPhotoObj?.caption ? (
+                                        <p className="text-[11px] font-bold text-white truncate drop-shadow">
+                                            "{currentPhotoObj.caption}"
+                                        </p>
+                                    ) : (
+                                        <p className="text-[10px] font-semibold text-slate-300 truncate drop-shadow">
+                                            {currentPhotoObj?.userName ? `By ${currentPhotoObj.userName}` : 'Tap to expand full photo'}
+                                        </p>
+                                    )}
+                                </div>
+                                <span className="text-[9px] font-bold text-slate-200 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-full shrink-0 shadow-sm">
+                                    🔍 Expand
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Thumbnail Carousel (if multiple photos) */}
+                        {photoUrls.length > 1 && (
+                            <div className="flex items-center gap-1.5 p-1.5 bg-black/50 backdrop-blur-md overflow-x-auto no-scrollbar border-t border-white/10">
+                                {photoUrls.map((url, idx) => (
+                                    <button
+                                        key={url + idx}
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActivePhotoIndex(idx);
+                                        }}
+                                        className={`relative w-12 h-9 rounded-lg overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
+                                            idx === activePhotoIndex
+                                                ? 'border-cyan-400 scale-105 shadow-md shadow-cyan-500/40'
+                                                : 'border-transparent opacity-65 hover:opacity-100'
+                                        }`}
+                                    >
+                                        <img src={url} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover" />
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Action Toolbar */}
+                        <div className={`p-2 flex items-center justify-between gap-2 border-t ${
+                            theme === 'dark' ? 'bg-[#0f172a]/90 border-white/10' : 'bg-slate-50 border-slate-200'
+                        }`}>
+                            <button
+                                type="button"
+                                onClick={handleTriggerCamera}
+                                disabled={isUploadingPhoto}
+                                className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                            >
+                                <span>{isUploadingPhoto ? '⏳' : '📷'}</span>
+                                <span>{isUploadingPhoto ? 'Uploading...' : 'Snap Photo'}</span>
+                            </button>
+
+                            {myContributions.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setIsManagePhotosOpen(true)}
+                                    className="px-2.5 py-1 rounded-xl border font-bold text-[10px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                                >
+                                    <span>🖼️</span>
+                                    <span>Manage My Photos ({myContributions.length})</span>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                ) : (
+                    /* Empty state: prompt to take first photo */
+                    <div className={`rounded-2xl border p-3 transition-all ${
+                        theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-sm">📸</span>
+                                    <h5 className={`text-xs font-black ${textColor}`}>Storefront & Entrance Photo</h5>
+                                </div>
+                                <p className="text-[10px] text-slate-400 font-medium mt-0.5 leading-snug">
+                                    Capture a live photo of the entrance to help your circle navigate with precision.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleTriggerCamera}
+                                disabled={isUploadingPhoto}
+                                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white font-black text-xs flex items-center gap-1.5 shadow-md shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                            >
+                                <span>{isUploadingPhoto ? '⏳' : '📷'}</span>
+                                <span>{isUploadingPhoto ? 'Uploading...' : 'Snap Photo'}</span>
+                            </button>
+                        </div>
+                        {myContributions.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-white/10 flex justify-end">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsManagePhotosOpen(true)}
+                                    className="text-[10px] font-black text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                    <span>🖼️</span>
+                                    <span>Manage My Photos ({myContributions.length})</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     // Submitter Attribution & "Helpful" / "Not there" Voting state
     const [isVoting, setIsVoting] = useState(false);
@@ -1261,28 +1521,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 </div>
                             )}
 
-                            {/* Storefront / Entrance Photo Preview Banner (Mobile) */}
-                            {place.imageUrl && (
-                                <div
-                                    onClick={() => setIsPhotoLightboxOpen(true)}
-                                    className="relative rounded-2xl overflow-hidden border border-white/20 shadow-sm mt-1.5 group cursor-pointer"
-                                >
-                                    <img
-                                        src={place.imageUrl}
-                                        alt={place.name}
-                                        className="w-full h-20 object-cover group-hover:scale-105 transition-transform duration-300"
-                                    />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-                                    <div className="absolute bottom-1 left-2 right-2 flex items-center justify-between">
-                                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                                            📸 Storefront Photo
-                                        </span>
-                                        <span className="text-[9px] font-bold text-white/80 bg-black/50 px-1.5 py-0.5 rounded-full">
-                                            View 🔍
-                                        </span>
-                                    </div>
-                                </div>
-                            )}
+                            {/* Location Photo Contributions & Gallery (Mobile) */}
+                            {renderPhotoSection(true)}
                         </div>
 
                         {/* Edit Place Button (Only for Saved Places) */}
@@ -1754,28 +1994,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </div>
                 )}
 
-                {/* Storefront Photo Preview (Desktop) */}
-                {place.imageUrl && (
-                    <div
-                        onClick={() => setIsPhotoLightboxOpen(true)}
-                        className="relative rounded-2xl overflow-hidden border border-white/20 shadow-sm mb-3 group cursor-pointer"
-                    >
-                        <img
-                            src={place.imageUrl}
-                            alt={place.name}
-                            className="w-full h-24 object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-                        <div className="absolute bottom-1.5 left-3 right-3 flex items-center justify-between">
-                            <span className="text-xs font-bold text-white flex items-center gap-1 drop-shadow">
-                                <span>📷</span> Storefront Photo
-                            </span>
-                            <span className="text-[10px] font-bold text-slate-200 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-full">
-                                Tap to expand
-                            </span>
-                        </div>
-                    </div>
-                )}
+                {/* Location Photo Contributions & Gallery (Desktop) */}
+                {renderPhotoSection(false)}
 
                 {/* Route Options Selection (Desktop) */}
                 <div className="mb-3 sm:mb-4 landscape:mb-2">
@@ -2138,32 +2358,254 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </div>
                 )}
 
+                {/* Hidden Secure Camera-Only Input (No Library / Browse Access) */}
+                <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleCameraCapture}
+                    className="hidden"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                />
+
                 {/* Storefront Photo Fullscreen Lightbox Modal */}
-                {isPhotoLightboxOpen && place.imageUrl && (
+                {isPhotoLightboxOpen && (photoUrls[activePhotoIndex] || place.imageUrl) && (
                     <div 
                         onClick={() => setIsPhotoLightboxOpen(false)}
                         className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl animate-in fade-in duration-200 pointer-events-auto cursor-zoom-out"
                     >
                         <div 
                             onClick={(e) => e.stopPropagation()}
-                            className="relative max-w-2xl w-full rounded-3xl overflow-hidden border border-white/20 shadow-2xl bg-black"
+                            className="relative max-w-2xl w-full rounded-3xl overflow-hidden border border-white/20 shadow-2xl bg-black flex flex-col cursor-default"
                         >
-                            <img 
-                                src={place.imageUrl} 
-                                alt={place.name} 
-                                className="w-full max-h-[75vh] object-contain"
-                            />
-                            <div className="p-4 bg-slate-900/90 flex items-center justify-between">
+                            {/* Main Lightbox Image with Nav Arrows */}
+                            <div className="relative flex items-center justify-center bg-black/95 min-h-[40vh] max-h-[70vh]">
+                                <img 
+                                    src={photoUrls[activePhotoIndex] || place.imageUrl} 
+                                    alt={place.name} 
+                                    className="w-full max-h-[70vh] object-contain select-none"
+                                />
+
+                                {/* Prev Arrow */}
+                                {photoUrls.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActivePhotoIndex((prev) => (prev > 0 ? prev - 1 : photoUrls.length - 1));
+                                        }}
+                                        className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-md border border-white/20 transition-all cursor-pointer select-none"
+                                        title="Previous Photo"
+                                    >
+                                        ◀
+                                    </button>
+                                )}
+
+                                {/* Next Arrow */}
+                                {photoUrls.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActivePhotoIndex((prev) => (prev < photoUrls.length - 1 ? prev + 1 : 0));
+                                        }}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-md border border-white/20 transition-all cursor-pointer select-none"
+                                        title="Next Photo"
+                                    >
+                                        ▶
+                                    </button>
+                                )}
+
+                                {/* Photo counter badge */}
+                                {photoUrls.length > 1 && (
+                                    <div className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-black/70 border border-white/20 text-white text-[11px] font-bold backdrop-blur-md">
+                                        {activePhotoIndex + 1} / {photoUrls.length}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Lightbox Footer */}
+                            <div className="p-4 bg-slate-900/95 flex items-center justify-between gap-4 border-t border-white/10">
+                                <div className="min-w-0 flex-1">
+                                    <h4 className="text-sm font-black text-white truncate">{place.name}</h4>
+                                    {photos[activePhotoIndex]?.caption ? (
+                                        <p className="text-xs text-slate-200 mt-0.5">
+                                            "{photos[activePhotoIndex].caption}"
+                                        </p>
+                                    ) : (
+                                        <p className="text-xs text-slate-400 mt-0.5">
+                                            {photos[activePhotoIndex]?.userName ? `Contributed by ${photos[activePhotoIndex].userName}` : 'Storefront & Entrance Photo'}
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                        type="button"
+                                        onClick={handleTriggerCamera}
+                                        disabled={isUploadingPhoto}
+                                        className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                                    >
+                                        📷 Snap Photo
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsPhotoLightboxOpen(false)}
+                                        className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* User Contribution Management Modal */}
+                {isManagePhotosOpen && (
+                    <div
+                        onClick={() => setIsManagePhotosOpen(false)}
+                        className="fixed inset-0 z-[320] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+                    >
+                        <div
+                            onClick={(e) => e.stopPropagation()}
+                            className={`relative max-w-lg w-full rounded-3xl border shadow-2xl overflow-hidden flex flex-col max-h-[85vh] ${
+                                theme === 'dark' ? 'bg-[#0f172a] border-white/15 text-white' : 'bg-white border-slate-200 text-slate-900'
+                            }`}
+                        >
+                            {/* Modal Header */}
+                            <div className={`p-4 border-b flex items-center justify-between shrink-0 ${
+                                theme === 'dark' ? 'border-white/10 bg-slate-900/60' : 'border-slate-200 bg-slate-50'
+                            }`}>
                                 <div>
-                                    <h4 className="text-sm font-black text-white">{place.name}</h4>
-                                    <p className="text-xs text-slate-400">Storefront & Entrance Photo</p>
+                                    <h3 className="text-sm font-black flex items-center gap-2">
+                                        <span>📸</span> My Photo Contributions
+                                    </h3>
+                                    <p className="text-[11px] text-slate-400 font-medium truncate max-w-xs">
+                                        {place.name}
+                                    </p>
                                 </div>
                                 <button
                                     type="button"
-                                    onClick={() => setIsPhotoLightboxOpen(false)}
+                                    onClick={() => setIsManagePhotosOpen(false)}
+                                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all cursor-pointer ${
+                                        theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                                    }`}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            {/* Modal Body: List of user's contributed photos */}
+                            <div className="p-4 overflow-y-auto space-y-3 flex-1">
+                                {myContributions.length === 0 ? (
+                                    <div className="text-center py-8">
+                                        <span className="text-3xl">📷</span>
+                                        <p className="text-xs font-bold text-slate-400 mt-2">No photo contributions yet for this place.</p>
+                                    </div>
+                                ) : (
+                                    myContributions.map((photo) => (
+                                        <div
+                                            key={photo.id}
+                                            className={`p-3 rounded-2xl border flex gap-3 transition-all ${
+                                                theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                                            }`}
+                                        >
+                                            {/* Thumbnail */}
+                                            <div className="relative w-20 h-20 rounded-xl overflow-hidden shrink-0 border border-white/10">
+                                                <img src={photo.url} alt="Contribution" className="w-full h-full object-cover" />
+                                            </div>
+
+                                            {/* Metadata & Caption Editor */}
+                                            <div className="min-w-0 flex-1 flex flex-col justify-between">
+                                                <div>
+                                                    <div className="flex items-center justify-between gap-1">
+                                                        <span className="text-[10px] font-bold text-slate-400">
+                                                            {formatRelativeTime(photo.createdAt)}
+                                                        </span>
+                                                        <div className="flex items-center gap-1">
+                                                            {/* Edit Caption Button */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleStartEditCaption(photo)}
+                                                                className="p-1.5 rounded-lg hover:bg-white/10 text-cyan-400 transition-colors cursor-pointer"
+                                                                title="Edit Caption"
+                                                            >
+                                                                ✏️
+                                                            </button>
+                                                            {/* Delete Button */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleDeletePhoto(photo)}
+                                                                disabled={deletingPhotoId === photo.id}
+                                                                className="p-1.5 rounded-lg hover:bg-red-500/20 text-rose-400 transition-colors cursor-pointer disabled:opacity-50"
+                                                                title="Delete Photo"
+                                                            >
+                                                                {deletingPhotoId === photo.id ? '⏳' : '🗑️'}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Caption display or inline edit */}
+                                                    {editingCaptionId === photo.id ? (
+                                                        <div className="mt-1.5 flex items-center gap-1.5">
+                                                            <input
+                                                                type="text"
+                                                                value={editingCaptionText}
+                                                                onChange={(e) => setEditingCaptionText(e.target.value)}
+                                                                placeholder="Add a caption..."
+                                                                className={`flex-1 px-2.5 py-1 rounded-xl text-xs font-bold border outline-none ${
+                                                                    theme === 'dark' ? 'bg-black/50 border-cyan-400/50 text-white' : 'bg-white border-cyan-400 text-slate-900'
+                                                                }`}
+                                                                autoFocus
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleSaveCaption(photo)}
+                                                                className="px-2.5 py-1 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-black font-black text-xs cursor-pointer"
+                                                            >
+                                                                ✓
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setEditingCaptionId(null)}
+                                                                className="px-2 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs cursor-pointer"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-xs font-semibold mt-1 text-slate-200 line-clamp-2">
+                                                            {photo.caption ? `"${photo.caption}"` : <span className="text-slate-500 italic text-[11px]">No caption added</span>}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className={`p-4 border-t flex items-center justify-between shrink-0 ${
+                                theme === 'dark' ? 'border-white/10 bg-slate-900/60' : 'border-slate-200 bg-slate-50'
+                            }`}>
+                                <button
+                                    type="button"
+                                    onClick={handleTriggerCamera}
+                                    disabled={isUploadingPhoto}
+                                    className="px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer disabled:opacity-50"
+                                >
+                                    <span>{isUploadingPhoto ? '⏳' : '📷'}</span>
+                                    <span>{isUploadingPhoto ? 'Uploading...' : 'Snap Another Photo'}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsManagePhotosOpen(false)}
                                     className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer"
                                 >
-                                    Close
+                                    Done
                                 </button>
                             </div>
                         </div>

@@ -698,10 +698,10 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                                             {isUploadingPhoto ? '⏳' : '📷'}
                                         </span>
                                         <span className={`text-xs font-black ${textColor}`}>
-                                            {isUploadingPhoto ? 'Compressing Image...' : 'Take Photo or Choose from Gallery'}
+                                            {isUploadingPhoto ? 'Processing Camera Capture...' : 'Snap Photo (Camera Only)'}
                                         </span>
                                         <span className="text-[10px] text-slate-400 font-semibold">
-                                            Supports front door, driveway, or landmark
+                                            Live camera capture for storefront, door, or driveway
                                         </span>
                                     </button>
                                 )}
