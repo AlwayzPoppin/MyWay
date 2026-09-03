@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { formatSegmentedInviteCode, cleanInviteCode } from '../utils/inviteCode';
+import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
 
 interface CircleManagerProps {
     onCreateCircle: (name: string) => Promise<any>;
@@ -28,8 +29,10 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
         setError(null);
         try {
             await onCreateCircle(name);
+            hapticSuccess();
         } catch (err: any) {
             setError(err.message);
+            hapticError();
         } finally {
             setLoading(false);
         }
@@ -38,6 +41,7 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
     const executeJoin = async (cleanedCode: string) => {
         if (!cleanedCode || cleanedCode.length !== 8) {
             setError(`Invite code must be exactly 8 characters (entered ${cleanedCode.length}/8).`);
+            hapticError();
             return;
         }
         setLoading(true);
@@ -48,9 +52,15 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
         }
         try {
             const circle = await onJoinCircle(cleanedCode);
-            if (!circle) setError('Invalid invite code. Circle not found.');
+            if (!circle) {
+                setError('Invalid invite code. Circle not found.');
+                hapticError();
+            } else {
+                hapticSuccess();
+            }
         } catch (err: any) {
             setError(err.message);
+            hapticError();
         } finally {
             setLoading(false);
         }
@@ -71,6 +81,13 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
         if (autoSubmitTimerRef.current) {
             clearTimeout(autoSubmitTimerRef.current);
             autoSubmitTimerRef.current = null;
+        }
+
+        // Haptic feedback: milestone vibration on 8th char, light tick on typing
+        if (cleaned.length === 8) {
+            hapticMilestone();
+        } else if (val.length > 0) {
+            hapticTick();
         }
 
         if (cleaned.length === 8 && !loading) {

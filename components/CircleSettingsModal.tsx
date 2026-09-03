@@ -4,6 +4,7 @@ import { FamilyMember } from '../types';
 import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo } from '../services/authService';
 import { getCirclePrivacyMode, PRIVACY_LEVELS } from '../services/privacyService';
 import { formatSegmentedInviteCode, cleanInviteCode, isValidInviteCode } from '../utils/inviteCode';
+import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
 
 interface CircleSettingsModalProps {
     isOpen: boolean;
@@ -127,12 +128,14 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
         if (!cleanCode) {
             setJoinError('Please enter an 8-character invite code.');
+            hapticError();
             return;
         }
 
         if (cleanCode.length !== 8) {
             const err = `Invite code must be exactly 8 characters (entered ${cleanCode.length}/8).`;
             setJoinError(err);
+            hapticError();
             showNotification?.(`⚠️ ${err}`, 3500);
             return;
         }
@@ -142,6 +145,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         if (alreadyInCircle) {
             const err = 'Already in this circle.';
             setJoinError(err);
+            hapticError();
             showNotification?.(`⚠️ ${err}`, 3500);
             return;
         }
@@ -155,6 +159,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         try {
             const circle = await onJoinCircle(cleanCode);
             if (circle) {
+                hapticSuccess();
                 showNotification?.(`🎉 Successfully joined circle "${circle.name}"!`, 3000);
                 setJoinInviteCode('');
                 setManualInviteCode('');
@@ -163,11 +168,13 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             } else {
                 const err = 'Invalid code. No matching circle found.';
                 setJoinError(err);
+                hapticError();
                 showNotification?.(`⚠️ ${err}`, 4000);
             }
         } catch (err: any) {
             const errMsg = err?.message || 'Could not join circle';
             setJoinError(errMsg);
+            hapticError();
             showNotification?.(`⚠️ ${errMsg}`, 4000);
         } finally {
             setIsSubmitting(false);
@@ -189,6 +196,13 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         if (autoSubmitTimerRef.current) {
             clearTimeout(autoSubmitTimerRef.current);
             autoSubmitTimerRef.current = null;
+        }
+
+        // Haptic feedback: milestone vibration on 8th char, light tick on keystrokes
+        if (cleaned.length === 8) {
+            hapticMilestone();
+        } else if (val.length > 0) {
+            hapticTick();
         }
 
         // Auto-submit when exactly 8 valid characters are typed or pasted
