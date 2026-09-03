@@ -41,8 +41,10 @@ export const isPointInGeofence = (
 
 /**
  * Detects transitions between states (INSIDE/OUTSIDE).
- * Applies departure hysteresis (+3m for micro-geofences <= 30m, up to 15m for larger zones)
- * to prevent border jitter when parked at driveway edges.
+ * Applies dynamic departure hysteresis: Math.max(15, radius * 0.5)
+ * For a 15m driveway geofence → 15m buffer → must drift 30m total before exit evaluation.
+ * For a 150m neighborhood zone → 75m buffer → must drift 225m total before exit evaluation.
+ * Prevents indoor GPS drift from triggering false departures.
  */
 export const detectTransition = (
     currentLocation: { lat: number; lng: number },
@@ -50,7 +52,7 @@ export const detectTransition = (
     previousStatus: GeofenceStatus = 'OUTSIDE'
 ): GeofenceTransition | null => {
     const departureHysteresis = previousStatus === 'INSIDE'
-        ? (geofence.radius <= 30 ? 3 : Math.min(15, Math.round(geofence.radius * 0.1)))
+        ? Math.max(15, Math.round(geofence.radius * 0.5))
         : 0;
     const isNowInside = isPointInGeofence(currentLocation, geofence, departureHysteresis);
     const currentStatus: GeofenceStatus = isNowInside ? 'INSIDE' : 'OUTSIDE';

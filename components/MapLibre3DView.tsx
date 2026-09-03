@@ -2370,14 +2370,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             });
 
-            // Visual Hysteresis Ring: Render faint dotted outer ring (+3m) for micro-geofences (<= 30m, like 15m driveway)
+            // Visual Hysteresis Ring: Render faint dotted outer ring with dynamic buffer Math.max(15, radius * 0.5)
             if (effectiveRadiusKm <= 0.030) {
-                const hystKm = effectiveRadiusKm + 0.003; // +3 meters departure buffer
+                const radiusM = effectiveRadiusKm * 1000;
+                const hystBufferM = Math.max(15, Math.round(radiusM * 0.5));
+                const hystKm = (radiusM + hystBufferM) / 1000;
                 const hystCoords = getCircleCoords(anchorLoc, hystKm, 64);
                 hysteresisFeatures.push({
                     type: 'Feature' as const,
                     id: `${place.id}-hysteresis`,
-                    properties: { id: `${place.id}-hysteresis`, name: `${place.name} (+3m Departure Buffer)` },
+                    properties: { id: `${place.id}-hysteresis`, name: `${place.name} (+${Math.round(hystBufferM)}m Departure Buffer)` },
                     geometry: {
                         type: 'Polygon' as const,
                         coordinates: [hystCoords]

@@ -72,8 +72,30 @@ export const useLocationSync = (
     const hasReceivedRealSignalRef = useRef(false);
     const poorSignalStartTimeRef = useRef<number | null>(null);
     const poorSignalAnchorRef = useRef<{ lat: number; lng: number } | null>(null);
-    // 2-fix confirmation window to prevent indoor GPS jitter toggling at 15m micro-geofence
-    const selfGeofencePendingFixesRef = useRef<Map<string, { targetStatus: 'INSIDE' | 'OUTSIDE'; count: number }>>(new Map());
+
+    // 45-Second PENDING_EXIT Debounce State Machine (eliminates indoor GPS drift false departures)
+    const pendingExitDebounceRef = useRef<Map<string, {
+        timerId: ReturnType<typeof setTimeout>;
+        startTime: number;
+        fixCount: number;
+        lastLocation: { lat: number; lng: number };
+    }>>(new Map());
+
+    // 2-fix confirmation window for Arrivals
+    const pendingArrivalFixesRef = useRef<Map<string, { count: number }>>(new Map());
+
+    // Fresh refs for asynchronous 45s departure timeout callbacks
+    const userRef = useRef(user);
+    const profileRef = useRef(profile);
+    const currentCircleIdRef = useRef(currentCircleId);
+    const onTransitionRef = useRef(onTransition);
+
+    useEffect(() => {
+        userRef.current = user;
+        profileRef.current = profile;
+        currentCircleIdRef.current = currentCircleId;
+        onTransitionRef.current = onTransition;
+    }, [user, profile, currentCircleId, onTransition]);
 
     // Haversine distance — delegated to shared utils/geo.ts
     const getDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) =>
@@ -147,7 +169,7 @@ export const useLocationSync = (
         geolocationService.setBackgroundGeofences(geofences, onTransition);
 
         geolocationService.watchPosition((location) => {
-            // Geofence Detection with 2-Fix Confirmation Window (Drift Tolerance for 15m micro-geofences)
+            // Geofence Detection with Strict Accuracy Filtering, Dynamic Hysteresis Buffer & 45-Second PENDING_EXIT Debounce
             geofences.forEach(gf => {
                 const gfLat = gf?.entranceLocation?.lat ?? gf?.location?.lat ?? gf?.lat;
                 const gfLng = gf?.entranceLocation?.lng ?? gf?.location?.lng ?? gf?.lng;
@@ -160,10 +182,20 @@ export const useLocationSync = (
                 const isKnown = storedStatus !== null;
                 const confirmedStatus = (storedStatus || 'OUTSIDE') as 'INSIDE' | 'OUTSIDE';
 
-                // Departure Hysteresis Buffer: +3m for micro-geofences (<= 30m), scaled up to max 15m for larger zones
-                // When already confirmed INSIDE, exit requires crossing (radius + 3m) to eliminate driveway edge jitter
+                // 1. STRICT ACCURACY FILTER FOR GEOFENCE EXITS
+                // If the device is currently confirmed INSIDE a place, completely ignore any new location updates
+                // where accuracy is greater than 65 meters. Do not use highly inaccurate cell-tower bounces to calculate geofence exits.
+                if (confirmedStatus === 'INSIDE' && typeof location.accuracy === 'number' && location.accuracy > 65) {
+                    console.log(`📍 Geofence Accuracy Filter: Ignored GPS ping (${location.accuracy}m > 65m limit) for exit evaluation at ${gf.name}`);
+                    return;
+                }
+
+                // 2. DYNAMIC DEPARTURE HYSTERESIS BUFFER
+                // Dynamic calculation: Math.max(15, radius * 0.5)
+                // For a 15m driveway micro-geofence: 15m buffer -> requires drifting >= 30m away before exit threshold is breached.
+                // For a 150m neighborhood zone: 75m buffer -> requires drifting >= 225m away.
                 const departureHysteresis = confirmedStatus === 'INSIDE'
-                    ? (radius <= 30 ? 3 : Math.min(15, Math.round(radius * 0.1)))
+                    ? Math.max(15, Math.round(radius * 0.5))
                     : 0;
                 const isInsideNow = distance <= (radius + departureHysteresis);
                 const rawStatus: 'INSIDE' | 'OUTSIDE' = isInsideNow ? 'INSIDE' : 'OUTSIDE';
@@ -171,40 +203,138 @@ export const useLocationSync = (
                 if (!isKnown) {
                     // Prime initial state immediately on first run without triggering arrival/departure noise
                     localStorage.setItem(`gf_state_${gf.id}`, rawStatus);
-                    selfGeofencePendingFixesRef.current.delete(gf.id);
                     console.log(`📍 Geofence Local: Primed ${gf.name} to ${rawStatus}`);
-                } else if (rawStatus !== confirmedStatus) {
-                    // Requires 2 consecutive fixes in new state to confirm transition (prevents GPS jitter drift at 15m micro-geofence)
-                    const pending = selfGeofencePendingFixesRef.current.get(gf.id);
-                    if (pending && pending.targetStatus === rawStatus) {
-                        pending.count += 1;
-                        if (pending.count >= 2) {
-                            // Confirmed transition after 2 fixes!
-                            localStorage.setItem(`gf_state_${gf.id}`, rawStatus);
-                            selfGeofencePendingFixesRef.current.delete(gf.id);
+                    return;
+                }
 
-                            const isInside = rawStatus === 'INSIDE';
-                            const circleId = currentCircleId || profile?.familyCircleId;
+                // 3. TIME-BASED EXIT DEBOUNCE (45-Second PENDING_EXIT Window)
+                if (confirmedStatus === 'INSIDE') {
+                    if (rawStatus === 'OUTSIDE') {
+                        // User has crossed the exit line (> radius + departureHysteresis)
+                        const pending = pendingExitDebounceRef.current.get(gf.id);
+                        if (!pending) {
+                            // Initiate PENDING_EXIT state with 45-second debounce timer
+                            console.log(`📍 Geofence: ${gf.name} entered PENDING_EXIT (dist: ${distance.toFixed(1)}m > ${radius + departureHysteresis}m). Starting 45s debounce timer.`);
+                            const timerId = setTimeout(() => {
+                                // Double check if still in pendingExitDebounceRef
+                                const currentPending = pendingExitDebounceRef.current.get(gf.id);
+                                if (!currentPending) return;
+                                pendingExitDebounceRef.current.delete(gf.id);
 
-                            // Broadcast real-time push alert to all circle devices and lock screens
-                            if (circleId && user?.uid) {
+                                // Verify stored status is still INSIDE
+                                const currentConfirmed = localStorage.getItem(`gf_state_${gf.id}`);
+                                if (currentConfirmed !== 'INSIDE') return;
+
+                                // Officially commit OUTSIDE
+                                localStorage.setItem(`gf_state_${gf.id}`, 'OUTSIDE');
+                                console.log(`🚶 Geofence: Officially broadcast Left ${gf.name} after 45s debounce window (${currentPending.fixCount} fixes outside).`);
+
+                                const circleId = currentCircleIdRef.current || profileRef.current?.familyCircleId;
+                                const uid = userRef.current?.uid;
+
+                                // 1. Broadcast real-time push alert to circle devices and lock screens
+                                if (circleId && uid) {
+                                    broadcastGeofencePushAlert(
+                                        circleId,
+                                        uid,
+                                        profileRef.current?.displayName || userRef.current?.displayName || 'You',
+                                        gf.name,
+                                        'departure',
+                                        currentPending.lastLocation
+                                    ).catch(e => console.warn('Could not broadcast geofence push alert:', e));
+                                }
+
+                                // 2. Offline failover: Queue geofence alert to IndexedDB for circle sync
+                                if (typeof navigator !== 'undefined' && !navigator.onLine && circleId && uid) {
+                                    const text = `🚶 Departed from ${gf.name}`;
+                                    bufferMessage({
+                                        clientMessageId: `gf_${Date.now()}_${gf.id}`,
+                                        circleId,
+                                        senderId: uid,
+                                        content: text,
+                                        type: 'geofence',
+                                        timestamp: Date.now(),
+                                        status: 'queued'
+                                    }).catch(err => console.error('Failed to buffer offline geofence alert:', err));
+                                }
+
+                                // 3. Spoken geofence audio feedback
+                                speechService.speak(`Departed ${gf.name}`, { chime: 'turn' });
+
+                                // 4. Notify app listeners
+                                onTransitionRef.current?.({
+                                    geofence: gf,
+                                    from: 'INSIDE',
+                                    to: 'OUTSIDE',
+                                    timestamp: Date.now()
+                                });
+                            }, 45000);
+
+                            pendingExitDebounceRef.current.set(gf.id, {
+                                timerId,
+                                startTime: Date.now(),
+                                fixCount: 1,
+                                lastLocation: { lat: location.latitude, lng: location.longitude }
+                            });
+                        } else {
+                            // Already in PENDING_EXIT window — record subsequent fix
+                            pending.fixCount += 1;
+                            pending.lastLocation = { lat: location.latitude, lng: location.longitude };
+                            console.log(`📍 Geofence PENDING_EXIT: ${gf.name} (fix #${pending.fixCount}, elapsed: ${Math.round((Date.now() - pending.startTime) / 1000)}s / 45s, dist: ${distance.toFixed(1)}m)`);
+                        }
+                    } else {
+                        // rawStatus === 'INSIDE': User is safely within geofence + hysteresis buffer
+                        if (pendingExitDebounceRef.current.has(gf.id)) {
+                            // GPS drifted back inside the geofence during the 45-second window!
+                            // Silently clear the timeout and cancel the departure.
+                            const pending = pendingExitDebounceRef.current.get(gf.id)!;
+                            clearTimeout(pending.timerId);
+                            pendingExitDebounceRef.current.delete(gf.id);
+                            console.log(`📍 Geofence Debounce: User drifted back INSIDE ${gf.name} (${distance.toFixed(1)}m). Departure CANCELLED silently.`);
+                        }
+                    }
+                } else {
+                    // confirmedStatus === 'OUTSIDE'
+                    // Clear any lingering pending exit state
+                    if (pendingExitDebounceRef.current.has(gf.id)) {
+                        const pending = pendingExitDebounceRef.current.get(gf.id)!;
+                        clearTimeout(pending.timerId);
+                        pendingExitDebounceRef.current.delete(gf.id);
+                    }
+
+                    if (rawStatus === 'INSIDE') {
+                        // User entered the geofence! 2-fix confirmation for arrival
+                        const pendingArrival = pendingArrivalFixesRef.current.get(gf.id) || { count: 0 };
+                        pendingArrival.count += 1;
+                        pendingArrivalFixesRef.current.set(gf.id, pendingArrival);
+
+                        if (pendingArrival.count >= 2) {
+                            pendingArrivalFixesRef.current.delete(gf.id);
+                            localStorage.setItem(`gf_state_${gf.id}`, 'INSIDE');
+                            console.log(`📍 Geofence: Confirmed Arrival at ${gf.name}.`);
+
+                            const circleId = currentCircleIdRef.current || profileRef.current?.familyCircleId;
+                            const uid = userRef.current?.uid;
+
+                            // 1. Broadcast real-time push alert to circle devices and lock screens
+                            if (circleId && uid) {
                                 broadcastGeofencePushAlert(
                                     circleId,
-                                    user.uid,
-                                    profile?.displayName || user.displayName || 'You',
+                                    uid,
+                                    profileRef.current?.displayName || userRef.current?.displayName || 'You',
                                     gf.name,
-                                    isInside ? 'arrival' : 'departure',
+                                    'arrival',
                                     { lat: location.latitude, lng: location.longitude }
                                 ).catch(e => console.warn('Could not broadcast geofence push alert:', e));
                             }
 
-                            // Offline failover: Queue geofence alert to IndexedDB for circle sync
-                            if (typeof navigator !== 'undefined' && !navigator.onLine && circleId && user?.uid) {
-                                const text = `${isInside ? '📍 Arrived at' : '🚶 Departed from'} ${gf.name}`;
+                            // 2. Offline failover: Queue geofence alert to IndexedDB for circle sync
+                            if (typeof navigator !== 'undefined' && !navigator.onLine && circleId && uid) {
+                                const text = `📍 Arrived at ${gf.name}`;
                                 bufferMessage({
                                     clientMessageId: `gf_${Date.now()}_${gf.id}`,
                                     circleId,
-                                    senderId: user.uid,
+                                    senderId: uid,
                                     content: text,
                                     type: 'geofence',
                                     timestamp: Date.now(),
@@ -212,26 +342,22 @@ export const useLocationSync = (
                                 }).catch(err => console.error('Failed to buffer offline geofence alert:', err));
                             }
 
-                            // Spoken geofence audio feedback
-                            speechService.speak(
-                                isInside ? `Arrived at ${gf.name}` : `Departed ${gf.name}`,
-                                { chime: isInside ? 'arrival' : 'turn' }
-                            );
+                            // 3. Spoken geofence audio feedback
+                            speechService.speak(`Arrived at ${gf.name}`, { chime: 'arrival' });
 
-                            onTransition?.({
+                            // 4. Notify app listeners
+                            onTransitionRef.current?.({
                                 geofence: gf,
-                                from: confirmedStatus,
-                                to: rawStatus,
+                                from: 'OUTSIDE',
+                                to: 'INSIDE',
                                 timestamp: Date.now()
                             });
+                        } else {
+                            console.log(`📍 Geofence Arrival: Detected fix #1 inside ${gf.name}, awaiting confirmation fix #2...`);
                         }
                     } else {
-                        // First fix in candidate state - start 2-fix confirmation window
-                        selfGeofencePendingFixesRef.current.set(gf.id, { targetStatus: rawStatus, count: 1 });
+                        pendingArrivalFixesRef.current.delete(gf.id);
                     }
-                } else {
-                    // Position returned to confirmed state - clear jitter counter
-                    selfGeofencePendingFixesRef.current.delete(gf.id);
                 }
             });
 
@@ -523,7 +649,12 @@ export const useLocationSync = (
             }
         });
 
-        return () => geolocationService.stopWatching();
+        return () => {
+            geolocationService.stopWatching();
+            pendingExitDebounceRef.current.forEach(item => clearTimeout(item.timerId));
+            pendingExitDebounceRef.current.clear();
+            pendingArrivalFixesRef.current.clear();
+        };
     }, [user, currentCircleId, userCircles, profile, geofences]);
 
     // Track geofence status per member ID -> Set<geofenceId>
@@ -752,10 +883,14 @@ export const useLocationSync = (
                             const wasInside = currentInside!.has(gf.id);
                             const confirmedStatus: 'INSIDE' | 'OUTSIDE' = wasInside ? 'INSIDE' : 'OUTSIDE';
 
-                            // Departure Hysteresis Buffer: +3m for micro-geofences (<= 30m), scaled up to max 15m for larger zones
-                            // When already confirmed INSIDE, exit requires crossing (radius + 3m) to eliminate driveway edge jitter
+                            // Strict accuracy filter: ignore updates >65m when evaluating departures
+                            if (confirmedStatus === 'INSIDE' && typeof loc.accuracy === 'number' && loc.accuracy > 65) {
+                                return;
+                            }
+
+                            // Dynamic Departure Hysteresis Buffer: Math.max(15, radius * 0.5)
                             const departureHysteresis = confirmedStatus === 'INSIDE'
-                                ? (radius <= 30 ? 3 : Math.min(15, Math.round(radius * 0.1)))
+                                ? Math.max(15, Math.round(radius * 0.5))
                                 : 0;
                             const isInsideNow = distance <= (radius + departureHysteresis);
                             const candidateStatus: 'INSIDE' | 'OUTSIDE' = isInsideNow ? 'INSIDE' : 'OUTSIDE';
@@ -767,7 +902,6 @@ export const useLocationSync = (
                             if (isFirstTracking) {
                                 if (isInsideNow) currentInside!.add(gf.id);
                             } else {
-                                const confirmedStatus: 'INSIDE' | 'OUTSIDE' = wasInside ? 'INSIDE' : 'OUTSIDE';
                                 if (candidateStatus !== confirmedStatus) {
                                     const pending = memberPendingMap!.get(gf.id);
                                     if (pending && pending.targetStatus === candidateStatus) {
@@ -777,15 +911,27 @@ export const useLocationSync = (
                                             memberPendingMap!.delete(gf.id);
                                             if (candidateStatus === 'INSIDE') {
                                                 currentInside!.add(gf.id);
-                                                const arrivalTitle = `📍 Arrival: ${member.name}`;
                                                 const arrivalBody = `${member.name} has arrived at ${gf.name}`;
-                                                broadcastGeofencePushAlert('arrival', member.name, gf.name);
+                                                broadcastGeofencePushAlert(
+                                                    memberCircleId || currentCircleId || '',
+                                                    member.id,
+                                                    member.name,
+                                                    gf.name,
+                                                    'arrival',
+                                                    { lat, lng }
+                                                ).catch(e => console.warn('Could not broadcast member geofence push alert:', e));
                                                 speechService.speak(arrivalBody);
                                             } else {
                                                 currentInside!.delete(gf.id);
-                                                const departureTitle = `🚶 Departure: ${member.name}`;
                                                 const departureBody = `${member.name} left ${gf.name}`;
-                                                broadcastGeofencePushAlert('departure', member.name, gf.name);
+                                                broadcastGeofencePushAlert(
+                                                    memberCircleId || currentCircleId || '',
+                                                    member.id,
+                                                    member.name,
+                                                    gf.name,
+                                                    'departure',
+                                                    { lat, lng }
+                                                ).catch(e => console.warn('Could not broadcast member geofence push alert:', e));
                                                 speechService.speak(departureBody);
                                             }
                                         }

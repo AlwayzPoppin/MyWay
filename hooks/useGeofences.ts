@@ -29,6 +29,12 @@ export const useGeofences = (
                 geofences.forEach(geofence => {
                     const isKnown = !!memberGeofenceStates[geofence.id];
                     const previousStatus = memberGeofenceStates[geofence.id] || 'OUTSIDE';
+
+                    // Strict accuracy filter: If member was confirmed INSIDE, ignore updates with accuracy > 65m
+                    if (previousStatus === 'INSIDE' && typeof member.accuracy === 'number' && member.accuracy > 65) {
+                        return;
+                    }
+
                     const transition = detectTransition(member.location, geofence, previousStatus);
 
                     if (transition) {

@@ -151,7 +151,9 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
             });
 
             if (isMicro) {
-                const hystKm = radiusKm + 0.003; // +3m departure buffer
+                const radiusM = radiusKm * 1000;
+                const hystBufferM = Math.max(15, Math.round(radiusM * 0.5));
+                const hystKm = (radiusM + hystBufferM) / 1000;
                 const hystCoords = getCircleCoords(centerLoc, hystKm, 64);
                 map.addSource('reticle-hysteresis-source', {
                     type: 'geojson',
@@ -222,7 +224,10 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
             if (isMicro) {
                 const hystSource = map.getSource('reticle-hysteresis-source') as maplibregl.GeoJSONSource;
                 if (hystSource) {
-                    const hystCoords = getCircleCoords(nextCoords, radiusKm + 0.003, 64);
+                    const radiusM = radiusKm * 1000;
+                    const hystBufferM = Math.max(15, Math.round(radiusM * 0.5));
+                    const hystKm = (radiusM + hystBufferM) / 1000;
+                    const hystCoords = getCircleCoords(nextCoords, hystKm, 64);
                     hystSource.setData({
                         type: 'Feature',
                         properties: {},

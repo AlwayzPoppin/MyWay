@@ -164,6 +164,7 @@ class GeolocationService {
     private backgroundGeofences: Geofence[] = [];
     private onGeofenceTransitionCallback: ((transition: GeofenceTransition) => void) | null = null;
     private lastTelemetryState: GeolocationState | null = null;
+    private headlessPendingExitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     // Idempotent Predictive Dwelling Caching State
     private lastDwellingCacheLocation: { lat: number; lng: number; timestamp: number } | null = null;
@@ -191,33 +192,80 @@ class GeolocationService {
             crashDetectionService.updateSpeed(current.speed);
         }
 
-        // 1. Headless Safe Zone / Geofence Detection
+        // 1. Headless Safe Zone / Geofence Detection with Strict Accuracy Filter & 45s PENDING_EXIT Debounce
         if (this.backgroundGeofences.length > 0) {
             this.backgroundGeofences.forEach(gf => {
                 const storedStatus = localStorage.getItem(`gf_state_${gf.id}`);
                 const isKnown = storedStatus !== null;
                 const prevStatus = (storedStatus || 'OUTSIDE') as any;
 
+                // Strict accuracy filter: if currently INSIDE, ignore updates with accuracy > 65m
+                if (prevStatus === 'INSIDE' && typeof current.accuracy === 'number' && current.accuracy > 65) {
+                    return;
+                }
+
                 const transition = detectTransition({ lat: current.latitude, lng: current.longitude }, gf, prevStatus);
                 if (transition) {
-                    localStorage.setItem(`gf_state_${gf.id}`, transition.to);
+                    if (!isKnown) {
+                        localStorage.setItem(`gf_state_${gf.id}`, transition.to);
+                        return;
+                    }
 
-                    if (isKnown) {
+                    if (transition.to === 'OUTSIDE') {
+                        // User crossed exit boundary: initiate 45-second debounce
+                        if (!this.headlessPendingExitTimers.has(gf.id)) {
+                            console.log(`📍 Headless Geofence: ${gf.name} entered PENDING_EXIT. Starting 45s debounce timer.`);
+                            const timerId = setTimeout(() => {
+                                this.headlessPendingExitTimers.delete(gf.id);
+                                const currentConfirmed = localStorage.getItem(`gf_state_${gf.id}`);
+                                if (currentConfirmed !== 'INSIDE') return;
+
+                                localStorage.setItem(`gf_state_${gf.id}`, 'OUTSIDE');
+                                this.onGeofenceTransitionCallback?.(transition);
+
+                                if (Capacitor.isNativePlatform()) {
+                                    const notifId = Math.abs(gf.id.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)) % 100000;
+                                    LocalNotifications.schedule({
+                                        notifications: [{
+                                            id: notifId,
+                                            title: 'MyWay Safe Zone',
+                                            body: `Departed from ${gf.name}`,
+                                            sound: 'beep.wav'
+                                        }]
+                                    }).catch(err => console.warn('Geofence local notification error:', err));
+                                }
+                            }, 45000);
+                            this.headlessPendingExitTimers.set(gf.id, timerId);
+                        }
+                    } else {
+                        // transition.to === 'INSIDE' (Arrival)
+                        if (this.headlessPendingExitTimers.has(gf.id)) {
+                            clearTimeout(this.headlessPendingExitTimers.get(gf.id)!);
+                            this.headlessPendingExitTimers.delete(gf.id);
+                            console.log(`📍 Headless Geofence: Cancelled pending exit for ${gf.name} (drifted back inside).`);
+                        }
+
+                        localStorage.setItem(`gf_state_${gf.id}`, 'INSIDE');
                         this.onGeofenceTransitionCallback?.(transition);
 
-                        // Trigger native local notification if on mobile platform
                         if (Capacitor.isNativePlatform()) {
-                            const isInside = transition.to === 'INSIDE';
                             const notifId = Math.abs(gf.id.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)) % 100000;
                             LocalNotifications.schedule({
                                 notifications: [{
                                     id: notifId,
                                     title: 'MyWay Safe Zone',
-                                    body: `${isInside ? 'Arrived at' : 'Departed from'} ${gf.name}`,
+                                    body: `Arrived at ${gf.name}`,
                                     sound: 'beep.wav'
                                 }]
                             }).catch(err => console.warn('Geofence local notification error:', err));
                         }
+                    }
+                } else {
+                    // No transition detected: if user was in PENDING_EXIT and is now safely inside, cancel timer
+                    if (prevStatus === 'INSIDE' && this.headlessPendingExitTimers.has(gf.id)) {
+                        clearTimeout(this.headlessPendingExitTimers.get(gf.id)!);
+                        this.headlessPendingExitTimers.delete(gf.id);
+                        console.log(`📍 Headless Geofence: User drifted back inside ${gf.name}. Cancelled pending exit.`);
                     }
                 }
             });
