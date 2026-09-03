@@ -60,13 +60,15 @@ class PredictiveRoutingService {
 
         // 1. EVALUATE SAVED PLACES BY TIME-OF-DAY HEURISTICS
         userPlaces.forEach(p => {
+            if (!p || !p.location || typeof p.location.lat !== 'number' || typeof p.location.lng !== 'number') return;
+
             let score = 0;
             let reason = 'Saved Place';
             let icon = p.icon || '📍';
             let type: PredictedDestination['type'] = 'other';
 
-            const pNameLower = p.name.toLowerCase();
-            const pTypeLower = p.type.toLowerCase();
+            const pNameLower = (p.name || '').toLowerCase();
+            const pTypeLower = ((p as any).type || p.category || '').toLowerCase();
 
             // Distance check: If already within 200m of this place, don't predict it
             if (userLocation) {
@@ -198,7 +200,7 @@ class PredictiveRoutingService {
             const isSameDayType = (dayOfWeek >= 1 && dayOfWeek <= 5) === (tripDay >= 1 && tripDay <= 5);
 
             if (isNearHour && isSameDayType) {
-                const key = `trip_${trip.destinationName.toLowerCase()}`;
+                const key = `trip_${(trip.destinationName || '').toLowerCase()}`;
                 const existing = candidateMap.get(key);
 
                 if (existing) {
@@ -224,7 +226,7 @@ class PredictiveRoutingService {
         recentSearches.forEach(search => {
             if (!search.location || !search.frequencyCount || search.frequencyCount < 2) return;
 
-            const key = `search_${(search.name || search.query).toLowerCase()}`;
+            const key = `search_${(search.name || search.query || '').toLowerCase()}`;
             const existing = candidateMap.get(key);
 
             if (existing) {

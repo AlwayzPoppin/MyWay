@@ -173,7 +173,12 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
   // Predictive Routing Destinations based on time, day, trips & saved places
   const predictions = useMemo(() => {
-    return predictiveRoutingService.getPredictions(userLocation || null, userPlaces);
+    try {
+      return predictiveRoutingService.getPredictions(userLocation || null, userPlaces || []);
+    } catch (err) {
+      console.warn('[SearchBox] Predictive routing error:', err);
+      return [];
+    }
   }, [userLocation, userPlaces, showDrawer, history]);
 
   useEffect(() => {
