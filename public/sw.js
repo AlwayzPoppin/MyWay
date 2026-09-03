@@ -2,8 +2,8 @@
 importScripts('https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js');
 
-const CACHE_NAME = 'myway-offline-maps-v1';
-const TILE_CACHE_NAME = 'myway-tiles-v1';
+const CACHE_NAME = 'myway-offline-maps-v2';
+const TILE_CACHE_NAME = 'myway-tiles-v2';
 
 // Tile URL patterns to cache
 const TILE_PATTERNS = [
@@ -155,13 +155,16 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-    console.log('[SW] Activating Unified Service Worker...');
+    console.log('[SW] Activating Unified Service Worker v2...');
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames
                     .filter((name) => name.startsWith('myway-') && name !== CACHE_NAME && name !== TILE_CACHE_NAME)
-                    .map((name) => caches.delete(name))
+                    .map((name) => {
+                        console.log('[SW] Purging outdated/corrupted cache:', name);
+                        return caches.delete(name);
+                    })
             );
         })
     );
@@ -175,17 +178,12 @@ self.addEventListener('fetch', (event) => {
 
     if (isTileRequest) {
         event.respondWith(
-            caches.open(TILE_CACHE_NAME).then((cache) => {
-                return cache.match(event.request).then((cachedResponse) => {
-                    if (cachedResponse) {
-                        const cachedAt = cachedResponse.headers.get('X-Cached-At');
-                        if (cachedAt && (Date.now() - parseInt(cachedAt)) > TILE_TTL_MS) {
-                            return fetchAndCacheTile(cache, event.request);
-                        }
-                        return cachedResponse;
-                    }
-                    return fetchAndCacheTile(cache, event.request);
-                });
+            caches.open(TILE_CACHE_NAME).then(async (cache) => {
+                const cachedResponse = await cache.match(event.request);
+                if (cachedResponse) {
+                    return cachedResponse;
+                }
+                return fetchAndCacheTile(cache, event.request);
             })
         );
     }
@@ -193,32 +191,22 @@ self.addEventListener('fetch', (event) => {
 
 async function fetchAndCacheTile(cache, request) {
     try {
-        const cachedResponse = await cache.match(request);
-        const reqHeaders = new Headers(request.headers || {});
-        if (cachedResponse) {
-            const etag = cachedResponse.headers.get('ETag') || cachedResponse.headers.get('etag');
-            const lastMod = cachedResponse.headers.get('Last-Modified') || cachedResponse.headers.get('last-modified');
-            if (etag) reqHeaders.set('If-None-Match', etag);
-            if (lastMod) reqHeaders.set('If-Modified-Since', lastMod);
+        // Fetch original network response cleanly without injecting CORS-unsafe headers
+        // (which trigger preflight OPTIONS that Carto CDN and OSM servers do not support)
+        const networkResponse = await fetch(request);
+
+        if (networkResponse && networkResponse.status === 200) {
+            // Clone directly so native CORS headers (Access-Control-Allow-Origin: *), type, and status remain 100% intact
+            cache.put(request, networkResponse.clone());
         }
 
-        const networkResponse = await fetch(request, { headers: reqHeaders });
-        
-        // 304 Not Modified: Cached tile is already current!
-        if (networkResponse.status === 304 && cachedResponse) {
-            return cachedResponse;
-        }
-
-        const headers = new Headers(networkResponse.headers);
-        headers.set('X-Cached-At', Date.now().toString());
-        const timedResponse = new Response(await networkResponse.clone().blob(), {
-            status: networkResponse.status,
-            statusText: networkResponse.statusText,
-            headers
-        });
-        cache.put(request, timedResponse);
         return networkResponse;
     } catch (e) {
+        // Fallback to cache if network fails (offline navigation)
+        const cached = await cache.match(request);
+        if (cached) {
+            return cached;
+        }
         return new Response('', { status: 503, statusText: 'Offline' });
     }
 }

@@ -1,6 +1,6 @@
 // Offline Map Service - Robust Direct CacheStorage & ServiceWorker Map Tile Manager
 
-const TILE_CACHE_NAME = 'myway-tiles-v1';
+const TILE_CACHE_NAME = 'myway-tiles-v2';
 
 export interface DownloadProgress {
     cached: number;
@@ -253,30 +253,22 @@ class OfflineMapService {
                             const onMainAbort = () => controller.abort();
                             mainSignal.addEventListener('abort', onMainAbort, { once: true });
 
-                            // Check CacheStorage for existing tile to extract ETag & Last-Modified
-                            let cachedResponse: Response | undefined;
+                            // Check CacheStorage for existing tile
                             if (cache) {
                                 try {
-                                    cachedResponse = await cache.match(url);
+                                    const cachedResponse = await cache.match(url);
+                                    if (cachedResponse) {
+                                        deltaUnchanged++;
+                                        bytesSavedKb += 28; // ~28KB saved per tile
+                                        return;
+                                    }
                                 } catch {}
                             }
 
-                            const headers: Record<string, string> = {};
-                            if (cachedResponse) {
-                                const etag = cachedResponse.headers.get('ETag') || cachedResponse.headers.get('etag');
-                                const lastMod = cachedResponse.headers.get('Last-Modified') || cachedResponse.headers.get('last-modified');
-                                if (etag) {
-                                    headers['If-None-Match'] = etag;
-                                }
-                                if (lastMod) {
-                                    headers['If-Modified-Since'] = lastMod;
-                                }
-                            }
-
+                            // Fetch cleanly without CORS-unsafe headers that trigger CDN preflight blockage
                             const response = await fetch(url, {
                                 signal: controller.signal,
-                                mode: 'cors',
-                                headers
+                                mode: 'cors'
                             });
                             clearTimeout(timeoutId);
                             mainSignal.removeEventListener('abort', onMainAbort);
