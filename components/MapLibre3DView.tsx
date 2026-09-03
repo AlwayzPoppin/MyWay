@@ -1382,16 +1382,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         } else {
             el.innerHTML = `
                 <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
-                    <!-- Animated Pulse Glow Ring -->
+                    <!-- Animated Pulse Glow Ring (Brand Purple Smooth Glow) -->
                     <div style="
                         position: absolute;
                         top: -8px;
                         width: 56px;
                         height: 56px;
                         border-radius: 50%;
-                        background: rgba(239, 68, 68, 0.25);
-                        border: 2px solid rgba(239, 68, 68, 0.65);
-                        animation: destination-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+                        background: rgba(168, 85, 247, 0.25);
+                        border: 2px solid rgba(168, 85, 247, 0.65);
+                        animation: marker-steady-pulse 2.2s ease-in-out infinite;
                         pointer-events: none;
                     "></div>
                     
@@ -1401,9 +1401,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         width: 40px;
                         height: 40px;
                         border-radius: 50%;
-                        background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+                        background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
                         border: 3px solid #ffffff;
-                        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(239, 68, 68, 0.7);
+                        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(168, 85, 247, 0.7);
                         display: flex;
                         align-items: center;
                         justify-content: center;
@@ -1420,7 +1420,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         height: 0;
                         border-left: 7px solid transparent;
                         border-right: 7px solid transparent;
-                        border-top: 10px solid #b91c1c;
+                        border-top: 10px solid #7c3aed;
                         margin-top: -2px;
                         z-index: 1;
                         filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
@@ -1937,8 +1937,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         // Add or update place markers
         validPlaces.forEach(place => {
+            const isHome = place.type === 'home' || place.category === 'home' || place.name?.toLowerCase() === 'home' || place.tags?.includes('home');
             const placeColor = place.brandColor || (place as any).color || (
-                place.type === 'home' ? '#22c55e' :
+                isHome ? '#8b5cf6' :
                 place.type === 'work' ? '#3b82f6' :
                 place.type === 'school' ? '#f59e0b' :
                 place.type === 'gym' ? '#ec4899' :
@@ -1949,11 +1950,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 place.type === 'hospital' || place.type === 'emergency' ? '#e11d48' :
                 place.type === 'police' ? '#2563eb' :
                 place.type === 'grocery' ? '#10b981' :
-                place.type === 'pharmacy' ? '#06b6d4' : '#6366f1'
+                place.type === 'pharmacy' ? '#06b6d4' : '#8b5cf6'
             );
 
-            const icon = place.icon || (
-                place.type === 'home' ? '🏠' :
+            const rawIcon = place.icon || (
+                isHome ? '🏠' :
                 place.type === 'work' ? '💼' :
                 place.type === 'school' ? '🏫' :
                 place.type === 'gym' ? '💪' :
@@ -1966,6 +1967,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 place.type === 'grocery' ? '🛒' :
                 place.type === 'pharmacy' ? '💊' : '📍'
             );
+            const icon = rawIcon === 'home' ? '🏠' : rawIcon;
 
             const isAmbient = !!place.isAmbient;
             const isDark = theme === 'dark';
@@ -1997,18 +1999,35 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     ${isSelected ? `
                         <div style="
                             position: absolute;
-                            top: -6px;
-                            width: 52px;
-                            height: 52px;
-                            border-radius: 50%;
-                            background: rgba(99, 102, 241, 0.35);
-                            border: 2.5px solid #6366f1;
-                            animation: destination-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+                            inset: -5px;
+                            border-radius: 9999px;
+                            background: rgba(168, 85, 247, 0.3);
+                            border: 2px solid #a855f7;
+                            animation: marker-steady-pulse 2.2s ease-in-out infinite;
                             pointer-events: none;
                         "></div>
                     ` : ''}
-                    <div style="position: relative; width: ${isSelected ? '42px' : '38px'}; height: ${isSelected ? '42px' : '38px'}; border-radius: 50%; background: ${placeColor}; border: ${isSelected ? '3px solid #ffffff' : '2.5px solid #ffffff'}; box-shadow: ${isSelected ? '0 6px 20px rgba(0,0,0,0.5), 0 0 14px ' + placeColor : '0 4px 14px rgba(0,0,0,0.35)'}; display: flex; align-items: center; justify-content: center; font-size: ${isSelected ? '20px' : '18px'}; transition: transform 0.15s ease;">
-                        ${icon}
+                    <!-- Auto-width pill container that prevents text overflow -->
+                    <div class="myway-pin-badge" style="
+                        position: relative;
+                        width: auto;
+                        min-width: 40px;
+                        height: ${isSelected ? '40px' : '36px'};
+                        padding: 0 10px;
+                        border-radius: 9999px;
+                        background: ${placeColor};
+                        border: ${isSelected ? '3px solid #ffffff' : '2.5px solid #ffffff'};
+                        box-shadow: ${isSelected ? '0 6px 20px rgba(0,0,0,0.5), 0 0 14px ' + placeColor : '0 4px 14px rgba(0,0,0,0.35)'};
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        gap: 4px;
+                        transition: transform 0.15s ease;
+                    ">
+                        <span style="font-size: ${isSelected ? '18px' : '16px'}; line-height: 1; display: flex; align-items: center;">${icon}</span>
+                        ${isHome ? `
+                            <span style="font-size: 13px; font-weight: 700; color: #ffffff; white-space: nowrap; text-align: center; letter-spacing: -0.2px;">Home</span>
+                        ` : ''}
                         ${place.isCorrected ? `
                             <div style="position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; background: #f59e0b; border: 1.5px solid #ffffff; display: flex; align-items: center; justify-content: center; font-size: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.4);" title="Verified Entrance Pin">
                                 ⭐
@@ -2026,18 +2045,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
                     "></div>
                     <!-- Label Pill for Search Results and Selected Places -->
-                    ${(isSelected || isSearchResult) ? `
+                    ${(isSelected || isSearchResult) && !isHome ? `
                         <div style="
                             margin-top: 3px;
-                            padding: 2px 8px;
+                            padding: 2px 10px;
                             background: ${isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.95)'};
                             color: ${isDark ? '#f8fafc' : '#0f172a'};
-                            border: 1px solid ${isSelected ? '#6366f1' : (isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.15)')};
+                            border: 1px solid ${isSelected ? '#a855f7' : (isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.15)')};
                             border-radius: 9999px;
                             font-size: 11px;
                             font-weight: 800;
                             white-space: nowrap;
-                            max-width: 140px;
+                            max-width: 180px;
                             overflow: hidden;
                             text-overflow: ellipsis;
                             box-shadow: 0 2px 8px rgba(0,0,0,0.35);
@@ -2079,8 +2098,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             span.style.transform = 'scale(1.08)';
                         }
                     } else {
-                        const badge = el.querySelector('div') as HTMLElement;
-                        if (badge) badge.style.transform = 'scale(1.18)';
+                        const badge = (el.querySelector('.myway-pin-badge') || el.querySelector('div')) as HTMLElement;
+                        if (badge) badge.style.transform = 'scale(1.15)';
                     }
                 });
                 el.addEventListener('mouseleave', () => {
@@ -2091,7 +2110,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             span.style.transform = 'scale(1)';
                         }
                     } else {
-                        const badge = el.querySelector('div') as HTMLElement;
+                        const badge = (el.querySelector('.myway-pin-badge') || el.querySelector('div')) as HTMLElement;
                         if (badge) badge.style.transform = 'scale(1)';
                     }
                 });
