@@ -1793,6 +1793,7 @@ const App: React.FC = () => {
                   }}
                   onClose={() => setActiveModal(null)}
                   onOpenOfflineMaps={() => setActiveModal('offline_maps')}
+                  onOpenBatteryPrompt={() => setActiveModal('battery_prompt')}
                   theme={theme}
                   userName={profile?.displayName || user?.displayName || 'User'}
                   userId={user?.uid}

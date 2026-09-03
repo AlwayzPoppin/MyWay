@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeAudioFocusPlugin.class);
         registerPlugin(NativeBatteryPlugin.class);
+        registerPlugin(NativeSettingsPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

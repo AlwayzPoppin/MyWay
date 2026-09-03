@@ -5,6 +5,7 @@ import { solarService, SolarInfo } from '../services/solarService';
 import StorageManager from './StorageManager';
 import { PrivacyMode } from '../types';
 import { useUI } from '../contexts/UIContext';
+import { nativeSettingsService } from '../services/nativeSettingsService';
 
 
 export interface UserSettings {
@@ -43,6 +44,7 @@ interface SettingsPanelProps {
     onShowPrivacy?: () => void;
     onManageCircle?: () => void;
     onOpenKeyRecovery?: () => void;
+    onOpenBatteryPrompt?: () => void;
     onUpdateProfile?: (name: string, avatarFile?: File) => Promise<void>;
     onDeleteAccount?: () => Promise<void>;
 }
@@ -64,12 +66,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onShowPrivacy,
     onManageCircle,
     onOpenKeyRecovery,
+    onOpenBatteryPrompt,
     onUpdateProfile,
     onDeleteAccount
 }) => {
     const { isLowDataMode, setIsLowDataMode } = useUI();
     const [localSettings, setLocalSettings] = useState(settings);
     const [solarInfo, setSolarInfo] = useState<SolarInfo>(() => solarService.getSolarInfo());
+    const [isPromptDisabled, setIsPromptDisabled] = useState(() => nativeSettingsService.isPromptDisabledByUser());
+    const [isBatteryIgnored, setIsBatteryIgnored] = useState(false);
+
+    useEffect(() => {
+        nativeSettingsService.isIgnoringBatteryOptimizations().then(setIsBatteryIgnored);
+    }, []);
 
     useEffect(() => {
         return solarService.subscribe(setSolarInfo);
@@ -608,6 +617,91 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     subtitle="Cache, Space & Region Maps"
                 >
                     <div className="space-y-3">
+                        {/* Background Tracking & Battery Optimization Controls */}
+                        <div className={`p-3.5 rounded-2xl border space-y-3 ${
+                            theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                        }`}>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2.5">
+                                    <span className="text-lg">📡</span>
+                                    <div>
+                                        <h4 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                            Continuous Background Tracking
+                                        </h4>
+                                        <p className="text-[10px] text-slate-400">
+                                            Keep location live when phone is locked or app is closed
+                                        </p>
+                                    </div>
+                                </div>
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${
+                                    isBatteryIgnored
+                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                        : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                }`}>
+                                    {isBatteryIgnored ? 'Unrestricted ✓' : 'Optimized'}
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => nativeSettingsService.openAppSettings()}
+                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all ${
+                                        theme === 'dark'
+                                            ? 'bg-white/5 hover:bg-white/10 text-slate-200 border-white/10'
+                                            : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
+                                    }`}
+                                >
+                                    📍 Phone Permissions
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        nativeSettingsService.requestIgnoreBatteryOptimizations();
+                                        setTimeout(() => {
+                                            nativeSettingsService.isIgnoringBatteryOptimizations().then(setIsBatteryIgnored);
+                                        }, 1500);
+                                    }}
+                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all ${
+                                        theme === 'dark'
+                                            ? 'bg-white/5 hover:bg-white/10 text-slate-200 border-white/10'
+                                            : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
+                                    }`}
+                                >
+                                    ⚡ Battery Optimization
+                                </button>
+                            </div>
+
+                            <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                                <div>
+                                    <div className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                                        Prompt on Startup
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                        Remind if background settings are not fully enabled
+                                    </div>
+                                </div>
+                                <ToggleSwitch
+                                    enabled={!isPromptDisabled}
+                                    onChange={(enabled) => {
+                                        const disabled = !enabled;
+                                        setIsPromptDisabled(disabled);
+                                        nativeSettingsService.setPromptDisabledByUser(disabled);
+                                    }}
+                                />
+                            </div>
+
+                            {onOpenBatteryPrompt && (
+                                <button
+                                    type="button"
+                                    onClick={onOpenBatteryPrompt}
+                                    className="w-full py-1.5 text-center text-[11px] font-extrabold text-indigo-400 hover:text-indigo-300 transition-colors"
+                                >
+                                    View Full Setup Guide & Explanation →
+                                </button>
+                            )}
+                        </div>
+
                         <StorageManager theme={theme} />
                         <SettingRow label="Low Data Mode" description="Disable 3D extrusions & raster imagery to conserve mobile bandwidth">
                             <ToggleSwitch
