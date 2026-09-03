@@ -30,6 +30,8 @@ interface BottomSheetProps {
     onOpenWeeklyReport?: () => void;
     onOpenInviteShare?: () => void;
     onOpenMaintenance?: () => void;
+    onOpenMessages?: (recipientId?: string) => void;
+    unreadMessagesCount?: number;
     onSOS?: () => void;
     activities?: any[];
     onResolveSOS?: (id: string, memberId?: string) => void;
@@ -67,6 +69,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     onOpenWeeklyReport,
     onOpenInviteShare,
     onOpenMaintenance,
+    onOpenMessages,
+    unreadMessagesCount,
     onSOS,
     activities = [],
     onResolveSOS = () => {},
@@ -189,7 +193,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                     backdrop-blur-2xl border-t ${isDark ? 'border-white/10' : 'border-slate-200'}
                     rounded-t-[28px] shadow-[0_-10px_60px_rgba(0,0,0,0.35)] flex flex-col`}
                 style={{
-                    height: isExpanded ? '78vh' : '100px',
+                    height: isExpanded ? '78vh' : 'calc(100px + env(safe-area-inset-bottom, 0px))',
                     transform: 'translateY(0)'
                 }}
                 onTouchStart={handleTouchStart}
@@ -565,11 +569,28 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                                 </span>
                                                             ) : null}
                                                         </div>
-                                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0 ${
-                                                            member.battery <= 20 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
-                                                        }`}>
-                                                            {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
-                                                        </span>
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0 ${
+                                                                member.battery <= 20 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
+                                                            }`}>
+                                                                {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
+                                                            </span>
+                                                            {onOpenMessages && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        onOpenMessages(member.id);
+                                                                    }}
+                                                                    className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all hover:scale-110 active:scale-95 shrink-0 ${
+                                                                        isDark ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-sm'
+                                                                    }`}
+                                                                    title={`Direct message with ${member.name}`}
+                                                                >
+                                                                    <span className="text-xs">💬</span>
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                     <div className={`text-[11px] font-medium truncate ${
                                                         member.currentPlace && member.status === 'Stationary' ? 'text-emerald-400 font-semibold' :
@@ -682,33 +703,18 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                 </div>
                                             </button>
                                         )}
-                                        {onOpenInviteShare && (
+                                        {onOpenMaintenance && (
                                             <button
-                                                onClick={onOpenInviteShare}
+                                                onClick={onOpenMaintenance}
                                                 className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all active:scale-95 ${
                                                     isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
                                             >
-                                                <span className="text-xl">📤</span>
-                                                <div>
-                                                    <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Invites</p>
-                                                    <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Access</p>
-                                                </div>
-                                            </button>
-                                        )}
-                                        {onOpenMaintenance && (
-                                            <button
-                                                onClick={onOpenMaintenance}
-                                                className={`col-span-2 flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all active:scale-95 ${
-                                                    isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
-                                                }`}
-                                            >
                                                 <span className="text-xl">🔧</span>
-                                                <div className="flex-1">
+                                                <div>
                                                     <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Maintenance</p>
-                                                    <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Mileage, Fuel & Health</p>
+                                                    <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Health & Fuel</p>
                                                 </div>
-                                                <span className="text-xs text-indigo-400 font-bold">Open →</span>
                                             </button>
                                         )}
                                     </div>

@@ -1,4 +1,4 @@
-import { NavigationRoute, RouteStep, Location, LaneGuidance, LaneDirection, TrafficControlType, TrafficControlPoint } from '../types';
+import { NavigationRoute, RouteStep, Location, LaneGuidance, LaneDirection, TrafficControlType, TrafficControlPoint, RouteWaypoint, RouteLeg } from '../types';
 import { functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 import { getDistanceMeters } from '../utils/geo';
@@ -36,7 +36,11 @@ interface OSRMRoute {
         coordinates: [number, number][];
     };
     legs: {
+        distance: number;
+        duration: number;
+        summary?: string;
         steps: OSRMStep[];
+        annotation?: any;
     }[];
 }
 
@@ -320,18 +324,21 @@ export function generateParkingDirectRoute(
 
 /**
  * Fetches a route from a single OSRM provider
+ * Supports arbitrary waypoints: [start, ...waypoints, endLocation]
  */
 async function fetchRouteFromProvider(
     baseUrl: string,
-    start: Location,
-    endLocation: Location,
+    points: Location[],
     alternatives: boolean = true
 ): Promise<OSRMResponse> {
     if (isOffline()) throw new Error('Device is offline');
-    const altParam = alternatives ? '&alternatives=3' : '';
+    const canDoAlternatives = alternatives && points.length === 2;
+    const altParam = canDoAlternatives ? '&alternatives=3' : '';
+    const coordsStr = points.map(p => `${Number(p.lng.toFixed(6))},${Number(p.lat.toFixed(6))}`).join(';');
+    const radiusesStr = points.map(() => '500').join(';');
     // Enable annotations for live traffic congestion polyline rendering and 500m snapping radius
-    const url = `${baseUrl}/${start.lng},${start.lat};${endLocation.lng},${endLocation.lat}?overview=full&geometries=geojson&steps=true&annotations=true${altParam}&radiuses=500;500&continue_straight=false`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const url = `${baseUrl}/${coordsStr}?overview=full&geometries=geojson&steps=true&annotations=true${altParam}&radiuses=${radiusesStr}&continue_straight=false`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
     if (!response.ok) throw new Error(`OSRM ${response.status}`);
     return response.json();
 }
@@ -346,32 +353,47 @@ interface RouteCacheEntry {
 const ROUTE_OPTIONS_CACHE = new Map<string, RouteCacheEntry>();
 const ROUTE_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
-function getRouteCacheKey(start: Location, end: Location, options?: { avoidTolls?: boolean; avoidHighways?: boolean }): string {
+function getRouteCacheKey(start: Location, end: Location, options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[] }): string {
     const sLat = Math.round(start.lat * 100) / 100;
     const sLng = Math.round(start.lng * 100) / 100;
     const eLat = Math.round(end.lat * 100) / 100;
     const eLng = Math.round(end.lng * 100) / 100;
-    return `${sLat},${sLng}->${eLat},${eLng}_toll=${!!options?.avoidTolls}_hwy=${!!options?.avoidHighways}`;
+    const wpKey = options?.waypoints?.map(w => `${Math.round(w.location.lat * 100) / 100},${Math.round(w.location.lng * 100) / 100}`).join('|') || '';
+    return `${sLat},${sLng}->${wpKey}->${eLat},${eLng}_toll=${!!options?.avoidTolls}_hwy=${!!options?.avoidHighways}`;
 }
 
 /**
- * Helper to convert an OSRM raw route object into a typed NavigationRoute with toll and fuel analytics
+ * Helper to convert an OSRM raw route object into a typed NavigationRoute with toll, fuel analytics, and multi-leg breakdown
  */
 function parseOSRMRoute(
     route: OSRMRoute,
     endName: string,
     endLocation: Location,
     start: Location,
-    idx: number = 0
+    idx: number = 0,
+    waypoints?: RouteWaypoint[]
 ): NavigationRoute {
     const steps: RouteStep[] = [];
-    for (const leg of route.legs) {
+    const legs: RouteLeg[] = [];
+
+    // Parse each leg in route.legs (start -> waypoint 1 -> waypoint 2 -> endLocation)
+    for (let lIdx = 0; lIdx < route.legs.length; lIdx++) {
+        const leg = route.legs[lIdx];
+        const legSteps: RouteStep[] = [];
+
+        const isLastLeg = lIdx === route.legs.length - 1;
+        const targetWaypoint: RouteWaypoint = isLastLeg
+            ? { id: 'final_dest', name: endName, location: endLocation, order: (waypoints?.length || 0) + 1, isStop: false }
+            : (waypoints && waypoints[lIdx])
+                ? waypoints[lIdx]
+                : { id: `stop_${lIdx + 1}`, name: `Stop ${lIdx + 1}`, location: endLocation, order: lIdx + 1, isStop: true };
+
         for (const osrmStep of leg.steps) {
             const instruction = formatInstruction(osrmStep);
             const speedLimit = extractStepSpeedLimit(instruction, [osrmStep.name || '']);
             const hasCamera = detectSafetyCamera(instruction, [osrmStep.name || '']);
             const lanes = extractStepLanes(instruction, [osrmStep.name || ''], (osrmStep as any)?.intersections?.[0]?.lanes);
-            steps.push({
+            const stepObj: RouteStep = {
                 instruction,
                 distance: formatDistance(osrmStep.distance),
                 speedLimit,
@@ -381,8 +403,20 @@ function parseOSRMRoute(
                     lng: osrmStep.maneuver.location[0],
                     lat: osrmStep.maneuver.location[1]
                 }
-            });
+            };
+            steps.push(stepObj);
+            legSteps.push(stepObj);
         }
+
+        legs.push({
+            distance: formatDistance(leg.distance),
+            distanceMeters: leg.distance,
+            duration: formatDuration(leg.duration),
+            durationSeconds: leg.duration,
+            summary: (leg as any).summary || undefined,
+            steps: legSteps,
+            targetWaypoint
+        });
     }
 
     const distMiles = route.distance / 1609.34;
@@ -399,11 +433,11 @@ function parseOSRMRoute(
     const totalTripCostVal = fuelCostVal + tollAnalysis.estimatedTolls;
     const totalEstimatedTripCost = `$${totalTripCostVal.toFixed(2)}`;
 
-    const rawSummary = route.legs.map(l => l.summary).filter(Boolean).join(' / ');
+    const rawSummary = route.legs.map(l => (l as any).summary).filter(Boolean).join(' / ');
     const summary = rawSummary ? `via ${rawSummary}` : 'Main Route';
 
     const routeGeometry = route.geometry?.coordinates || undefined;
-    const trafficSegments = routeGeometry ? computeRouteTrafficSegments(routeGeometry, steps, route.legs[0]?.annotation) : undefined;
+    const trafficSegments = routeGeometry ? computeRouteTrafficSegments(routeGeometry, steps, (route.legs[0] as any)?.annotation) : undefined;
 
     return {
         id: `route_${idx}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -411,6 +445,9 @@ function parseOSRMRoute(
         destinationLoc: endLocation,
         startLoc: start,
         steps,
+        legs,
+        waypoints: waypoints || [],
+        currentLegIndex: 0,
         totalDistance: formatDistance(route.distance),
         totalTime: formatDuration(route.duration),
         durationMinutes: durMinutes,
@@ -430,13 +467,17 @@ function parseOSRMRoute(
 
 /**
  * Fetches multiple alternative route options (Fastest, Toll-Free, Shortest, Eco / Fuel Saver)
+ * Supports arbitrary waypoints array
  */
 export async function fetchRouteOptions(
     start: Location,
     endName: string,
     endLocation: Location,
-    options?: { avoidTolls?: boolean; avoidHighways?: boolean }
+    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[] }
 ): Promise<NavigationRoute[]> {
+    const waypoints = options?.waypoints || [];
+    const allPoints = [start, ...waypoints.map(w => w.location), endLocation];
+
     const cacheKey = getRouteCacheKey(start, endLocation, options);
     const cached = ROUTE_OPTIONS_CACHE.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp < ROUTE_CACHE_TTL_MS)) {
@@ -458,16 +499,16 @@ export async function fetchRouteOptions(
         if (isOffline()) break;
         const provider = ROUTING_PROVIDERS[i];
         try {
-            // 1. Direct standard OSRM request
-            const data = await fetchRouteFromProvider(provider, start, endLocation, true);
+            // 1. Direct standard OSRM request (alternatives disabled if multi-waypoint)
+            const data = await fetchRouteFromProvider(provider, allPoints, waypoints.length === 0);
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 data.routes.forEach((r, idx) => {
-                    parsedRoutes.push(parseOSRMRoute(r, endName, endLocation, start, idx));
+                    parsedRoutes.push(parseOSRMRoute(r, endName, endLocation, start, idx, waypoints));
                 });
             }
 
-            // 2. Multi-corridor discovery if < 2 routes returned or user wants to avoid tolls
-            if (parsedRoutes.length < 3 && straightLineDist > 25000) {
+            // 2. Multi-corridor discovery if < 2 routes returned and single-segment
+            if (waypoints.length === 0 && parsedRoutes.length < 3 && straightLineDist > 25000) {
                 const corridors = generateAlternativeCorridors(start, endLocation);
                 for (const corridor of corridors) {
                     try {
@@ -480,7 +521,7 @@ export async function fetchRouteOptions(
                         if (cRes.ok) {
                             const cData: OSRMResponse = await cRes.json();
                             if (cData.code === 'Ok' && cData.routes && cData.routes.length > 0) {
-                                const cRoute = parseOSRMRoute(cData.routes[0], endName, endLocation, start, parsedRoutes.length);
+                                const cRoute = parseOSRMRoute(cData.routes[0], endName, endLocation, start, parsedRoutes.length, waypoints);
                                 // Check if not a duplicate of existing route
                                 const isDup = parsedRoutes.some(p => Math.abs((p.distanceMeters || 0) - (cRoute.distanceMeters || 0)) < 1500 && Math.abs((p.durationMinutes || 0) - (cRoute.durationMinutes || 0)) < 5);
                                 if (!isDup) {
@@ -613,7 +654,7 @@ export async function getRouteFromOSRM(
     start: Location,
     endName: string,
     endLocation: Location,
-    options?: { avoidTolls?: boolean; avoidHighways?: boolean }
+    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[] }
 ): Promise<NavigationRoute | null> {
     const routes = await fetchRouteOptions(start, endName, endLocation, options);
     if (routes && routes.length > 0) {
@@ -810,4 +851,102 @@ export async function geocodePlace(query: string, nearLocation?: Location): Prom
     }
 
     return null;
+}
+
+/**
+ * Fetch marginal detour time deltas for a batch of candidate stops using OSRM /table matrix.
+ * 
+ * For each candidate stop, computes:
+ *   detour = time(origin → stop) + time(stop → destination) - time(origin → destination)
+ * 
+ * Uses a single /table request with N+2 coordinates (origin, destination, ...stops)
+ * to get all travel times in one round-trip. Falls back to per-stop /route queries
+ * if the table endpoint is unavailable.
+ * 
+ * @returns Map of candidateIndex → detour seconds (negative means shortcut)
+ */
+export async function fetchDetourDeltas(
+    origin: Location,
+    destination: Location,
+    candidates: Location[]
+): Promise<Map<number, number>> {
+    const deltas = new Map<number, number>();
+    if (candidates.length === 0) return deltas;
+
+    // Build coordinate string: [origin, destination, ...candidates]
+    const allCoords = [origin, destination, ...candidates];
+    const coordStr = allCoords
+        .map(c => `${Number(c.lng.toFixed(5))},${Number(c.lat.toFixed(5))}`)
+        .join(';');
+
+    // Try OSRM /table endpoint across providers
+    for (const provider of ROUTING_PROVIDERS) {
+        try {
+            // Derive the /table URL from the /route provider URL
+            // e.g. ".../routed-car/route/v1/driving" → ".../routed-car/table/v1/driving"
+            const tableUrl = provider.replace('/route/v1/', '/table/v1/');
+
+            const url = `${tableUrl}/${coordStr}?annotations=duration`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+
+            if (!res.ok) continue;
+            const data = await res.json();
+
+            if (data.code !== 'Ok' || !data.durations) continue;
+
+            // durations[i][j] = travel time from point i to point j (seconds)
+            // Index 0 = origin, 1 = destination, 2..N+1 = candidate stops
+            const directTime = data.durations[0][1]; // origin → destination
+
+            for (let i = 0; i < candidates.length; i++) {
+                const stopIdx = i + 2; // offset by origin(0) + destination(1)
+                const toStop = data.durations[0][stopIdx];      // origin → stop
+                const fromStop = data.durations[stopIdx][1];    // stop → destination
+
+                if (toStop != null && fromStop != null && directTime != null) {
+                    const detour = (toStop + fromStop) - directTime;
+                    deltas.set(i, Math.round(detour));
+                }
+            }
+
+            return deltas;
+        } catch (err) {
+            console.warn('[OSRM Table] Provider failed, trying next:', err);
+            continue;
+        }
+    }
+
+    // Fallback: per-stop /route queries (slower but works with any OSRM)
+    try {
+        // First get the direct time
+        const directCoords = `${Number(origin.lng.toFixed(5))},${Number(origin.lat.toFixed(5))};${Number(destination.lng.toFixed(5))},${Number(destination.lat.toFixed(5))}`;
+        const directRes = await fetch(`${ROUTING_PROVIDERS[0]}/${directCoords}?overview=false&steps=false`, { signal: AbortSignal.timeout(4000) });
+        if (!directRes.ok) return deltas;
+
+        const directData: OSRMResponse = await directRes.json();
+        if (directData.code !== 'Ok' || !directData.routes?.[0]) return deltas;
+        const directDuration = directData.routes[0].duration;
+
+        // Then query each stop individually (limit to first 5 to avoid spam)
+        const batch = candidates.slice(0, 5);
+        const promises = batch.map(async (stop, i) => {
+            try {
+                const coords = [origin, stop, destination]
+                    .map(c => `${Number(c.lng.toFixed(5))},${Number(c.lat.toFixed(5))}`)
+                    .join(';');
+                const res = await fetch(`${ROUTING_PROVIDERS[0]}/${coords}?overview=false&steps=false`, { signal: AbortSignal.timeout(4000) });
+                if (!res.ok) return;
+                const data: OSRMResponse = await res.json();
+                if (data.code === 'Ok' && data.routes?.[0]) {
+                    deltas.set(i, Math.round(data.routes[0].duration - directDuration));
+                }
+            } catch { /* skip individual failures */ }
+        });
+
+        await Promise.all(promises);
+    } catch (err) {
+        console.warn('[OSRM Detour] Fallback failed:', err);
+    }
+
+    return deltas;
 }

@@ -66,6 +66,24 @@ export interface IncidentReport {
   verified?: boolean;
 }
 
+export interface RouteWaypoint {
+  id: string;
+  name: string;
+  location: Location;
+  order: number;
+  isStop?: boolean;
+}
+
+export interface RouteLeg {
+  distance: string;
+  distanceMeters: number;
+  duration: string;
+  durationSeconds: number;
+  steps: RouteStep[];
+  targetWaypoint: RouteWaypoint;
+  summary?: string;
+}
+
 export interface NavigationRoute {
   id?: string;
   destinationName: string;
@@ -75,6 +93,7 @@ export interface NavigationRoute {
   totalDistance: string;
   totalTime: string;
   durationMinutes?: number;
+  totalDurationSec?: number;
   distanceMeters?: number;
   routeType?: 'fastest' | 'shortest' | 'eco' | 'toll_free' | 'scenic';
   routeLabel?: string; // e.g. "Fastest Route", "Toll-Free (Save $50.60)", "Shortest Distance", "Eco Fuel Saver"
@@ -92,6 +111,12 @@ export interface NavigationRoute {
   trafficSegments?: TrafficSegment[]; // Visual live traffic congestion polyline segments
   congestionLevel?: CongestionLevel; // Predominant route congestion
   trafficControls?: TrafficControlPoint[]; // Stop signs, traffic lights, railroad crossings along route
+  destinationImageUrl?: string; // Storefront / entrance photo URL or Data URI
+  destinationEntranceNotes?: string; // Entrance / parking guidance notes
+  destinationEntranceType?: EntranceType; // Drive-thru, parking, main door, curbside
+  waypoints?: RouteWaypoint[]; // Ordered intermediate waypoints/stops
+  legs?: RouteLeg[]; // Individual route legs connecting start -> stop1 -> stop2 -> destination
+  currentLegIndex?: number; // Active leg index during navigation
 }
 
 export interface CircleTask {
@@ -152,20 +177,45 @@ export interface FamilyMember {
   circleBadges?: { id: string; name: string; color: string }[];
 }
 
+export type EntranceType = 'drive_thru' | 'parking' | 'main_door' | 'curbside' | 'general';
+
 export interface Place {
   id: string;
   name: string;
   location: Location;
   radius: number;
-  type: 'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result' | 'sponsored' | 'maintenance' | 'mechanic';
+  type: 'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result' | 'sponsored' | 'maintenance' | 'mechanic' | 'emergency' | 'hospital' | 'police' | 'fire_station' | 'pharmacy' | 'grocery';
   icon: string;
   brandColor?: string;
+  isAmbient?: boolean; // Ambient Waze-style always-visible POI on map (gas, fire, hospital, police, etc.)
   deal?: string;
   description?: string; // Full address string (e.g., "123 Main St, City, State, USA")
+  address?: string; // Optional alias for address string
   rating?: number;
   detourMinutes?: number;
   detourMiles?: number;
   maintenanceCategory?: string; // e.g. "Oil Change", "Tire Rotation", "Brake Inspection"
+  imageUrl?: string; // Storefront / entrance photo URL or Data URI
+  isCorrected?: boolean; // User-verified / corrected entrance location
+  entranceType?: EntranceType; // Specific entrance category (drive-thru, parking, main door, curbside)
+  entranceNotes?: string; // e.g. "East side drive-thru entrance"
+  correctedAt?: number; // Timestamp of the correction
+  submitterId?: string; // Member ID who verified the pin
+  submitterName?: string; // Display name (e.g. "Mom", "Alex")
+  submitterAvatar?: string; // Submitter avatar URL or icon
+  helpfulCount?: number; // Total "Helpful" upvotes
+  helpfulUserIds?: string[]; // IDs of members who upvoted
+  originalLocation?: Location; // Location prior to correction
+}
+
+export interface ArrivalTripData {
+  destinationName: string;
+  destinationLoc: Location;
+  destinationPlace: Place;
+  totalDistance?: string;
+  totalTime?: string;
+  safetyScore?: number;
+  arrivedAt: number;
 }
 
 export interface PrivacyZone {

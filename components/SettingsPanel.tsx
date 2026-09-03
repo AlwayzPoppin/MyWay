@@ -547,7 +547,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             <div className="text-right shrink-0">
                                 <span className="text-[9px] uppercase font-bold text-slate-400 block">Auto Skin</span>
                                 <span className="text-xs font-black text-emerald-400">
-                                    {solarInfo.isDaylight ? 'Warm Cream' : 'Muted Slate'}
+                                    {solarInfo.isDaylight ? 'Warm Cream' : 'Carbon Amber'}
                                 </span>
                             </div>
                         </div>

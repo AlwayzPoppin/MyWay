@@ -192,27 +192,28 @@ export const getGTAPlaceBlipHtml = (type?: string, name?: string): string => {
 };
 
 /**
- * Returns the iconic GTA V Navigation Destination Pin (Vibrant Golden Diamond Crosshair)
+ * Returns the iconic GTA V Navigation Destination Pin (Vibrant Electric Cyan Diamond Crosshair)
  */
 export const getGTADestinationPinHtml = (): string => {
     return `
         <div style="position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
             <div style="
                 position: absolute; width: 44px; height: 44px;
-                border: 2px solid #facc15;
+                border: 2px solid #00f2fe;
                 border-radius: 50%;
                 animation: pulse 2s infinite ease-out;
-                opacity: 0.8;
+                opacity: 0.85;
+                box-shadow: 0 0 14px rgba(0, 242, 254, 0.7);
             "></div>
             <div style="
                 width: 28px; height: 28px;
-                background: #111827;
-                border: 3px solid #facc15;
-                box-shadow: 0 0 16px rgba(250,204,21,0.9), 0 4px 12px rgba(0,0,0,0.9);
+                background: #020617;
+                border: 3px solid #00f2fe;
+                box-shadow: 0 0 16px rgba(0, 242, 254, 0.95), 0 4px 12px rgba(0,0,0,0.95);
                 transform: rotate(45deg);
                 display: flex; align-items: center; justify-content: center;
             ">
-                <div style="width: 10px; height: 10px; background: #facc15; border-radius: 1px;"></div>
+                <div style="width: 10px; height: 10px; background: #00f2fe; border-radius: 1px;"></div>
             </div>
         </div>
     `;

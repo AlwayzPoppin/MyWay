@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { NavigationRoute, FamilyMember, Location, IncidentReport, IncidentType } from '../types';
+import { NavigationRoute, FamilyMember, Location, IncidentReport, IncidentType, Place } from '../types';
 import { speechService } from '../services/speechService';
 import { BetterRouteSuggestion, UpcomingTollAlert, LeaderDivertedPrompt, AmbientMaintenanceAdvisory } from '../hooks/useNavigation';
 import { convoyService, ConvoyMember, ConvoySession } from '../services/convoyService';
@@ -89,6 +89,62 @@ const renderLaneIcon = (direction: string, isValid: boolean) => {
   }
 };
 
+export interface JunctionExitInfo {
+  isExitOrRamp: boolean;
+  exitCode: string;
+  targetName: string;
+  laneAdvice: string;
+}
+
+export const detectJunctionOrExit = (step?: { instruction?: string; distance?: string }): JunctionExitInfo | null => {
+  if (!step || !step.instruction) return null;
+  const text = step.instruction.toLowerCase();
+
+  const isExit = text.includes('exit');
+  const isRamp = text.includes('ramp') || text.includes('off-ramp');
+  const isForkOrMerge = text.includes('fork') || text.includes('merge') || text.includes('interchange') || text.includes('junction');
+  const isHighwayTransition = (text.includes('fwy') || text.includes('freeway') || text.includes('highway') || text.includes('outer loop') || text.includes('expressway')) && (text.includes('onto') || text.includes('toward') || text.includes('merge') || text.includes('turn'));
+
+  if (!isExit && !isRamp && !isForkOrMerge && !isHighwayTransition) return null;
+
+  // Extract exit number if present (e.g. Exit 12A, Exit 4)
+  const exitNumMatch = step.instruction.match(/exit\s+([0-9]+[a-z]?)/i);
+  let exitCode = 'HIGHWAY EXIT';
+  if (exitNumMatch) {
+    exitCode = `EXIT ${exitNumMatch[1].toUpperCase()}`;
+  } else if (isRamp) {
+    exitCode = text.includes('on-ramp') ? 'ON-RAMP' : 'OFF-RAMP';
+  } else if (isForkOrMerge) {
+    exitCode = text.includes('merge') ? 'FREEWAY MERGE' : 'JUNCTION';
+  } else if (isHighwayTransition) {
+    exitCode = text.includes('merge') ? 'FREEWAY MERGE' : 'HIGHWAY CORRIDOR';
+  }
+
+  // Extract destination highway or street name
+  let targetName = '';
+  const towardMatch = step.instruction.match(/(?:toward|onto|to)\s+([^,]+)/i);
+  if (towardMatch && towardMatch[1]) {
+    targetName = towardMatch[1].trim();
+  } else {
+    targetName = step.instruction.replace(/^(take the exit|take exit|take the ramp|merge onto|at the fork)/i, '').trim();
+  }
+
+  // Format lane advice
+  let laneAdvice = 'PREPARE TO EXIT';
+  if (text.includes('right') || text.includes('slight right')) {
+    laneAdvice = 'USE RIGHT LANES';
+  } else if (text.includes('left') || text.includes('slight left')) {
+    laneAdvice = 'USE LEFT LANES';
+  }
+
+  return {
+    isExitOrRamp: true,
+    exitCode,
+    targetName: targetName.slice(0, 32),
+    laneAdvice
+  };
+};
+
 const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   route,
   speed,
@@ -130,6 +186,17 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   const [activeIncidents, setActiveIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
   const [dismissedIncidentIds, setDismissedIncidentIds] = useState<Set<string>>(new Set());
 
+  // Final 150-Foot Storefront Approach Card State
+  const [isStorefrontCardDismissed, setIsStorefrontCardDismissed] = useState(false);
+  const [hasAnnouncedStorefront, setHasAnnouncedStorefront] = useState(false);
+  const [isStorefrontLightboxOpen, setIsStorefrontLightboxOpen] = useState(false);
+
+  useEffect(() => {
+    setIsStorefrontCardDismissed(false);
+    setHasAnnouncedStorefront(false);
+    setIsStorefrontLightboxOpen(false);
+  }, [route?.id, route?.destinationName]);
+
   useEffect(() => {
     return speechService.onMuteChange(setIsVoiceMuted);
   }, []);
@@ -151,6 +218,51 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
       return dist <= 500 && dist >= 25;
     }) || null;
   }, [activeIncidents, userLocation, dismissedIncidentIds, currentUserId]);
+
+  // Distance to final destination
+  const distanceToDestinationMeters = useMemo(() => {
+    if (!userLocation || !route?.destinationLoc) return null;
+    return getDistanceMeters(userLocation, route.destinationLoc);
+  }, [userLocation, route?.destinationLoc]);
+
+  // Final 150-200 foot Storefront Approach Card Trigger
+  const isApproachingStorefront = useMemo(() => {
+    if (isStorefrontCardDismissed) return false;
+    const hasPhotoOrNotes = !!(route.destinationImageUrl || route.destinationEntranceNotes);
+    if (!hasPhotoOrNotes) return false;
+
+    // Within ~200 feet (approx 62 meters)
+    if (distanceToDestinationMeters !== null && distanceToDestinationMeters <= 65) {
+      return true;
+    }
+
+    // Or on the final step and distance is under 200 ft
+    if (stepIndex >= (route.steps?.length || 1) - 1) {
+      const lastStep = route.steps?.[stepIndex];
+      if (lastStep?.distance && lastStep.distance.includes('ft')) {
+        const feet = parseFloat(lastStep.distance.replace(/[^0-9.]/g, '')) || 0;
+        return feet <= 200;
+      }
+    }
+
+    return false;
+  }, [distanceToDestinationMeters, isStorefrontCardDismissed, route.destinationImageUrl, route.destinationEntranceNotes, stepIndex, route.steps]);
+
+  // Voice announcement when entering final 150-ft entrance corridor
+  useEffect(() => {
+    if (isApproachingStorefront && !hasAnnouncedStorefront) {
+      setHasAnnouncedStorefront(true);
+      const entranceLabel = route.destinationEntranceType === 'drive_thru' ? 'drive-thru lane' :
+        route.destinationEntranceType === 'parking' ? 'parking lot entrance' :
+        route.destinationEntranceType === 'curbside' ? 'curbside pickup area' :
+        route.destinationEntranceType === 'main_door' ? 'main entrance' : 'entrance';
+
+      const prompt = `Approaching ${entranceLabel}.${route.destinationEntranceNotes ? ` Note: ${route.destinationEntranceNotes}` : ''}`;
+      if (!isVoiceMuted) {
+        speechService.speak(prompt, { chime: 'turn' });
+      }
+    }
+  }, [isApproachingStorefront, hasAnnouncedStorefront, route.destinationEntranceType, route.destinationEntranceNotes, isVoiceMuted]);
 
   const convoyTelemetry = useMemo(() => {
     return convoyService.getConvoyTelemetry(userLocation || null, speed, currentUserId, members);
@@ -228,6 +340,37 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   const isSevereSpeeding = speed >= currentSpeedLimit + 10;
   const hasCameraNearby = currentStep.hasCamera;
 
+  // Highway Junction & Off-Ramp Detection
+  const junctionInfo = useMemo(() => {
+    const currentInfo = detectJunctionOrExit(currentStep);
+    if (currentInfo) return currentInfo;
+
+    const nextStep = steps[stepIndex + 1];
+    if (nextStep && distMeters <= 1600) {
+      const nextInfo = detectJunctionOrExit(nextStep);
+      if (nextInfo) {
+        return {
+          ...nextInfo,
+          laneAdvice: `UPCOMING • ${nextInfo.laneAdvice}`
+        };
+      }
+    }
+    return null;
+  }, [currentStep, steps, stepIndex, distMeters]);
+
+  // Multi-Stop Waypoint & Leg Tracking
+  const currentLegIdx = route?.currentLegIndex || 0;
+  const hasWaypoints = !!(route?.waypoints && route.waypoints.length > 0);
+  const activeStop = hasWaypoints && currentLegIdx < route.waypoints!.length
+    ? route.waypoints![currentLegIdx]
+    : null;
+  const activeLeg = hasWaypoints && route.legs && route.legs[currentLegIdx]
+    ? route.legs[currentLegIdx]
+    : null;
+
+  const displayEta = activeLeg?.duration || route.totalTime;
+  const displayDist = activeLeg?.distance || route.totalDistance;
+
   return (
     <div className="absolute inset-0 z-[100] flex flex-col pointer-events-none">
       {/* Top Navigation Bar - Glassmorphism with Mobile Notch / Status Bar Safe-Area Padding */}
@@ -284,6 +427,49 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               )}
             </div>
             <p className={`font-bold text-slate-200 truncate ${isMobile ? 'text-sm' : 'text-2xl'}`}>{currentStep.instruction}</p>
+
+            {/* Active Multi-Stop Waypoint Indicator */}
+            {hasWaypoints && (
+              <div className="flex items-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-950/90 via-black/85 to-amber-950/90 border border-amber-500/60 shadow-[0_0_15px_rgba(245,158,11,0.25)] backdrop-blur-md w-fit max-w-full">
+                <span className="w-4 h-4 rounded-md bg-amber-500 text-black font-black text-[9px] flex items-center justify-center shrink-0 shadow-sm">
+                  {activeStop ? currentLegIdx + 1 : '🏁'}
+                </span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 truncate">
+                  {activeStop
+                    ? `STOP ${currentLegIdx + 1} OF ${route.waypoints!.length}: ${activeStop.name}${activeLeg?.distance ? ` (${activeLeg.distance})` : ''}`
+                    : `FINAL STOP: ${route.destinationName}`}
+                </span>
+              </div>
+            )}
+
+            {/* Highway Junction & Off-Ramp Amber Signboard HUD with Dynamic Beacon Pulse */}
+            {junctionInfo && (
+              <div className="flex items-center gap-2 mt-2 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-950/90 via-black/85 to-amber-950/90 border border-orange-500/70 shadow-[0_0_20px_rgba(249,115,22,0.35)] backdrop-blur-md animate-in fade-in slide-in-from-top-1 duration-300 w-fit max-w-full">
+                {/* Dynamic Amber Beacon Pulse */}
+                <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
+                  <div className="absolute w-4 h-4 rounded-full bg-orange-500 opacity-75 animate-ping" />
+                  <div className="relative w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_#f97316] border border-black/50" />
+                </div>
+
+                {/* Exit Badge */}
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-500 text-black font-black text-[10px] tracking-wider uppercase shrink-0 shadow-sm">
+                  <span>🛣️</span>
+                  <span>{junctionInfo.exitCode}</span>
+                </div>
+
+                {/* Destination Highway / Corridor & Lane Advice */}
+                <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                  {junctionInfo.targetName && (
+                    <span className="text-xs font-black text-amber-200 uppercase tracking-tight truncate">
+                      {junctionInfo.targetName}
+                    </span>
+                  )}
+                  <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30 shrink-0 uppercase tracking-wider">
+                    {junctionInfo.laneAdvice}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Visual Lane Guidance Arrows Strip */}
             {currentStep.lanes && currentStep.lanes.length > 0 && (
@@ -362,6 +548,100 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               >
                 <span>Cleared ✕</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Final 150-Foot "Storefront Approach Card" (Waze-Style Visual Confirmation) */}
+      {isApproachingStorefront && (
+        <div className="w-full pointer-events-auto flex justify-center mt-2 px-3 animate-in slide-in-from-top zoom-in-95 duration-300">
+          <div className="bg-slate-950/95 backdrop-blur-2xl border-2 border-emerald-500/70 rounded-2xl p-3 shadow-[0_15px_45px_rgba(16,185,129,0.35)] flex flex-col gap-2.5 max-w-lg w-full">
+            {/* Top Row: Badge, Live Distance, Close Button */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+                <span className="text-[11px] font-black uppercase tracking-wider text-emerald-300 flex items-center gap-1">
+                  <span>🏁 Approaching Entrance</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {distanceToDestinationMeters !== null && (
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-black border border-emerald-500/30">
+                    {Math.round(distanceToDestinationMeters * 3.28084)} ft away
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsStorefrontCardDismissed(true)}
+                  className="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center text-xs font-bold transition-all cursor-pointer"
+                  title="Dismiss approach card"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Content Row: Photo Thumbnail + Guidance */}
+            <div className="flex items-center gap-3">
+              {route.destinationImageUrl && (
+                <div 
+                  onClick={() => setIsStorefrontLightboxOpen(true)}
+                  className="relative w-20 h-16 sm:w-24 sm:h-20 rounded-xl overflow-hidden border-2 border-emerald-400/60 shadow-md shrink-0 group cursor-pointer"
+                >
+                  <img
+                    src={route.destinationImageUrl}
+                    alt={route.destinationName}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                  <span className="absolute bottom-1 right-1 text-[8px] font-bold text-white bg-black/60 px-1 py-0.5 rounded">
+                    🔍 View
+                  </span>
+                </div>
+              )}
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h4 className="text-sm font-black text-white truncate">
+                    {route.destinationName}
+                  </h4>
+                  {route.destinationEntranceType && (
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border flex items-center gap-1 shrink-0 ${
+                      route.destinationEntranceType === 'drive_thru'
+                        ? 'bg-amber-500/25 text-amber-300 border-amber-500/50 shadow-sm'
+                        : route.destinationEntranceType === 'parking'
+                        ? 'bg-sky-500/25 text-sky-300 border-sky-500/50 shadow-sm'
+                        : route.destinationEntranceType === 'curbside'
+                        ? 'bg-purple-500/25 text-purple-300 border-purple-500/50 shadow-sm'
+                        : 'bg-emerald-500/25 text-emerald-300 border-emerald-500/50 shadow-sm'
+                    }`}>
+                      <span>
+                        {route.destinationEntranceType === 'drive_thru' ? '🚗' :
+                         route.destinationEntranceType === 'parking' ? '🅿️' :
+                         route.destinationEntranceType === 'curbside' ? '📦' : '🚪'}
+                      </span>
+                      <span>
+                        {route.destinationEntranceType === 'drive_thru' ? 'Drive-Thru' :
+                         route.destinationEntranceType === 'parking' ? 'Parking Lot' :
+                         route.destinationEntranceType === 'curbside' ? 'Curbside' : 'Main Door'}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                {route.destinationEntranceNotes ? (
+                  <p className="text-xs font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-xl mt-1 line-clamp-2">
+                    🚗 {route.destinationEntranceNotes}
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-300 mt-0.5 font-medium">
+                    Storefront photo attached. Look for this building entrance.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -681,16 +961,27 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             {/* ETA & Distance Summary Card */}
             <div className="bg-black/80 backdrop-blur-2xl border border-white/15 rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
               <div className="flex items-center justify-between">
-                <div className="flex gap-5">
-                  <div>
-                    <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Estimated Arrival</p>
-                    <p className="font-black text-white text-2xl tracking-tight">{route.totalTime}</p>
+                <div className="flex flex-col gap-1">
+                  <div className="flex gap-5">
+                    <div>
+                      <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">
+                        {activeStop ? `Stop ${currentLegIdx + 1} ETA` : 'Estimated Arrival'}
+                      </p>
+                      <p className="font-black text-white text-2xl tracking-tight">{displayEta}</p>
+                    </div>
+                    <div className="w-px bg-white/15" />
+                    <div>
+                      <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">
+                        {activeStop ? `To Stop ${currentLegIdx + 1}` : 'Distance'}
+                      </p>
+                      <p className="font-black text-white text-2xl tracking-tight">{displayDist}</p>
+                    </div>
                   </div>
-                  <div className="w-px bg-white/15" />
-                  <div>
-                    <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Distance</p>
-                    <p className="font-black text-white text-2xl tracking-tight">{route.totalDistance}</p>
-                  </div>
+                  {hasWaypoints && (
+                    <p className="text-[9px] font-bold text-slate-400">
+                      🏁 Trip Total: <span className="text-white font-black">{route.totalTime}</span> • <span className="text-white font-black">{route.totalDistance}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-col items-end gap-1">
@@ -952,16 +1243,27 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               {/* ETA + Distance */}
               <div className="bg-black/70 backdrop-blur-2xl border border-white/15 rounded-t-[2rem] rounded-b-xl p-3 flex-1 transition-all duration-500">
                 <div className="w-10 h-1 bg-white/10 rounded-full mx-auto mb-3" />
-                <div className="flex gap-3">
-                  <div>
-                    <p className="font-bold text-slate-500 uppercase tracking-wider text-[7px]">ETA</p>
-                    <p className="font-black text-white text-lg">{route.totalTime}</p>
+                <div className="flex flex-col gap-1">
+                  <div className="flex gap-3">
+                    <div>
+                      <p className="font-bold text-slate-500 uppercase tracking-wider text-[7px]">
+                        {activeStop ? `Stop ${currentLegIdx + 1} ETA` : 'ETA'}
+                      </p>
+                      <p className="font-black text-white text-lg">{displayEta}</p>
+                    </div>
+                    <div className="w-px bg-white/10" />
+                    <div>
+                      <p className="font-bold text-slate-500 uppercase tracking-wider text-[7px]">
+                        {activeStop ? `To Stop ${currentLegIdx + 1}` : 'Distance'}
+                      </p>
+                      <p className="font-black text-white text-lg">{displayDist}</p>
+                    </div>
                   </div>
-                  <div className="w-px bg-white/10" />
-                  <div>
-                    <p className="font-bold text-slate-500 uppercase tracking-wider text-[7px]">Distance</p>
-                    <p className="font-black text-white text-lg">{route.totalDistance}</p>
-                  </div>
+                  {hasWaypoints && (
+                    <p className="text-[8px] font-bold text-slate-400">
+                      🏁 Trip: <span className="text-white font-black">{route.totalTime}</span> • <span className="text-white font-black">{route.totalDistance}</span>
+                    </p>
+                  )}
                 </div>
 
                 {showDetails && (
@@ -1212,6 +1514,39 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
             }
           }}
         />
+      )}
+      {/* Storefront Photo Fullscreen Lightbox Modal */}
+      {isStorefrontLightboxOpen && route.destinationImageUrl && (
+        <div 
+          onClick={() => setIsStorefrontLightboxOpen(false)}
+          className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl animate-in fade-in duration-200 pointer-events-auto cursor-zoom-out"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="relative max-w-lg w-full rounded-3xl overflow-hidden border-2 border-emerald-500/50 shadow-2xl bg-black"
+          >
+            <img 
+              src={route.destinationImageUrl} 
+              alt={route.destinationName} 
+              className="w-full max-h-[70vh] object-contain"
+            />
+            <div className="p-4 bg-slate-950/95 flex items-center justify-between border-t border-white/10">
+              <div className="min-w-0 flex-1 pr-2">
+                <h4 className="text-sm font-black text-white truncate">{route.destinationName}</h4>
+                {route.destinationEntranceNotes && (
+                  <p className="text-xs text-amber-300 font-bold truncate">🚗 {route.destinationEntranceNotes}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsStorefrontLightboxOpen(false)}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer shrink-0"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FamilyMember, Place, NavigationRoute } from '../types';
+import { FamilyMember, Place, NavigationRoute, ArrivalTripData } from '../types';
+import { getDistanceMeters } from '../utils/geo';
 import { getRouteFromOSRM, geocodePlace, fetchRouteOptions } from '../services/osrmService';
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText, searchMaintenanceAlongRoute } from '../services/placesService';
 import { searchPlacesOnMap } from '../services/geminiService';
@@ -14,6 +15,7 @@ import { searchHistoryService } from '../services/searchHistoryService';
 import { convoyService } from '../services/convoyService';
 import { maintenanceAlertService, VehicleHealthItem } from '../services/maintenanceAlertService';
 import { findDeadZonesIntersectingRoute, syncDeadZoneTiles } from '../services/offlineLocationBuffer';
+import { placeCorrectionService } from '../services/placeCorrectionService';
 
 export interface BetterRouteSuggestion {
     route: NavigationRoute;
@@ -73,6 +75,7 @@ export const useNavigation = (
         hasArrived: false,
         splitIndex: 0
     });
+    const [arrivalTripData, setArrivalTripData] = useState<ArrivalTripData | null>(null);
     const [isNavigating, setIsNavigating] = useState(false);
     const navStateRef = useRef<NavigationState>(navState);
     const currentSpeedRef = useRef<number>(0);
@@ -118,6 +121,32 @@ export const useNavigation = (
                 name: route.destinationName || dest,
                 location: destLocation
             });
+
+            // Attach storefront photo and entrance guidance if available
+            const matchingPlace = userPlaces.find(p => 
+                p.name.toLowerCase() === dest.toLowerCase() || 
+                (destLocation && getDistanceMeters(p.location, destLocation) < 200)
+            );
+            const correction = matchingPlace 
+                ? placeCorrectionService.getCorrection(matchingPlace) 
+                : placeCorrectionService.getCorrection({
+                    id: '',
+                    name: dest,
+                    location: destLocation,
+                    radius: 0.3,
+                    type: 'search_result',
+                    icon: '📍'
+                });
+
+            if (correction) {
+                route.destinationImageUrl = correction.imageUrl || matchingPlace?.imageUrl;
+                route.destinationEntranceNotes = correction.entranceNotes || matchingPlace?.entranceNotes;
+                route.destinationEntranceType = correction.entranceType || matchingPlace?.entranceType;
+            } else if (matchingPlace) {
+                route.destinationImageUrl = matchingPlace.imageUrl;
+                route.destinationEntranceNotes = matchingPlace.entranceNotes;
+                route.destinationEntranceType = matchingPlace.entranceType;
+            }
 
             navigationStartTimeRef.current = Date.now();
             setActiveRoute(route);
@@ -258,8 +287,8 @@ export const useNavigation = (
             }
         }
 
-        // Priority 5: Neighborhood fallback (Yadkin Road / Cottonade)
-        console.warn(`📍 [Search] ⚠️ ALL sources exhausted — using Yadkin Road fallback (35.105, -78.966)`);
+        // Priority 5: Default coordinates fallback (only if browser/device denied location permissions and no prior cache exists)
+        console.warn(`📍 [Search] Live location unavailable — using default fallback center (35.105, -78.966)`);
         return { lat: 35.105, lng: -78.966 };
     }, [userLocation, members, user?.uid]);
 
@@ -269,7 +298,14 @@ export const useNavigation = (
         startSearchTransition(async () => {
             try {
                 const results = await searchPlacesText(query, location);
-                setDiscoveredPlaces([...userPlaces, ...results]);
+                // Only include saved places whose NAME matches the query — not ALL userPlaces.
+                // This prevents unrelated saved places (e.g. Home) from appearing
+                // when searching for a brand/business (e.g. "mcdonalds").
+                const qLower = query.toLowerCase().trim();
+                const relevantSaved = userPlaces.filter(p =>
+                    (p.name || '').toLowerCase().includes(qLower)
+                );
+                setDiscoveredPlaces([...relevantSaved, ...results]);
                 if (results.length > 0) {
                     showNotification(`📍 Found ${results.length} results`, 3000);
                     onSelectPlace?.(results[0]); // Auto-select the first result so the panel opens immediately
@@ -506,12 +542,50 @@ export const useNavigation = (
                 }
             }
 
+            // Intermediate Waypoint Arrival Check (50-meter radius threshold)
+            if (activeRoute.waypoints && activeRoute.waypoints.length > 0) {
+                const currentLeg = activeRoute.currentLegIndex || 0;
+                if (currentLeg < activeRoute.waypoints.length) {
+                    const targetStop = activeRoute.waypoints[currentLeg];
+                    if (targetStop && targetStop.location && userLocation) {
+                        const distToStop = getDistanceMeters(userLocation, targetStop.location);
+                        if (distToStop <= 50) {
+                            const nextLeg = currentLeg + 1;
+                            setActiveRoute(prev => prev ? { ...prev, currentLegIndex: nextLeg } : null);
+                            audioService.playAlertChime();
+                            speechService.announceManeuver('', 0, 'arrival', targetStop.name);
+                            showNotification(`🎯 Arrived at Stop ${currentLeg + 1}: ${targetStop.name}! Continuing route...`, 6000);
+                        }
+                    }
+                }
+            }
+
             if (newNavState.hasArrived && !currentNavState.hasArrived) {
-                showNotification(`🎯 Arrived! Safety Score: ${safetyScore}%`, 6000);
+                showNotification(`🎯 Arrived at ${activeRoute.destinationName}! Safety Score: ${safetyScore}%`, 6000);
                 speechService.announceManeuver('', 0, 'arrival', activeRoute.destinationName);
                 endTrip(userLocation || undefined);
                 stopCrashMonitoring();
                 setEtaSharing(false);
+
+                // Build arrival trip data for Waze-style post-drive arrival prompt & location correction
+                const arrivalData: ArrivalTripData = {
+                    destinationName: activeRoute.destinationName || 'Destination',
+                    destinationLoc: activeRoute.destinationLoc || userLocation || { lat: 0, lng: 0 },
+                    destinationPlace: {
+                        id: (activeRoute as any).destinationPlaceId || `dest_${Date.now()}`,
+                        name: activeRoute.destinationName || 'Destination',
+                        location: activeRoute.destinationLoc || userLocation || { lat: 0, lng: 0 },
+                        radius: 0.3,
+                        type: 'search_result',
+                        icon: '📍',
+                        description: activeRoute.summary
+                    },
+                    totalDistance: activeRoute.totalDistance || '',
+                    totalTime: activeRoute.totalTime || '',
+                    safetyScore,
+                    arrivedAt: Date.now()
+                };
+                setArrivalTripData(arrivalData);
 
                 // Auto-resolve SOS if active upon safe destination arrival
                 const selfMember = members.find(m => m.id === user?.uid);
@@ -529,7 +603,7 @@ export const useNavigation = (
                     setActiveRoute(null);
                     setBetterRouteSuggestion(null);
                     setUpcomingTollAlert(null);
-                }, 5000);
+                }, 3000);
             }
 
             setNavState(newNavState);
@@ -593,6 +667,29 @@ export const useNavigation = (
 
     // Cleanup & Cancel Navigation
     const handleCancelNavigation = useCallback(() => {
+        if (activeRoute && userLocation && activeRoute.destinationLoc) {
+            const distToDest = getDistanceMeters(userLocation, activeRoute.destinationLoc);
+            if (distToDest <= 300) {
+                // User arrived near destination and ended drive
+                setArrivalTripData({
+                    destinationName: activeRoute.destinationName || 'Destination',
+                    destinationLoc: activeRoute.destinationLoc,
+                    destinationPlace: {
+                        id: (activeRoute as any).destinationPlaceId || `dest_${Date.now()}`,
+                        name: activeRoute.destinationName || 'Destination',
+                        location: activeRoute.destinationLoc,
+                        radius: 0.3,
+                        type: 'search_result',
+                        icon: '📍',
+                        description: activeRoute.summary
+                    },
+                    totalDistance: activeRoute.totalDistance || '',
+                    totalTime: activeRoute.totalTime || '',
+                    safetyScore,
+                    arrivedAt: Date.now()
+                });
+            }
+        }
         endTrip(userLocation || undefined);
         stopCrashMonitoring();
         setEtaSharing(false);
@@ -604,7 +701,7 @@ export const useNavigation = (
         if (profile?.familyCircleId && user?.uid) {
             updateMemberTrip(profile.familyCircleId, user.uid, null).catch(() => {});
         }
-    }, [userLocation, setDriveMode, setEtaSharing, profile?.familyCircleId, user?.uid]);
+    }, [activeRoute, userLocation, safetyScore, setDriveMode, setEtaSharing, profile?.familyCircleId, user?.uid]);
 
     // Rerouting logic
     const lastRerouteRef = useRef<number>(0);
@@ -838,6 +935,8 @@ export const useNavigation = (
         handleStartNavigation,
         handleCancelNavigation,
         handleDiscovery,
-        handleQuickSearch
+        handleQuickSearch,
+        arrivalTripData,
+        setArrivalTripData
     };
 };

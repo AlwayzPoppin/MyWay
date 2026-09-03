@@ -7,6 +7,7 @@ import BrandIcon from './BrandIcon';
 
 interface SearchBoxProps {
   onSearch: (query: string) => void;
+  onSearchResultsChange?: (results: Place[]) => void;
   onNavigate?: (query: string, location?: { lat: number; lng: number }) => void;
   onLocate?: () => void;
   onQuickStop?: () => void;
@@ -18,6 +19,8 @@ interface SearchBoxProps {
   onSelectSavedPlace?: (place: Place) => void;
   onSelectPlace?: (place: Place) => void;
   userLocation?: { lat: number; lng: number } | null;
+  selectedPlace?: Place | null;
+  onClearSelectedPlace?: () => void;
 }
 
 function formatRelativeTime(ts: number): string {
@@ -54,8 +57,87 @@ function getNumericMiles(userLoc: { lat: number; lng: number } | null | undefine
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+interface BranchDistinction {
+  street: string;
+  crossStreetOrCity: string;
+  isMultiBranch: boolean;
+  compactBadge: string; // e.g. "0.4 mi • Main St" or "Main St"
+}
+
+function extractBranchDistinction(
+  place: { name?: string; query?: string; description?: string; location?: { lat: number; lng: number } },
+  allPlaces: Array<{ name?: string; query?: string; description?: string; location?: { lat: number; lng: number } }> = [],
+  userLoc?: { lat: number; lng: number } | null
+): BranchDistinction {
+  const displayName = (place.name || place.query || '').trim();
+  const cleanName = displayName.toLowerCase();
+  
+  // Detect if this is a franchise / multi-branch query where 2+ results share the same brand/name
+  const matchingCount = allPlaces.filter(p => {
+    const otherName = (p.name || p.query || '').trim().toLowerCase();
+    if (!otherName || !cleanName) return false;
+    return otherName === cleanName || 
+      (cleanName.length > 3 && otherName.includes(cleanName)) ||
+      (otherName.length > 3 && cleanName.includes(otherName));
+  }).length;
+  
+  // Exclude street addresses and roads from multi-branch franchise badges
+  const isAddressOrStreet = /^\d+|\b(st|street|rd|road|dr|drive|ave|avenue|blvd|boulevard|lane|ln|ct|court|pkwy|parkway|hwy|highway|way|circle|cir)\b/i.test(displayName);
+  const isMultiBranch = !isAddressOrStreet && matchingCount > 1;
+
+  let street = '';
+  let crossStreetOrCity = '';
+
+  if (place.description) {
+    const rawParts = place.description.split(',').map(s => s.trim()).filter(Boolean);
+    
+    // Filter out parts that are essentially the place name
+    const addressParts = rawParts.filter(part => {
+      const partLower = part.toLowerCase();
+      return partLower !== cleanName && !cleanName.includes(partLower);
+    });
+
+    if (addressParts.length > 0) {
+      // If the first address part is just a house number (e.g. "5009"), combine with road name (e.g. "Santa Fe Drive")
+      if (/^\d+[-/a-zA-Z]?$/.test(addressParts[0]) && addressParts.length > 1) {
+        street = `${addressParts[0]} ${addressParts[1]}`;
+        crossStreetOrCity = addressParts[2] || '';
+      } else {
+        street = addressParts[0];
+        crossStreetOrCity = addressParts[1] || '';
+      }
+    }
+  }
+
+  // If no street was parsed from comma separation, check if description has any text
+  if (!street && place.description && place.description.toLowerCase() !== cleanName) {
+    street = place.description;
+  }
+
+  // Calculate distance
+  const dist = place.location ? getDistanceMiles(userLoc, place.location) : null;
+  
+  // Format compact badge: e.g. "0.4 mi • Main St"
+  let compactBadge = '';
+  if (dist && street) {
+    compactBadge = `${dist} • ${street}`;
+  } else if (dist) {
+    compactBadge = dist;
+  } else if (street) {
+    compactBadge = street;
+  }
+
+  return {
+    street,
+    crossStreetOrCity,
+    isMultiBranch,
+    compactBadge
+  };
+}
+
 const SearchBox: React.FC<SearchBoxProps> = ({
   onSearch,
+  onSearchResultsChange,
   onNavigate,
   onLocate,
   onQuickStop,
@@ -66,17 +148,28 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   userPlaces = [],
   onSelectSavedPlace,
   onSelectPlace,
-  userLocation
+  userLocation,
+  selectedPlace,
+  onClearSelectedPlace
 }) => {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(selectedPlace?.name || '');
   const [isFocused, setIsFocused] = useState(false);
   const [showDrawer, setShowDrawer] = useState(false);
+
+  useEffect(() => {
+    if (selectedPlace) {
+      setQuery(selectedPlace.name || '');
+      setShowDrawer(false);
+      setIsFocused(false);
+    }
+  }, [selectedPlace]);
   const [activeTab, setActiveTab] = useState<'suggestions' | 'recent' | 'categories' | 'saved'>('recent');
   const [history, setHistory] = useState<RecentSearchItem[]>([]);
   const [suggestions, setSuggestions] = useState<Place[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequestIdRef = useRef(0);
 
   // Predictive Routing Destinations based on time, day, trips & saved places
   const predictions = useMemo(() => {
@@ -90,7 +183,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     return () => unsub();
   }, []);
 
-  // Close dropdown on click outside
+  // Close dropdown on click outside without erasing active map pins
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -111,12 +204,19 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     const trimmed = query.trim().toLowerCase();
     if (trimmed.length < 1) {
       setSuggestions([]);
+      onSearchResultsChange?.([]);
       setIsLoadingSuggestions(false);
+      if (onClearSelectedPlace) {
+        onClearSelectedPlace();
+      }
       if (activeTab === 'suggestions') setActiveTab('recent');
       return;
     }
 
     // Instant matching against user saved places (0ms latency)
+    // IMPORTANT: Only match on place NAME, not description/address, to prevent
+    // brand searches (e.g. "mcdonalds") from matching unrelated saved places
+    // whose address happens to contain the search term as a substring.
     const isHomeQuery = trimmed === 'home' || trimmed === 'homes' || trimmed === 'house' || trimmed === 'my home';
     const isWorkQuery = trimmed === 'work' || trimmed === 'office' || trimmed === 'job' || trimmed === 'my work';
     const isSchoolQuery = trimmed === 'school' || trimmed === 'schools' || trimmed === 'class' || trimmed === 'college' || trimmed === 'campus';
@@ -126,10 +226,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       const nameLower = (p.name || '').toLowerCase();
       const typeLower = (p.type || '').toLowerCase();
 
-      // BUG FIX: Only match saved places by their NAME, not description/address.
-      // Matching by description caused false positives — e.g. searching "mcdonalds"
-      // would match a saved "Home" place if its street address happened to share
-      // proximity or keywords with a McDonald's location.
+      // Only match on the place's NAME — never on description/address
+      // This prevents "mcdonalds" from matching a saved "Home" at 123 McDonalds Rd
       if (nameLower.includes(trimmed)) return true;
       if (isHomeQuery && (typeLower === 'home' || nameLower.includes('home'))) return true;
       if (isWorkQuery && (typeLower === 'work' || nameLower.includes('work') || nameLower.includes('office'))) return true;
@@ -145,32 +243,56 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
     if (trimmed.length < 2) {
       setIsLoadingSuggestions(false);
+      onSearchResultsChange?.(matchingSaved);
       return;
     }
 
+    const currentRequestId = ++searchRequestIdRef.current;
     setIsLoadingSuggestions(true);
     searchDebounceRef.current = setTimeout(async () => {
       try {
-        const loc = userLocation || { lat: 35.0921, lng: -78.9823 };
+        // Ensure live GPS coordinates from useNavigation / geolocation state are strictly verified and passed
+        let loc = (userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && userLocation.lat !== 0 && userLocation.lng !== 0 && !isNaN(userLocation.lat) && !isNaN(userLocation.lng)) 
+          ? userLocation 
+          : undefined;
+        if (!loc && typeof window !== 'undefined' && window.localStorage) {
+          try {
+            const saved = localStorage.getItem('myway_last_known_location');
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (parsed && typeof parsed.lat === 'number' && typeof parsed.lng === 'number' && parsed.lat !== 0 && parsed.lng !== 0 && !isNaN(parsed.lat) && !isNaN(parsed.lng)) {
+                loc = parsed;
+              }
+            }
+          } catch (e) {}
+        }
         const results = await searchPlacesText(trimmed, loc);
         
-        // Merge matching saved places at the top, but NEVER dedup search results
-        // against saved places by coordinate proximity — they are different venues.
+        // Discard result if user has typed a newer query in the meantime
+        if (searchRequestIdRef.current !== currentRequestId) {
+          return;
+        }
+
+        // Merge matching saved places with API results, deduplicating by name/location
         const combined = [
           ...matchingSaved,
           ...results.filter(r => !matchingSaved.some(s => 
-            s.id === r.id ||
-            s.name.toLowerCase() === r.name.toLowerCase()
+            s.name.toLowerCase() === r.name.toLowerCase() ||
+            (s.location && r.location && Math.abs(s.location.lat - r.location.lat) < 0.0005 && Math.abs(s.location.lng - r.location.lng) < 0.0005)
           ))
         ];
 
-        // Sort: saved places first, then strictly by real proximity (closest stores first)
-        combined.sort((a, b) => {
-          const aIsSaved = matchingSaved.some(s => s.id === a.id);
-          const bIsSaved = matchingSaved.some(s => s.id === b.id);
-          if (aIsSaved && !bIsSaved) return -1;
-          if (!aIsSaved && bIsSaved) return 1;
+        // Check for specific house number in query (e.g. "417", "5610")
+        const queryHouseNum = trimmed.match(/^(\d+[a-zA-Z]?)\b/)?.[1];
 
+        // Sort by relevance: specific house numbers first, then proximity
+        combined.sort((a, b) => {
+          if (queryHouseNum) {
+            const aHasNum = (a.name + ' ' + (a.description || a.address || '')).toLowerCase().includes(queryHouseNum);
+            const bHasNum = (b.name + ' ' + (b.description || b.address || '')).toLowerCase().includes(queryHouseNum);
+            if (aHasNum && !bHasNum) return -1;
+            if (!aHasNum && bHasNum) return 1;
+          }
           if (loc && a.location && b.location) {
             const distA = getNumericMiles(loc, a.location);
             const distB = getNumericMiles(loc, b.location);
@@ -180,6 +302,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         });
 
         setSuggestions(combined);
+        onSearchResultsChange?.(combined);
         if (combined.length > 0) {
           setActiveTab('suggestions');
         }
@@ -225,6 +348,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       type: place.type,
       icon: place.icon
     });
+    onSearchResultsChange?.([place]);
     if (onSelectPlace) {
       onSelectPlace(place);
     } else {
@@ -244,6 +368,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       type: place.type,
       icon: place.icon
     });
+    onSearchResultsChange?.([place]);
     if (onNavigate) {
       onNavigate(place.name, place.location);
     } else if (onSelectPlace) {
@@ -304,7 +429,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   ];
 
   const hasQuery = query.trim().length > 0;
-  const isDropdownOpen = showDrawer || isFocused;
+  const isDropdownOpen = (showDrawer || isFocused) && !selectedPlace;
 
   return (
     <div ref={containerRef} className="w-full relative group">
@@ -321,7 +446,15 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         {/* Recent & Categories Drawer Toggle */}
         <button
           type="button"
-          onClick={() => setShowDrawer(prev => !prev)}
+          onClick={() => {
+            setShowDrawer(prev => {
+              const next = !prev;
+              if (next && suggestions.length > 0) {
+                onSearchResultsChange?.(suggestions);
+              }
+              return next;
+            });
+          }}
           className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ml-1 border
             ${showDrawer
               ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-inner'
@@ -334,7 +467,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         <div className="w-px h-8 bg-white/10 mx-1" />
 
         {/* Search Input */}
-        <form onSubmit={handleSubmit} className="flex-1 flex items-center relative">
+        <form onSubmit={handleSubmit} className="flex-1 flex items-center relative min-w-0">
           <input
             type="text"
             value={query}
@@ -345,9 +478,12 @@ const SearchBox: React.FC<SearchBoxProps> = ({
             onFocus={() => {
               setIsFocused(true);
               setShowDrawer(true);
+              if (suggestions.length > 0) {
+                onSearchResultsChange?.(suggestions);
+              }
             }}
             placeholder="Where to? (e.g. Main St, Starbucks, Airport)"
-            className={`w-full h-10 px-3 bg-transparent font-black text-sm sm:text-base transition-all duration-300 outline-none
+            className={`w-full h-11 px-3.5 bg-transparent font-bold text-sm sm:text-base transition-all duration-300 outline-none
               ${theme === 'dark' ? 'text-white placeholder-slate-400' : 'text-slate-900 placeholder-slate-400'}`}
           />
 
@@ -361,10 +497,16 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               onClick={() => {
                 setQuery('');
                 setSuggestions([]);
+                onSearchResultsChange?.([]);
                 setActiveTab('recent');
+                setShowDrawer(false);
+                setIsFocused(false);
+                if (onClearSelectedPlace) {
+                  onClearSelectedPlace();
+                }
               }}
-              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-slate-400 hover:text-white flex items-center justify-center text-xs mr-2 transition-all shrink-0"
-              title="Clear text"
+              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-slate-400 hover:text-white flex items-center justify-center text-xs mr-2 transition-all shrink-0 cursor-pointer"
+              title="Clear destination"
             >
               ✕
             </button>
@@ -382,17 +524,6 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         <div className="w-px h-8 bg-white/10 mx-1" />
 
         <div className="flex items-center gap-1.5 pr-1">
-          {onOpenMessages && (
-            <button
-              type="button"
-              onClick={onOpenMessages}
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all border
-                ${theme === 'dark' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/20 active:scale-90' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100 active:scale-90'}`}
-              title="Family Chat & Messages"
-            >
-              <span className="text-xl">💬</span>
-            </button>
-          )}
           {onLocate && (
             <button
               type="button"
@@ -418,11 +549,11 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         </div>
       </div>
 
-      {/* Floating Suggestions & History Popover — Opens Upward */}
+      {/* Suggestions & History Dropdown — Anchored directly to top of input */}
       {isDropdownOpen && (
-        <div className="absolute left-0 right-0 bottom-full mb-3 z-30 animate-in fade-in slide-in-from-bottom-2 duration-200">
-          <div className={`glass-panel rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] border backdrop-blur-2xl max-h-[60vh] flex flex-col
-            ${theme === 'dark' ? 'border-white/15 bg-slate-950/95' : 'border-slate-200 bg-white/95'}`}
+        <div className="absolute left-0 right-0 bottom-full mb-2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className={`rounded-3xl shadow-2xl overflow-hidden border backdrop-blur-3xl p-1 flex flex-col max-h-[min(65vh,480px)]
+            ${theme === 'dark' ? 'bg-slate-900/98 border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.8)]' : 'bg-white/98 border-slate-200 shadow-[0_30px_60px_rgba(0,0,0,0.2)]'}`}
           >
             {/* Predictive Smart Suggestion Banner (shown when search is empty) */}
             {!hasQuery && predictions.length > 0 && (
@@ -568,17 +699,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                   </div>
                 ) : suggestions.length > 0 ? (
                   suggestions.map((place) => {
-                    const distMiles = getDistanceMiles(userLocation, place.location);
                     const isSavedPlace = userPlaces.some(sp => sp.id === place.id || sp.name.toLowerCase() === place.name.toLowerCase());
-                    
-                    // Extract branch/street differentiator (e.g. "5009 Santa Fe Drive") from description
-                    let streetBadge = '';
-                    if (place.description) {
-                      const firstPart = place.description.split(',')[0].trim();
-                      if (firstPart && firstPart.toLowerCase() !== place.name.toLowerCase()) {
-                        streetBadge = firstPart;
-                      }
-                    }
+                    const branchInfo = extractBranchDistinction(place, suggestions, userLocation);
 
                     return (
                       <div
@@ -589,10 +711,9 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                             ? (theme === 'dark' ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 hover:border-amber-500/50 shadow-md shadow-amber-500/5' : 'bg-amber-50 hover:bg-amber-100/70 border-amber-300 hover:border-amber-400')
                             : (theme === 'dark' ? 'bg-white/5 hover:bg-indigo-600/15 border-white/5 hover:border-indigo-500/30' : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200')}`}
                       >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <BrandIcon placeName={place.name} defaultIcon={place.icon || (isSavedPlace ? '⭐' : '📍')} size="md" />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
                               <h4 className={`text-xs sm:text-sm font-black truncate ${isSavedPlace ? (theme === 'dark' ? 'text-amber-200' : 'text-amber-950') : (theme === 'dark' ? 'text-white' : 'text-slate-900')}`}>
                                 {place.name}
                               </h4>
@@ -605,29 +726,41 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                                   ⭐ Saved {place.type === 'home' ? 'Home' : place.type === 'work' ? 'Work' : place.type === 'school' ? 'School' : place.type === 'gym' ? 'Gym' : 'Place'}
                                 </span>
                               )}
-                              {streetBadge && !isSavedPlace && (
-                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
-                                  theme === 'dark'
-                                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                                    : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                                }`}>
-                                  {streetBadge}
-                                </span>
-                              )}
-                              {distMiles && (
-                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-auto ${
-                                  theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'
-                                }`}>
-                                  ⚡ {distMiles}
-                                </span>
-                              )}
                             </div>
-                            {place.description && (
-                              <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                                {place.description}
-                              </p>
+
+                            {/* Compact Branch Distance Badge (e.g. 0.4 mi • Main St) */}
+                            {branchInfo.compactBadge && (
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg shrink-0 flex items-center gap-1 border shadow-xs max-w-[190px] sm:max-w-[240px] ${
+                                branchInfo.isMultiBranch
+                                  ? (theme === 'dark'
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 ring-1 ring-amber-500/25'
+                                      : 'bg-amber-100 text-amber-900 border-amber-300 shadow-sm')
+                                  : (theme === 'dark'
+                                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                      : 'bg-emerald-50 text-emerald-800 border-emerald-200')
+                              }`} title={branchInfo.compactBadge}>
+                                <span className={branchInfo.isMultiBranch ? 'text-amber-400' : 'text-emerald-400'}>
+                                  {branchInfo.isMultiBranch ? '🏢' : '⚡'}
+                                </span>
+                                <span className="truncate">{branchInfo.compactBadge}</span>
+                              </span>
                             )}
                           </div>
+
+                          {/* Inline Branch Distinction Subtitle (cross streets / full address context) */}
+                          {branchInfo.isMultiBranch ? (
+                            <div className="flex items-center gap-1.5 mt-0.5 text-[11px] font-semibold text-slate-300 truncate">
+                              <span className="text-[9px] uppercase font-black tracking-wider text-amber-400 shrink-0 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">Branch</span>
+                              <span className="text-white font-bold truncate">{branchInfo.street || place.description}</span>
+                              {branchInfo.crossStreetOrCity && (
+                                <span className="text-slate-400 shrink-0">• {branchInfo.crossStreetOrCity}</span>
+                              )}
+                            </div>
+                          ) : place.description ? (
+                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {place.description}
+                            </p>
+                          ) : null}
                         </div>
 
                         {/* Quick 1-Tap GO button */}
@@ -665,38 +798,58 @@ const SearchBox: React.FC<SearchBoxProps> = ({
             {activeTab === 'recent' && (
               <div className="flex-1 overflow-y-auto no-scrollbar space-y-1.5">
                 {filteredHistory.length > 0 ? (
-                  filteredHistory.map((item) => (
-                    <div
-                      key={item.id}
-                      onClick={() => handleSelectRecent(item)}
-                      className={`group flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl cursor-pointer transition-all hover:scale-[1.01] active:scale-98 border
-                        ${theme === 'dark'
-                          ? 'bg-white/5 hover:bg-white/10 border-white/5 hover:border-indigo-500/30'
-                          : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200'}`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <BrandIcon placeName={item.name || item.query} defaultIcon={item.icon || '📍'} size="sm" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                              {item.name || item.query}
-                            </h4>
-                            {item.frequencyCount && item.frequencyCount > 1 && (
-                              <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0">
-                                🔥 {item.frequencyCount}x
-                              </span>
-                            )}
-                            <span className="text-[10px] text-slate-400 font-semibold shrink-0">
-                              {formatRelativeTime(item.timestamp)}
-                            </span>
+                  filteredHistory.map((item) => {
+                    const branchInfo = extractBranchDistinction(item, filteredHistory, userLocation);
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => handleSelectRecent(item)}
+                        className={`group flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl cursor-pointer transition-all hover:scale-[1.01] active:scale-98 border
+                          ${theme === 'dark'
+                            ? 'bg-white/5 hover:bg-white/10 border-white/5 hover:border-indigo-500/30'
+                            : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200'}`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <BrandIcon placeName={item.name || item.query} defaultIcon={item.icon || '📍'} size="sm" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <h4 className={`text-xs sm:text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                  {item.name || item.query}
+                                </h4>
+                                {item.frequencyCount && item.frequencyCount > 1 && (
+                                  <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0">
+                                    🔥 {item.frequencyCount}x
+                                  </span>
+                                )}
+                                <span className="text-[10px] text-slate-400 font-semibold shrink-0">
+                                  {formatRelativeTime(item.timestamp)}
+                                </span>
+                              </div>
+
+                              {branchInfo.compactBadge && (
+                                <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1 border ${
+                                  branchInfo.isMultiBranch
+                                    ? (theme === 'dark' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-amber-50 text-amber-900 border-amber-300')
+                                    : (theme === 'dark' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-emerald-50 text-emerald-800 border-emerald-200')
+                                }`}>
+                                  <span>{branchInfo.isMultiBranch ? '🏢' : '⚡'}</span>
+                                  <span className="truncate max-w-[150px]">{branchInfo.compactBadge}</span>
+                                </span>
+                              )}
+                            </div>
+
+                            {branchInfo.isMultiBranch && branchInfo.street ? (
+                              <p className="text-[10px] text-amber-300/90 font-bold truncate mt-0.5 flex items-center gap-1">
+                                <span className="text-amber-400">Branch:</span> {branchInfo.street} {branchInfo.crossStreetOrCity && `• ${branchInfo.crossStreetOrCity}`}
+                              </p>
+                            ) : item.description ? (
+                              <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                {item.description}
+                              </p>
+                            ) : null}
                           </div>
-                          {item.description && (
-                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {item.description}
-                            </p>
-                          )}
                         </div>
-                      </div>
 
                       {/* Quick 1-Tap Navigate & Delete Actions */}
                       <div className="flex items-center gap-1 shrink-0">
@@ -719,7 +872,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                         </button>
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="text-center py-6">
                     <p className="text-2xl mb-1">🧭</p>

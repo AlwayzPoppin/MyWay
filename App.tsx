@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Trip } from './types';
+import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Trip, CrashImpactMetadata } from './types';
 // Sidebar removed - replaced by BentoSidebar
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -21,13 +21,17 @@ import SafetyAlerts from './components/SafetyAlerts';
 import QuickActions from './components/QuickActions';
 import MessagingPanel from './components/MessagingPanel';
 import SettingsPanel from './components/SettingsPanel';
+import { MapSkinId } from './services/mapSkinService';
 import BentoSidebar from './components/BentoSidebar';
 import HoldToActivate from './components/HoldToActivate';
 import EmergencySOSModal from './components/EmergencySOSModal';
 import EditPlaceModal from './components/EditPlaceModal';
+import CorrectLocationModal from './components/CorrectLocationModal';
+import ArrivalPromptModal from './components/ArrivalPromptModal';
 import CircleSettingsModal from './components/CircleSettingsModal';
 import IncidentDetailModal from './components/IncidentDetailModal';
 import { incidentService } from './services/incidentService';
+import { ambientPoiService } from './services/ambientPoiService';
 import LoginScreen from './components/LoginScreen';
 import OnboardingFlow from './components/OnboardingFlow';
 import PlaceDetailPanel from './components/PlaceDetailPanel';
@@ -67,6 +71,7 @@ import { getSafeAvatarUrl, getDefaultAvatarDataUri } from './utils/avatar';
 // Audit #3: rewardsService removed
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText } from './services/placesService';
 import { subscribeToUserPlaces, subscribeToUserPlacesMulti, UserPlace, addUserPlace, deleteUserPlace, updateUserPlace } from './services/userPlacesService';
+import { placeCorrectionService } from './services/placeCorrectionService';
 // Audit #3: sponsoredPlacesService removed
 import { updateNavigationState, NavigationState } from './services/navigationEngine';
 import {
@@ -185,6 +190,7 @@ const App: React.FC = () => {
     return [];
   });
   const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>([]);
+  const [searchResultPlaces, setSearchResultPlaces] = useState<Place[]>([]);
   const [safetyScore, setSafetyScore] = useState(100);
   const [sessionPoints, setSessionPoints] = useState(0);
   const [crashCountdown, setCrashCountdown] = useState<number | null>(null);
@@ -212,7 +218,7 @@ const App: React.FC = () => {
     speedAlerts: false,
     mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
     units: 'imperial' as 'imperial' | 'metric',
-    mapSkin: ((localStorage.getItem('myway_map_skin') as any) || 'default') as 'default' | 'cyberpunk' | 'sunset' | 'midnight' | 'arctic' | 'forest',
+    mapSkin: ((localStorage.getItem('myway_map_skin') as any) || 'default') as MapSkinId,
     buildingScale: ((localStorage.getItem('myway_building_scale') as any) || 'enhanced') as 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental',
     landmarkGlow: localStorage.getItem('myway_landmark_glow') !== 'false',
     showTrafficControls: localStorage.getItem('myway_show_traffic_controls') !== 'false',
@@ -226,10 +232,18 @@ const App: React.FC = () => {
   const [insights, setInsights] = useState<DailyInsight[]>([]);
   const [isSOSModalOpen, setIsSOSModalOpen] = useState(false);
   const [editingPlace, setEditingPlace] = useState<Place | null>(null);
+  const [correctingPlace, setCorrectingPlace] = useState<Place | null>(null);
 
   // Real-time Road Incidents sync across all drivers & circle members
   useEffect(() => {
     return incidentService.subscribe(setIncidents);
+  }, []);
+
+  // Ambient Waze-Style POIs (Always-visible Gas, Fire, Hospitals, Police, Supermarkets)
+  const [ambientPlaces, setAmbientPlaces] = useState<Place[]>(() => ambientPoiService.getPois());
+
+  useEffect(() => {
+    return ambientPoiService.subscribe(setAmbientPlaces);
   }, []);
   const [activities, setActivities] = useState<AppNotification[]>([]);
   const prevMembersRef = useRef<Record<string, { sosActive: boolean; battery: number; status: string }>>({});
@@ -302,6 +316,21 @@ const App: React.FC = () => {
     activeFilterCircleId
   );
 
+  // Keep ambient POIs updated around user's live position or current map view
+  useEffect(() => {
+    if (userLocation && userLocation.lat !== 0 && userLocation.lng !== 0) {
+      ambientPoiService.updateAmbientPois(userLocation, mapBounds);
+    }
+  }, [userLocation?.lat, userLocation?.lng]);
+
+  useEffect(() => {
+    if (!mapBounds) return;
+    const timer = setTimeout(() => {
+      ambientPoiService.updateAmbientPois(null, mapBounds);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [mapBounds]);
+
   const members = liveMembers;
 
   useGeofences(
@@ -332,6 +361,8 @@ const App: React.FC = () => {
     handleCancelNavigation,
     handleDiscovery,
     handleQuickSearch,
+    arrivalTripData,
+    setArrivalTripData,
     setIsNavigating,
     setActiveRoute
   } = useNavigation(
@@ -355,6 +386,15 @@ const App: React.FC = () => {
   // Initialize activities from localStorage
   useEffect(() => {
     setActivities(getNotifications());
+  }, []);
+
+  // Listen for real-time Place & Entrance Corrections across circle members
+  useEffect(() => {
+    const unsub = placeCorrectionService.subscribe(() => {
+      setDiscoveredPlaces(prev => placeCorrectionService.applyCorrectionsToPlaces(prev));
+      setSelectedPlace(prev => prev ? (placeCorrectionService.applyCorrectionsToPlaces([prev])[0] || prev) : null);
+    });
+    return unsub;
   }, []);
 
   // Whenever navigation starts, automatically lock chase camera
@@ -581,17 +621,64 @@ const App: React.FC = () => {
       } catch (e) {}
     }
     setDiscoveredPlaces(prev => {
-      // Keep any active search/discovered places that are not saved userPlaces
-      const searchResults = prev.filter(p => p.type === 'search_result' || p.id.startsWith('photon-') || p.id.startsWith('nominatim-') || p.id.startsWith('overpass-'));
-      // Combine updated userPlaces with existing search results
-      return [...userPlaces, ...searchResults];
+      // Only keep search/discovered places — don't blindly re-inject all userPlaces.
+      // The allDisplayPlaces memo already combines userPlaces + discoveredPlaces for map display.
+      // Re-merging all userPlaces here would undo query-relevant filtering in handleDiscovery.
+      return prev.filter(p => p.type === 'search_result' || p.id.startsWith('photon-') || p.id.startsWith('nominatim-') || p.id.startsWith('overpass-'));
     });
   }, [userPlaces]);
 
   const allDisplayPlaces = useMemo(() => {
-    const searchPlaces = (discoveredPlaces || []).filter(dp => !userPlaces.some(up => up.id === dp.id));
-    return [...userPlaces, ...searchPlaces];
-  }, [userPlaces, discoveredPlaces]);
+    const list: Place[] = [...userPlaces];
+    const seenIds = new Set(userPlaces.map(p => p.id));
+
+    // 1. Ensure selectedPlace ALWAYS has a pin rendered on the map
+    if (selectedPlace && selectedPlace.location && typeof selectedPlace.location.lat === 'number' && typeof selectedPlace.location.lng === 'number') {
+      if (!seenIds.has(selectedPlace.id)) {
+        seenIds.add(selectedPlace.id);
+        list.push({
+          ...selectedPlace,
+          type: selectedPlace.type || 'search_result',
+          icon: selectedPlace.icon || '📍',
+          brandColor: selectedPlace.brandColor || '#6366f1'
+        });
+      }
+    }
+
+    // 2. Add active live search result locations (from typing in SearchBox)
+    for (const sp of searchResultPlaces) {
+      if (sp && sp.location && typeof sp.location.lat === 'number' && typeof sp.location.lng === 'number' && !seenIds.has(sp.id)) {
+        seenIds.add(sp.id);
+        list.push({
+          ...sp,
+          type: sp.type || 'search_result',
+          icon: sp.icon || '📍',
+          brandColor: sp.brandColor || '#6366f1'
+        });
+      }
+    }
+
+    // 3. Add discovered search places
+    for (const dp of discoveredPlaces || []) {
+      if (dp && dp.location && typeof dp.location.lat === 'number' && typeof dp.location.lng === 'number' && !seenIds.has(dp.id)) {
+        seenIds.add(dp.id);
+        list.push(dp);
+      }
+    }
+
+    // 4. Add ambient POIs
+    for (const ap of ambientPlaces || []) {
+      if (ap && ap.location && !seenIds.has(ap.id)) {
+        const overlaps = list.some(p => Math.abs(p.location.lat - ap.location.lat) < 0.0005 && Math.abs(p.location.lng - ap.location.lng) < 0.0005);
+        if (!overlaps) {
+          seenIds.add(ap.id);
+          list.push(ap);
+        }
+      }
+    }
+
+    return list;
+  }, [userPlaces, selectedPlace, searchResultPlaces, discoveredPlaces, ambientPlaces]);
 
 
   // Insights Loop
@@ -626,27 +713,20 @@ const App: React.FC = () => {
     };
   }, [user?.uid, showNotification]);
 
-  // --- HANDLERS ---
+  const handleClearSelectedPlace = useCallback(() => {
+    setSelectedPlace(null);
+    setPreviewRoute(null);
+    setSearchResultPlaces([]);
+    setDiscoveredPlaces([]);
+  }, []);
+
   const handleSelectPlace = useCallback((place: Place) => {
     setSelectedMemberId(null);
     setSelectedPlace(place);
     setMapCenter([place.location.lat, place.location.lng]);
 
-    // BUG FIX: Ensure search-result places get a visible marker on the map.
-    // Without this, tapping a suggestion from SearchBox dropdown would center the map
-    // near the destination but render NO pin for it — making nearby saved places (e.g. Home)
-    // look like they were being mislabeled as the search result (e.g. McDonald's).
-    const isSearchResult = place.id && (
-      place.id.startsWith('photon-') ||
-      place.id.startsWith('nominatim-') ||
-      place.id.startsWith('overpass-')
-    );
-    if (isSearchResult) {
-      setDiscoveredPlaces(prev => {
-        if (prev.some(p => p.id === place.id)) return prev;
-        return [...prev, place];
-      });
-    }
+    // Keep active selected search place in discoveredPlaces so it has a pin on map
+    setDiscoveredPlaces([place]);
   }, []);
 
   const handleAddPlace = useCallback((place: Omit<Place, 'id'>) => {
@@ -835,6 +915,10 @@ const App: React.FC = () => {
               setCircleSettingsTab('invite');
               setActiveModal('circle_settings');
             }}
+            onOpenMessages={(recipientId) => {
+              setMessagingRecipientId(recipientId || null);
+              setActiveModal('messaging');
+            }}
             onSOS={handleManualSOS}
             activities={activities}
             onResolveSOS={handleResolveSOS}
@@ -909,6 +993,7 @@ const App: React.FC = () => {
               landmarkGlow={userSettings.landmarkGlow}
               showTrafficControls={userSettings.showTrafficControls}
               selectedMemberId={selectedMemberId}
+              selectedPlaceId={selectedPlace?.id || null}
               center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined}
               zoom={mapZoom}
               onZoomChange={handleZoomChange}
@@ -1254,44 +1339,16 @@ const App: React.FC = () => {
                 );
               })()}
 
-              {/* Place detail panel */}
-              {selectedPlace && !isMobile && !activeModal && (
+              {/* ────────────────────────────────────────────────────────── */}
+              {/* UNIFIED INTERACTION CONTAINER (DESKTOP: LEFT ROUTING COLUMN) */}
+              {/* ────────────────────────────────────────────────────────── */}
+              {!isMobile && !isDriveMode && !activeModal && !correctingPlace && (
                 <OverlayManager>
-                  <div className="absolute z-[80] right-6 top-6 w-84 max-w-[360px] pointer-events-auto animate-in slide-in-from-right-4 duration-300">
-                    <PlaceDetailPanel
-                      place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
-                      candidatePlaces={discoveredPlaces.filter(p => p.type === 'search_result')}
-                      onSelectCandidate={handleSelectPlace}
-                      onClose={() => {
-                        setSelectedPlace(null);
-                        setPreviewRoute(null);
-                      }}
-                      onNavigate={(selectedRoute) => {
-                        handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
-                        setSelectedPlace(null);
-                        setPreviewRoute(null);
-                      }}
-                      onSelectRoutePreview={(route) => setPreviewRoute(route)}
-                      theme={theme}
-                      userLocation={userLocation}
-                      onUpdateRadius={handleUpdatePlaceRadius}
-                      isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
-                      onAddPlace={handleAddPlace}
-                      onDeletePlace={handleDeletePlace}
-                      onEditPlace={(place) => setEditingPlace(place)}
-                      members={liveMembers}
-                      currentUserId={user?.uid}
-                    />
-                  </div>
-                </OverlayManager>
-              )}
-
-              {/* Unified Command Center - Bottom Center Single Bar */}
-              {!activeModal && !selectedPlace && !isBottomSheetExpanded && (
-                <OverlayManager>
-                  <div className={`absolute left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 pointer-events-auto ${isMobile ? 'bottom-24' : 'bottom-12'}`}>
+                  <div className="absolute left-1/2 -translate-x-1/2 bottom-10 w-[560px] md:w-[620px] lg:w-[700px] max-w-[calc(100vw-360px)] z-[120] flex flex-col-reverse gap-3 pointer-events-auto max-h-[calc(100vh-120px)] justify-end transition-all duration-300">
+                    {/* Search Input Bar (Anchors dropdown directly above) */}
                     <SearchBox
                       onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
+                      onSearchResultsChange={setSearchResultPlaces}
                       onNavigate={handleStartNavigation}
                       onCategorySearch={handleQuickSearch}
                       onLocate={() => {
@@ -1310,7 +1367,34 @@ const App: React.FC = () => {
                       onSelectSavedPlace={handleSelectPlace}
                       onSelectPlace={handleSelectPlace}
                       userLocation={userLocation}
+                      selectedPlace={selectedPlace}
+                      onClearSelectedPlace={handleClearSelectedPlace}
                     />
+
+                    {/* Place Detail Panel (Renders immediately below search in the exact same physical column) */}
+                    {selectedPlace && !correctingPlace && (
+                      <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(100vh-140px)] rounded-[2rem] animate-in fade-in slide-in-from-top-3 duration-300">
+                        <PlaceDetailPanel
+                          place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
+                          onClose={handleClearSelectedPlace}
+                          onNavigate={(selectedRoute) => {
+                            handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
+                            handleClearSelectedPlace();
+                          }}
+                          onSelectRoutePreview={(route) => setPreviewRoute(route)}
+                          theme={theme}
+                          userLocation={userLocation}
+                          onUpdateRadius={handleUpdatePlaceRadius}
+                          isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
+                          onAddPlace={handleAddPlace}
+                          onDeletePlace={handleDeletePlace}
+                          onEditPlace={(place) => setEditingPlace(place)}
+                          onCorrectLocation={(place) => setCorrectingPlace(place)}
+                          members={liveMembers}
+                          currentUserId={user?.uid}
+                        />
+                      </div>
+                    )}
                   </div>
                 </OverlayManager>
               )}
@@ -1340,7 +1424,7 @@ const App: React.FC = () => {
                 className={`absolute flex flex-col items-end z-[110] pointer-events-auto transition-all duration-300 ${
                   isDriveMode 
                     ? (isMobile ? 'right-3.5' : 'right-6')
-                    : (isMobile ? 'right-4' : 'bottom-40 right-6')
+                    : (isMobile ? 'right-4' : 'bottom-72 right-6')
                 }`}
                 style={{
                   top: isDriveMode
@@ -1474,6 +1558,57 @@ const App: React.FC = () => {
             onClose={() => setEditingPlace(null)}
             onSave={handleUpdatePlace}
             onDelete={handleDeletePlace}
+            onCorrectLocation={(place) => setCorrectingPlace(place)}
+            theme={theme}
+          />
+
+          {/* Waze-Style Address & Pin Location Correction Modal */}
+          <CorrectLocationModal
+            place={correctingPlace}
+            isOpen={!!correctingPlace}
+            onClose={() => setCorrectingPlace(null)}
+            userLocation={userLocation}
+            theme={theme}
+            userId={user?.uid}
+            userName={profile?.name || user?.displayName || 'You'}
+            userAvatar={profile?.avatar || user?.photoURL || undefined}
+            onSave={(correctedPlace) => {
+              // 1. Update selectedPlace if active so panel and route preview update
+              if (selectedPlace && (selectedPlace.id === correctedPlace.id || selectedPlace.name === correctedPlace.name)) {
+                setSelectedPlace(correctedPlace);
+              }
+              // 2. If it's a saved place in userPlaces, update it in Firebase / local state
+              if (userPlaces.some(p => p.id === correctedPlace.id)) {
+                handleUpdatePlace(correctedPlace.id, {
+                  location: correctedPlace.location,
+                  imageUrl: correctedPlace.imageUrl,
+                  entranceType: correctedPlace.entranceType,
+                  entranceNotes: correctedPlace.entranceNotes,
+                  submitterId: correctedPlace.submitterId,
+                  submitterName: correctedPlace.submitterName,
+                  submitterAvatar: correctedPlace.submitterAvatar,
+                  helpfulCount: correctedPlace.helpfulCount,
+                  helpfulUserIds: correctedPlace.helpfulUserIds
+                });
+              }
+              // 3. Update discoveredPlaces so map pin immediately repositions
+              setDiscoveredPlaces(prev => prev.map(p => 
+                (p.id === correctedPlace.id || (p.name === correctedPlace.name && p.description === correctedPlace.description))
+                  ? correctedPlace
+                  : p
+              ));
+              showNotification(`✅ Pin location & entrance photo saved (Waze-style)!`, 4000);
+            }}
+          />
+
+          {/* Waze-Style Post-Drive Arrival & Rating Prompt Modal */}
+          <ArrivalPromptModal
+            arrivalData={arrivalTripData}
+            isOpen={!!arrivalTripData}
+            onClose={() => setArrivalTripData(null)}
+            onFixLocation={(destinationPlace) => {
+              setCorrectingPlace(destinationPlace);
+            }}
             theme={theme}
           />
 
@@ -1811,6 +1946,11 @@ const App: React.FC = () => {
               setIsBottomSheetExpanded(false);
               setActiveModal('maintenance');
             }}
+            onOpenMessages={(recipientId) => {
+              setIsBottomSheetExpanded(false);
+              setMessagingRecipientId(recipientId || null);
+              setActiveModal('messaging');
+            }}
             onSOS={handleManualSOS}
             activities={activities}
             onResolveSOS={handleResolveSOS}
@@ -1829,35 +1969,76 @@ const App: React.FC = () => {
         )
       }
 
-      {/* Mobile Place Detail Bottom Sheet */}
-      {isMobile && selectedPlace && !isDriveMode && !activeModal && !isBottomSheetExpanded && (
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* UNIFIED INTERACTION CONTAINER (MOBILE: UNIFIED BOTTOM SHEET) */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {isMobile && !isDriveMode && !activeModal && !isBottomSheetExpanded && !correctingPlace && (
         <OverlayManager>
-          <div className="absolute z-[150] inset-x-0 bottom-0 pointer-events-auto">
-            <PlaceDetailPanel
-              place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
-              candidatePlaces={discoveredPlaces.filter(p => p.type === 'search_result')}
-              onSelectCandidate={handleSelectPlace}
-              onClose={() => {
-                setSelectedPlace(null);
-                setPreviewRoute(null);
-              }}
-              onNavigate={(selectedRoute) => {
-                handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
-                setSelectedPlace(null);
-                setPreviewRoute(null);
-              }}
-              onSelectRoutePreview={(route) => setPreviewRoute(route)}
-              theme={theme}
-              userLocation={userLocation}
-              isMobile={true}
-              onUpdateRadius={handleUpdatePlaceRadius}
-              isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
-              onAddPlace={handleAddPlace}
-              onDeletePlace={handleDeletePlace}
-              onEditPlace={(place) => setEditingPlace(place)}
-              members={liveMembers}
-              currentUserId={user?.uid}
-            />
+          <div className={`absolute inset-x-0 bottom-0 z-[150] pointer-events-auto flex flex-col transition-all duration-300 ${
+            selectedPlace
+              ? 'max-h-[85vh] bg-[#0f172a]/95 backdrop-blur-2xl border-t border-white/10 rounded-t-[2.5rem] shadow-[0_-15px_40px_rgba(0,0,0,0.6)] pb-[env(safe-area-inset-bottom,16px)]'
+              : 'bottom-[calc(116px+env(safe-area-inset-bottom,0px))] px-4 pb-1'
+          }`}>
+            {/* Mobile Drag Handle (Only when place is selected) */}
+            {selectedPlace && (
+              <div className="pt-3 pb-1 shrink-0">
+                <div className="w-12 h-1 rounded-full mx-auto bg-white/20" />
+              </div>
+            )}
+
+            {/* Search Input Bar (Anchors dropdown directly below) */}
+            <div className={selectedPlace ? 'px-4 pb-2 shrink-0' : 'w-full'}>
+              <SearchBox
+                onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
+                onSearchResultsChange={setSearchResultPlaces}
+                onNavigate={handleStartNavigation}
+                onCategorySearch={handleQuickSearch}
+                onLocate={() => {
+                  const targetId = user?.uid || 'demo-you';
+                  setSelectedMemberId(targetId);
+                  setMapCenter(undefined);
+                  showNotification("📍 Centered on your location", 2000);
+                }}
+                onQuickStop={() => setActiveModal('quickstop')}
+                onOpenMessages={() => {
+                  setMessagingRecipientId(null);
+                  setActiveModal('messaging');
+                }}
+                theme={theme}
+                userPlaces={userPlaces}
+                onSelectSavedPlace={handleSelectPlace}
+                onSelectPlace={handleSelectPlace}
+                userLocation={userLocation}
+                selectedPlace={selectedPlace}
+                onClearSelectedPlace={handleClearSelectedPlace}
+              />
+            </div>
+
+            {/* Mobile Place Detail Panel (Renders immediately below search in the exact same sheet) */}
+            {selectedPlace && !correctingPlace && (
+              <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(78vh-65px)] animate-in slide-in-from-bottom-3 duration-300">
+                <PlaceDetailPanel
+                  place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
+                  onClose={handleClearSelectedPlace}
+                  onNavigate={(selectedRoute) => {
+                    handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
+                    handleClearSelectedPlace();
+                  }}
+                  onSelectRoutePreview={(route) => setPreviewRoute(route)}
+                  theme={theme}
+                  userLocation={userLocation}
+                  isMobile={true}
+                  onUpdateRadius={handleUpdatePlaceRadius}
+                  isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
+                  onAddPlace={handleAddPlace}
+                  onDeletePlace={handleDeletePlace}
+                  onEditPlace={(place) => setEditingPlace(place)}
+                  onCorrectLocation={(place) => setCorrectingPlace(place)}
+                  members={liveMembers}
+                  currentUserId={user?.uid}
+                />
+              </div>
+            )}
           </div>
         </OverlayManager>
       )}

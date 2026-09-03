@@ -12,6 +12,13 @@ export default defineConfig(({ mode }) => {
       watch: {
         usePolling: true,
       },
+      proxy: {
+        '/maps-api': {
+          target: 'https://maps.googleapis.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/maps-api/, ''),
+        },
+      },
     },
     plugins: [
       react(),

@@ -29,6 +29,8 @@ interface BentoSidebarProps {
     onOpenNotifications?: () => void;
     onOpenWeeklyReport?: () => void;
     onOpenInviteShare?: () => void;
+    onOpenMessages?: (recipientId?: string) => void;
+    unreadMessagesCount?: number;
     onSOS?: () => void;
     activities?: any[];
     onResolveSOS?: (id: string, memberId?: string) => void;
@@ -64,6 +66,8 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     onOpenNotifications,
     onOpenWeeklyReport,
     onOpenInviteShare,
+    onOpenMessages,
+    unreadMessagesCount,
     onSOS,
     activities = [],
     onResolveSOS = () => {},
@@ -82,6 +86,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     const [showAddCustomPlace, setShowAddCustomPlace] = React.useState(false);
     const [customPlaceName, setCustomPlaceName] = React.useState('');
     const [customPlaceIcon, setCustomPlaceIcon] = React.useState('📍');
+    const [customPlaceType, setCustomPlaceType] = React.useState<Place['type']>('custom');
     const getStatusIcon = (status: string, currentPlace?: string) => {
         if (currentPlace && status === 'Stationary') return '🏠';
         switch (status) {
@@ -401,10 +406,26 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                 </span>
                                                             ) : null}
                                                         </div>
-                                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0
-                                                            ${member.battery <= 20 ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
-                                                            {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
-                                                        </span>
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0
+                                                                ${member.battery <= 20 ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
+                                                                {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
+                                                            </span>
+                                                            {onOpenMessages && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        onOpenMessages(member.id);
+                                                                    }}
+                                                                    className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all hover:scale-110 active:scale-95 shrink-0
+                                                                        ${theme === 'dark' ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/30' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100 shadow-sm'}`}
+                                                                    title={`Direct message with ${member.name}`}
+                                                                >
+                                                                    <span className="text-xs">💬</span>
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     </div>
 
                                                     {member.currentTrip ? (
@@ -531,6 +552,19 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 <span className="text-lg">📊</span>
                                             </button>
                                         )}
+                                        {onOpenMessages && (
+                                            <button
+                                                onClick={onOpenMessages}
+                                                className={`relative w-10 h-10 rounded-xl flex items-center justify-center border transition-all hover:scale-115 active:scale-90
+                                                    ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
+                                                title="My Messages"
+                                            >
+                                                <span className="text-lg">💬</span>
+                                                {typeof unreadMessagesCount === 'number' && unreadMessagesCount > 0 && (
+                                                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full ring-2 ring-slate-900" />
+                                                )}
+                                            </button>
+                                        )}
                                         {onOpenNotifications && (
                                             <button
                                                 onClick={onOpenNotifications}
@@ -604,19 +638,6 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     <div>
                                                         <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Alerts</p>
                                                         <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Alerts</p>
-                                                    </div>
-                                                </button>
-                                            )}
-                                            {onOpenInviteShare && (
-                                                <button
-                                                    onClick={onOpenInviteShare}
-                                                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
-                                                        ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
-                                                >
-                                                    <span className="text-lg">📤</span>
-                                                    <div>
-                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Invites</p>
-                                                        <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Access</p>
                                                     </div>
                                                 </button>
                                             )}

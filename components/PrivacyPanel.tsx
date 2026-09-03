@@ -240,7 +240,7 @@ const PrivacyPanel: React.FC<PrivacyPanelProps> = ({
                         </div>
                         <div className="min-w-0 flex-1">
                             <p className="text-xs font-black truncate text-white">
-                                {activePrivacyMode === 'exact' && '📍 Exact Location • 45 MPH on Carson Drive'}
+                                {activePrivacyMode === 'exact' && '📍 Exact Location • 45 MPH Live Speed'}
                                 {activePrivacyMode === 'blurred' && '🛡️ In Neighborhood Bubble (~1.5 mi Area)'}
                                 {activePrivacyMode === 'status_only' && '🏷️ At Home (No Live GPS Coordinates)'}
                                 {activePrivacyMode === 'frozen' && '❄️ Location Paused (Ghost Mode)'}

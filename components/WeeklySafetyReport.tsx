@@ -397,7 +397,7 @@ const WeeklySafetyReport: React.FC<WeeklySafetyReportProps> = ({
                             <p className="text-[11px] text-slate-300 leading-relaxed">
                                 {selfStats.hardBrakes === 0
                                     ? "Flawless braking technique! Maintaining a 3-second buffer ahead allows for smooth deceleration into highway off-ramps."
-                                    : "Tip: Increase following distance on arterial roads like Carson Drive to reduce sudden braking when approaching traffic signals."}
+                                    : "Tip: Increase following distance on arterial roads and busy corridors to reduce sudden braking when approaching traffic signals."}
                             </p>
                         </div>
                     </div>

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Place } from '../types';
+import { compressImageFile, placeCorrectionService } from '../services/placeCorrectionService';
 
 interface EditPlaceModalProps {
     place: Place | null;
@@ -7,6 +8,7 @@ interface EditPlaceModalProps {
     onClose: () => void;
     onSave: (placeId: string, updates: Partial<Place>) => void;
     onDelete?: (placeId: string) => void;
+    onCorrectLocation?: (place: Place) => void;
     theme?: 'light' | 'dark';
 }
 
@@ -27,12 +29,16 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
     onClose,
     onSave,
     onDelete,
+    onCorrectLocation,
     theme = 'dark'
 }) => {
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const [name, setName] = useState('');
     const [icon, setIcon] = useState('📍');
     const [type, setType] = useState<string>('other');
     const [radius, setRadius] = useState<number>(0.3);
+    const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
+    const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
     useEffect(() => {
         if (place) {
@@ -40,6 +46,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             setIcon(place.icon || '📍');
             setType(place.type || 'other');
             setRadius(place.radius || 0.3);
+            setImageUrl(place.imageUrl || undefined);
         }
     }, [place]);
 
@@ -49,13 +56,40 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
     const textColor = isDark ? 'text-white' : 'text-slate-900';
     const bgColor = isDark ? 'bg-slate-900/98 border-white/10 text-white' : 'bg-white/98 border-slate-200 text-slate-900';
 
-    const handleSave = () => {
+    const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsUploadingPhoto(true);
+        try {
+            const compressed = await compressImageFile(file);
+            setImageUrl(compressed);
+        } catch (err) {
+            console.error('Failed to process photo:', err);
+        } finally {
+            setIsUploadingPhoto(false);
+            e.target.value = '';
+        }
+    };
+
+    const handleSave = async () => {
         if (!name.trim()) return;
+
+        let finalPhotoUrl = imageUrl;
+        if (imageUrl && imageUrl.startsWith('data:')) {
+            try {
+                finalPhotoUrl = await placeCorrectionService.uploadPlacePhoto(place.id, imageUrl);
+            } catch (err) {
+                console.warn('Failed to upload photo to storage, keeping local:', err);
+            }
+        }
+
         onSave(place.id, {
             name: name.trim(),
             icon,
             type: type as any,
-            radius
+            radius,
+            imageUrl: finalPhotoUrl
         });
         onClose();
     };
@@ -177,6 +211,79 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                             <span>1km</span>
                             <span>2km</span>
                         </div>
+                    </div>
+
+                    {/* Waze-Style Adjust Pin Location on Map Button */}
+                    {onCorrectLocation && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onClose();
+                                onCorrectLocation(place);
+                            }}
+                            className={`w-full py-2.5 px-3.5 rounded-2xl border flex items-center justify-between transition-all cursor-pointer ${
+                                isDark ? 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300' : 'border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700'
+                            }`}
+                        >
+                            <div className="flex items-center gap-2.5">
+                                <span className="text-lg">🎯</span>
+                                <div className="text-left">
+                                    <span className="text-xs font-black block">Adjust Pin Location (Waze Style)</span>
+                                    <span className="text-[10px] opacity-80 block">Fix entrance, driveway, or parking coordinate</span>
+                                </div>
+                            </div>
+                            <span className="text-sm font-bold">→</span>
+                        </button>
+                    )}
+
+                    {/* Storefront / Entrance Photo */}
+                    <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                            Storefront & Entrance Photo
+                        </label>
+                        {imageUrl ? (
+                            <div className="relative rounded-2xl overflow-hidden border border-white/10 group">
+                                <img src={imageUrl} alt="Place photo" className="w-full h-28 object-cover" />
+                                <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="px-2.5 py-1 rounded-lg bg-black/70 text-white text-[10px] font-bold backdrop-blur-md hover:bg-black/90 cursor-pointer"
+                                    >
+                                        Change
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setImageUrl(undefined)}
+                                        className="w-6 h-6 rounded-lg bg-red-500/80 text-white text-xs font-bold flex items-center justify-center hover:bg-red-500 cursor-pointer"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploadingPhoto}
+                                className={`w-full py-3 border border-dashed rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                                    isDark ? 'border-white/20 hover:border-indigo-400 bg-white/5' : 'border-slate-300 hover:border-indigo-500 bg-slate-50'
+                                }`}
+                            >
+                                <span>{isUploadingPhoto ? '⏳' : '📷'}</span>
+                                <span className={`text-xs font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                                    {isUploadingPhoto ? 'Compressing...' : 'Take or Upload Place Photo'}
+                                </span>
+                            </button>
+                        )}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={handlePhotoChange}
+                            className="hidden"
+                        />
                     </div>
                 </div>
 
