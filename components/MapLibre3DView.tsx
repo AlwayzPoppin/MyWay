@@ -14,6 +14,8 @@ import { maintenanceAlertService } from '../services/maintenanceAlertService';
 import { searchMaintenanceAlongRoute } from '../services/placesService';
 import { osmTrafficService } from '../services/osmTrafficService';
 import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
+import { UserProfile } from '../services/authService';
+import { extractHouseNumber } from '../utils/addressUtils';
 import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
@@ -75,6 +77,7 @@ interface MapLibre3DViewProps {
     members: FamilyMember[];
     userLocation?: Location | null;
     currentUserId?: string;
+    userProfile?: UserProfile | null;
     theme: 'light' | 'dark';
     mapSkin?: MapSkinId;
     selectedMemberId?: string | null;
@@ -115,6 +118,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     members,
     userLocation,
     currentUserId,
+    userProfile,
     theme,
     mapSkin = 'default',
     selectedMemberId,
@@ -2610,6 +2614,143 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             });
         }
     }, [publicReports, isMapReady, styleVersion, theme, currentUserId]);
+
+    // ==========================================
+    // CIRCLE HOMES 3D HOUSE NUMBER LABELS LAYER
+    // ==========================================
+    useEffect(() => {
+        if (!map.current || !isMapReady || !map.current.isStyleLoaded()) return;
+
+        const sourceId = 'circle-homes-source';
+        const layerId = 'circle-homes-layer';
+
+        interface HomeFeature {
+            id: string;
+            coordinates: [number, number];
+            houseNumber: string;
+            label: string;
+        }
+
+        const homeFeatures: HomeFeature[] = [];
+
+        // 1. Current user's verified preciseHomeLocation from profile
+        if (userProfile?.preciseHomeLocation?.lat && userProfile?.preciseHomeLocation?.lng) {
+            const extractedNumber = extractHouseNumber(userProfile.preciseHomeLocation.address);
+            if (extractedNumber) {
+                homeFeatures.push({
+                    id: 'user_precise_home',
+                    coordinates: [userProfile.preciseHomeLocation.lng, userProfile.preciseHomeLocation.lat],
+                    houseNumber: extractedNumber,
+                    label: userProfile.preciseHomeLocation.address || 'My Home'
+                });
+            }
+        }
+
+        // 2. Circle members' home locations & saved Home places
+        (places || []).forEach(p => {
+            const isHome = p.category === 'home' ||
+                p.icon === 'home' ||
+                p.name?.toLowerCase().includes('home') ||
+                p.tags?.includes('home') ||
+                p.tags?.includes('Verified Precision Pin');
+
+            if (isHome && p.location && typeof p.location.lat === 'number' && typeof p.location.lng === 'number') {
+                const extractedNumber = extractHouseNumber(p.address || p.description || p.name);
+                if (extractedNumber) {
+                    // Deduplicate by proximity (~10m) to avoid duplicate stacked labels
+                    const isDuplicate = homeFeatures.some(hf =>
+                        Math.abs(hf.coordinates[1] - p.location.lat) < 0.0001 &&
+                        Math.abs(hf.coordinates[0] - p.location.lng) < 0.0001
+                    );
+                    if (!isDuplicate) {
+                        homeFeatures.push({
+                            id: `place_home_${p.id}`,
+                            coordinates: [p.location.lng, p.location.lat],
+                            houseNumber: extractedNumber,
+                            label: p.name || 'Home'
+                        });
+                    }
+                }
+            }
+        });
+
+        // 3. Any active Circle members with home location attached
+        (members || []).forEach(m => {
+            if ((m as any).homeLocation?.lat && (m as any).homeLocation?.lng) {
+                const loc = (m as any).homeLocation;
+                const extractedNumber = extractHouseNumber((m as any).homeAddress || (m as any).address);
+                if (extractedNumber) {
+                    const isDuplicate = homeFeatures.some(hf =>
+                        Math.abs(hf.coordinates[1] - loc.lat) < 0.0001 &&
+                        Math.abs(hf.coordinates[0] - loc.lng) < 0.0001
+                    );
+                    if (!isDuplicate) {
+                        homeFeatures.push({
+                            id: `member_home_${m.id}`,
+                            coordinates: [loc.lng, loc.lat],
+                            houseNumber: extractedNumber,
+                            label: `${m.name}'s Home`
+                        });
+                    }
+                }
+            }
+        });
+
+        const geojsonData: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: homeFeatures.map(h => ({
+                type: 'Feature',
+                id: h.id,
+                properties: {
+                    id: h.id,
+                    houseNumber: h.houseNumber,
+                    label: h.label
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: h.coordinates
+                }
+            }))
+        };
+
+        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource;
+        if (source) {
+            source.setData(geojsonData);
+        } else {
+            map.current.addSource(sourceId, {
+                type: 'geojson',
+                data: geojsonData
+            });
+        }
+
+        if (!map.current.getLayer(layerId)) {
+            try {
+                // Ensure this layer sits visually above the 3d-buildings layer
+                map.current.addLayer({
+                    id: layerId,
+                    type: 'symbol',
+                    source: sourceId,
+                    minzoom: 14, // Visible at neighborhood, street, and 3D building zoom levels
+                    layout: {
+                        'text-field': '{houseNumber}',
+                        'text-size': 14,
+                        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                        'text-pitch-alignment': 'map', // Lays flat on the ground/roof in 3D pitch mode
+                        'text-rotation-alignment': 'map',
+                        'text-allow-overlap': true,
+                        'text-ignore-placement': true
+                    },
+                    paint: {
+                        'text-color': '#ffffff',
+                        'text-halo-color': '#000000',
+                        'text-halo-width': 1.5
+                    }
+                });
+            } catch (layerErr) {
+                console.warn('[MapLibre3DView] Failed to add circle-homes-layer:', layerErr);
+            }
+        }
+    }, [userProfile?.preciseHomeLocation, places, members, isMapReady, styleVersion, theme]);
 
     // Update Privacy Zones
     useEffect(() => {

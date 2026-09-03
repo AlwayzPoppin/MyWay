@@ -987,6 +987,7 @@ const App: React.FC = () => {
               members={members}
               userLocation={userLocation}
               currentUserId={user?.uid || ''}
+              userProfile={profile}
               theme={theme}
               mapSkin={userSettings.mapSkin}
               buildingScale={userSettings.buildingScale}
