@@ -18,6 +18,7 @@ import { convoyService } from '../services/convoyService';
 import { maintenanceAlertService, VehicleHealthItem } from '../services/maintenanceAlertService';
 import { findDeadZonesIntersectingRoute, syncDeadZoneTiles } from '../services/offlineLocationBuffer';
 import { placeCorrectionService } from '../services/placeCorrectionService';
+import { syncNavigationTelemetry, clearNavigation } from '../services/androidAutoService';
 
 export interface BetterRouteSuggestion {
     route: NavigationRoute;
@@ -707,6 +708,7 @@ export const useNavigation = (
         endTrip(loc || undefined);
         stopCrashMonitoring();
         setEtaSharing(false);
+        clearNavigation();
 
         // Build arrival trip data for post-drive arrival prompt & location correction (the wizard)
         const arrivalData: ArrivalTripData = {
@@ -983,6 +985,21 @@ export const useNavigation = (
                 onTripCompleted(userLocation || undefined, false);
             }
 
+            // Sync navigation telemetry to Android Auto head unit
+            const remainDistStr = currentStep
+                ? (distToStep > 1000
+                    ? `${(distToStep / 1609.34).toFixed(1)} mi`
+                    : `${Math.round(distToStep * 3.28084)} ft`)
+                : (activeRoute.totalDistance || '');
+            syncNavigationTelemetry({
+                destinationName: activeRoute.destinationName || 'Destination',
+                eta: activeRoute.totalTime || '',
+                remainingDistance: remainDistStr,
+                currentInstruction: currentStep?.instruction || 'Follow highlighted route',
+                speedMph: Math.round(selfSpeedMph),
+                speedLimit: currentStep?.speedLimit || 35
+            });
+
             setNavState(newNavState);
         }
     }, [userLocation, isNavigating, activeRoute, safetyScore, members, user?.uid, profile?.familyCircleId, showNotification, setDriveMode, setEtaSharing, betterRouteSuggestion, upcomingTollAlert, onTripCompleted]);
@@ -1144,6 +1161,7 @@ export const useNavigation = (
         setEtaSharing(false);
         setDriveMode(false);
         setIsNavigating(false);
+        clearNavigation();
         if (profile?.familyCircleId && user?.uid) {
             updateMemberTrip(profile.familyCircleId, user.uid, null).catch(() => {});
         }

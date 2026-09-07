@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeAudioFocusPlugin.class);
         registerPlugin(NativeBatteryPlugin.class);
         registerPlugin(NativeSettingsPlugin.class);
+        registerPlugin(NativeAndroidAutoPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -59,6 +59,8 @@ import {
   searchPlacesOnMap
 } from './services/geminiService';
 import { getRouteFromOSRM, geocodePlace } from './services/osrmService';
+import { isGeoIntentUrl, parseGeoIntent } from './utils/geoIntentParser';
+import { syncSavedPlaces } from './services/androidAutoService';
 import { geolocationService } from './services/geolocationService';
 import { setupAutoFlush as setupOfflineLocationAutoFlush } from './services/offlineLocationBuffer';
 import {
@@ -692,30 +694,16 @@ const App: React.FC = () => {
     }
   }, [userLocation, hasInitiallyCentered]);
 
-  // Lifecycle & Deep Links
+  // Lifecycle & Background State
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    const setup = async () => {
-      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (!isActive) showNotification('MyWay: Running in background', 3000);
-      });
-      CapacitorApp.addListener('appUrlOpen', ({ url }) => {
-        const parsed = new URL(url);
-        const match = parsed.pathname.match(/\/join\/([A-Za-z0-9]+)/);
-        if (match) {
-          const code = match[1];
-          if (user) {
-            joinCircle(code);
-            showNotification(`🔗 Joining circle: ${code}`, 3000);
-          } else {
-            localStorage.setItem('myway_pending_invite', code);
-          }
-        }
-      });
+    const listener = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) showNotification('MyWay: Running in background', 3000);
+    });
+    return () => {
+      listener.then(l => l.remove()).catch(() => {});
     };
-    setup();
-    return () => { CapacitorApp.removeAllListeners(); };
-  }, [user, joinCircle, showNotification]);
+  }, [showNotification]);
 
   // Offline Handling
   useEffect(() => {
@@ -771,6 +759,7 @@ const App: React.FC = () => {
     try {
       localStorage.setItem('myway_user_places', JSON.stringify(userPlaces || []));
     } catch (e) {}
+    syncSavedPlaces(userPlaces || []);
     setDiscoveredPlaces(prev => {
       // Only keep search/discovered places — don't blindly re-inject all userPlaces.
       // The allDisplayPlaces memo already combines userPlaces + discoveredPlaces for map display.
@@ -964,6 +953,142 @@ const App: React.FC = () => {
       setDiscoveredPlaces([]);
     }
   }, [userPlaces]);
+
+  const lastProcessedUrlRef = useRef<string | null>(null);
+
+  const handleIncomingUrl = useCallback(async (url: string) => {
+    if (!url || typeof url !== 'string') return;
+    if (lastProcessedUrlRef.current === url) return;
+    lastProcessedUrlRef.current = url;
+    setTimeout(() => {
+      if (lastProcessedUrlRef.current === url) {
+        lastProcessedUrlRef.current = null;
+      }
+    }, 4000);
+
+    console.log('🔗 [DeepLink] Processing incoming URL:', url);
+
+    // 1. External Geo & Navigation Intents (Spark, Google Maps, Waze, delivery apps)
+    if (isGeoIntentUrl(url)) {
+      if (!user) {
+        sessionStorage.setItem('myway_pending_geo_intent', url);
+      }
+      const parsed = parseGeoIntent(url);
+      if (!parsed) return;
+
+      showNotification(`🧭 Navigation intent: ${parsed.name}`, 3000);
+
+      let targetCoords = parsed.coords;
+      const targetName = parsed.name;
+
+      // If coordinates not directly provided in intent, geocode the address or query
+      if (!targetCoords && parsed.query) {
+        try {
+          const liveOrigin = userLocation?.lat ? userLocation : undefined;
+          const geocoded = await geocodePlace(parsed.query, liveOrigin);
+          if (geocoded) {
+            targetCoords = geocoded;
+          }
+        } catch (err) {
+          console.error('Failed to geocode geo intent destination:', err);
+        }
+      }
+
+      if (targetCoords) {
+        const intentPlace: Place = {
+          id: `intent-${Date.now()}`,
+          name: targetName,
+          location: targetCoords,
+          address: parsed.address || targetName,
+          description: parsed.address || targetName,
+          radius: 50,
+          type: 'search_result',
+          icon: 'Navigation',
+          isSaved: false,
+        };
+
+        // Drop the pin on the map and open place details
+        handleSelectPlace(intentPlace);
+
+        // Immediately start navigation and calculate turn-by-turn route
+        handleStartNavigation(targetName, targetCoords);
+      } else {
+        showNotification(`⚠️ Could not resolve destination: ${parsed.name}`, 4000);
+        if (parsed.query) {
+          setSearchText(parsed.query);
+        }
+      }
+      return;
+    }
+
+    // 2. Circle Invitation Deep Links (e.g. /join/ABC123XYZ)
+    try {
+      const parsed = new URL(url);
+      const match = parsed.pathname.match(/\/join\/([A-Za-z0-9]+)/);
+      if (match) {
+        const code = match[1];
+        if (user) {
+          joinCircle(code);
+          showNotification(`🔗 Joining circle: ${code}`, 3000);
+        } else {
+          localStorage.setItem('myway_pending_invite', code);
+        }
+      }
+    } catch {
+      // Non-HTTP URI, safely ignore
+    }
+  }, [userLocation, handleSelectPlace, handleStartNavigation, showNotification, user, joinCircle, setSearchText]);
+
+  // Process any pending geo intent once user is signed in
+  useEffect(() => {
+    if (user) {
+      const pendingGeo = sessionStorage.getItem('myway_pending_geo_intent');
+      if (pendingGeo) {
+        sessionStorage.removeItem('myway_pending_geo_intent');
+        handleIncomingUrl(pendingGeo);
+      }
+    }
+  }, [user, handleIncomingUrl]);
+
+  // Deep Link & External Intent Lifecycle Listeners
+  useEffect(() => {
+    // Browser / Dev mode simulation: allow testing via window.simulateGeoIntent or ?intent=
+    if (typeof window !== 'undefined') {
+      (window as any).simulateGeoIntent = (url: string) => handleIncomingUrl(url);
+      const params = new URLSearchParams(window.location.search);
+      const intentParam = params.get('intent');
+      if (intentParam) {
+        handleIncomingUrl(intentParam);
+      }
+    }
+
+    if (!Capacitor.isNativePlatform()) return;
+
+    let isMounted = true;
+
+    // Check cold launch URL (when app was launched by tapping an address in another app)
+    CapacitorApp.getLaunchUrl().then((launchData) => {
+      if (isMounted && launchData?.url) {
+        console.log('🚀 [DeepLink] Cold launch URL detected:', launchData.url);
+        handleIncomingUrl(launchData.url);
+      }
+    }).catch((err) => {
+      console.warn('⚠️ [DeepLink] Failed to check getLaunchUrl:', err);
+    });
+
+    // Listen for warm / background resume intent events
+    const urlListener = CapacitorApp.addListener('appUrlOpen', ({ url }) => {
+      if (isMounted && url) {
+        console.log('⚡ [DeepLink] appUrlOpen event received:', url);
+        handleIncomingUrl(url);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      urlListener.then(l => l.remove()).catch(() => {});
+    };
+  }, [handleIncomingUrl]);
 
   const handleAddPlace = useCallback(async (place: Omit<Place, 'id'>) => {
     const targetCircleId = currentCircle?.id || profile?.familyCircleId || (userCircles[0]?.id) || '';

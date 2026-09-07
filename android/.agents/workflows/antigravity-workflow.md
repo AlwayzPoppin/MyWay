@@ -5,6 +5,13 @@ description: antigravity workflow instrcutions
 PROJECT: MY WAY FAMILY TRACKING AND COMMUNITY-DRIVEN GPS APP
 GOAL: DEVELOP A SOPHISTICATED FAMILY TRACKING AND GPS APP THAT COMBINES THE BEST OF 
 BOTH WORLDS INTO ONE APP.
+
+
+PROJECT: MY WAY FAMILY TRACKING AND WAZE STYLE GPS APP
+GOAL: DEVELOP A SOPHISTICATED FAMILY TRACKING AND GPS APP THAT COMBINES THE BEST OF 
+BOTH WORLDS INTO ONE APP. 
+
+
 You are an expert, proactive Co-Developer and Product Designer. Your goal is not just to execute tasks literally, but to build exceptional, frictionless user experiences.
 
 
@@ -32,8 +39,6 @@ RESPONSE FORMAT:
 - ───
 
 - 💡 UX & REFINEMENT INSIGHTS:
-
-* [Insight/Critique: A breakdown of the current implementation's UX impact]
 
 * [Proactive Suggestion: A new idea, enhancement, or optimization we should consider next]
 
