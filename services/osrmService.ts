@@ -5,6 +5,7 @@ import { getDistanceMeters } from '../utils/geo';
 import { vehicleFuelService } from './vehicleFuelService';
 import { computeRouteTrafficSegments } from './trafficService';
 import { osmTrafficService } from './osmTrafficService';
+import { contributionService } from './contributionService';
 
 // ROUTING PROVIDERS: Multi-provider failover chain for production reliability
 // Configure VITE_OSRM_URL for your primary provider (self-hosted, Mapbox, etc.)
@@ -101,6 +102,10 @@ function formatInstruction(step: OSRMStep): string {
     const { type, modifier } = step.maneuver;
     const streetName = step.name || 'the road';
 
+    if (modifier === 'uturn' || modifier === 'u-turn') {
+        return `Make a U-turn on ${streetName}`;
+    }
+
     const modifierText = modifier ? modifier.replace('-', ' ') : '';
 
     switch (type) {
@@ -127,7 +132,7 @@ function formatInstruction(step: OSRMStep): string {
         case 'rotary':
             return `At the rotary, take the exit onto ${streetName}`;
         case 'continue':
-            return `Continue ${modifierText} on ${streetName}`;
+            return modifierText ? `Continue ${modifierText} on ${streetName}` : `Continue on ${streetName}`;
         default:
             return `Continue on ${streetName}`;
     }
@@ -329,15 +334,35 @@ export function generateParkingDirectRoute(
 async function fetchRouteFromProvider(
     baseUrl: string,
     points: Location[],
-    alternatives: boolean = true
+    alternatives: boolean = true,
+    routingOpts?: {
+        heading?: number;
+        continueStraight?: boolean;
+        isReroute?: boolean;
+    }
 ): Promise<OSRMResponse> {
     if (isOffline()) throw new Error('Device is offline');
     const canDoAlternatives = alternatives && points.length === 2;
     const altParam = canDoAlternatives ? '&alternatives=3' : '';
     const coordsStr = points.map(p => `${Number(p.lng.toFixed(6))},${Number(p.lat.toFixed(6))}`).join(';');
     const radiusesStr = points.map(() => '500').join(';');
+
+    // Bearings / Travel Direction Constraint:
+    // When heading is available (e.g. vehicle moving forward), constrain start waypoint to road segments
+    // within a 60-degree range of travel direction. Subsequent waypoints are unconstrained (;).
+    let bearingsParam = '';
+    if (typeof routingOpts?.heading === 'number' && !isNaN(routingOpts.heading) && routingOpts.heading >= 0) {
+        const normalizedHeading = Math.round(routingOpts.heading) % 360;
+        bearingsParam = `&bearings=${normalizedHeading},60` + points.slice(1).map(() => ';').join('');
+    }
+
+    // Continue Straight: Set true on reroutes or when continueStraight is requested,
+    // to strictly forbid OSRM from generating U-turns at the starting location.
+    const continueStraight = routingOpts?.continueStraight ?? (routingOpts?.isReroute ? true : false);
+    const continueStraightParam = `&continue_straight=${continueStraight ? 'true' : 'false'}`;
+
     // Enable annotations for live traffic congestion polyline rendering and 500m snapping radius
-    const url = `${baseUrl}/${coordsStr}?overview=full&geometries=geojson&steps=true&annotations=true${altParam}&radiuses=${radiusesStr}&continue_straight=false`;
+    const url = `${baseUrl}/${coordsStr}?overview=full&geometries=geojson&steps=true&annotations=true${altParam}&radiuses=${radiusesStr}${bearingsParam}${continueStraightParam}`;
     const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
     if (!response.ok) throw new Error(`OSRM ${response.status}`);
     return response.json();
@@ -362,14 +387,15 @@ export function clearRouteCache(): void {
     console.log('🧹 [osrmService] Route options cache purged.');
 }
 
-function getRouteCacheKey(start: Location, end: Location, options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[]; bypassCache?: boolean }): string {
+function getRouteCacheKey(start: Location, end: Location, options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[]; bypassCache?: boolean; heading?: number }): string {
     // 4 decimal places gives ~11m precision to ensure vehicle movement down a road is not clobbered by stale 1km cache hits
     const sLat = Math.round(start.lat * 10000) / 10000;
     const sLng = Math.round(start.lng * 10000) / 10000;
     const eLat = Math.round(end.lat * 10000) / 10000;
     const eLng = Math.round(end.lng * 10000) / 10000;
     const wpKey = options?.waypoints?.map(w => `${Math.round(w.location.lat * 10000) / 10000},${Math.round(w.location.lng * 10000) / 10000}`).join('|') || '';
-    return `${sLat},${sLng}->${wpKey}->${eLat},${eLng}_toll=${!!options?.avoidTolls}_hwy=${!!options?.avoidHighways}`;
+    const headingKey = typeof options?.heading === 'number' ? `_hdg=${Math.round(options.heading / 20) * 20}` : '';
+    return `${sLat},${sLng}->${wpKey}->${eLat},${eLng}_toll=${!!options?.avoidTolls}_hwy=${!!options?.avoidHighways}${headingKey}`;
 }
 
 /**
@@ -398,21 +424,27 @@ function parseOSRMRoute(
                 ? waypoints[lIdx]
                 : { id: `stop_${lIdx + 1}`, name: `Stop ${lIdx + 1}`, location: endLocation, order: lIdx + 1, isStop: true };
 
-        for (const osrmStep of leg.steps) {
+        for (let sIdx = 0; sIdx < leg.steps.length; sIdx++) {
+            const osrmStep = leg.steps[sIdx];
             const instruction = formatInstruction(osrmStep);
             const speedLimit = extractStepSpeedLimit(instruction, [osrmStep.name || '']);
             const hasCamera = detectSafetyCamera(instruction, [osrmStep.name || '']);
             const lanes = extractStepLanes(instruction, [osrmStep.name || ''], (osrmStep as any)?.intersections?.[0]?.lanes);
+
+            // OSRM Step endLocation: maneuver.location represents the START coordinate of the maneuver.
+            // Therefore, a step ends at the subsequent step's maneuver location, or at targetWaypoint.location for the final arrival step.
+            const nextOsrmStep = leg.steps[sIdx + 1];
+            const stepEndLocation = nextOsrmStep?.maneuver?.location
+                ? { lng: nextOsrmStep.maneuver.location[0], lat: nextOsrmStep.maneuver.location[1] }
+                : (targetWaypoint?.location || endLocation);
+
             const stepObj: RouteStep = {
                 instruction,
                 distance: formatDistance(osrmStep.distance),
                 speedLimit,
                 hasCamera,
                 lanes,
-                endLocation: {
-                    lng: osrmStep.maneuver.location[0],
-                    lat: osrmStep.maneuver.location[1]
-                }
+                endLocation: stepEndLocation
             };
             steps.push(stepObj);
             legSteps.push(stepObj);
@@ -483,7 +515,15 @@ export async function fetchRouteOptions(
     start: Location,
     endName: string,
     endLocation: Location,
-    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[]; bypassCache?: boolean }
+    options?: {
+        avoidTolls?: boolean;
+        avoidHighways?: boolean;
+        waypoints?: RouteWaypoint[];
+        bypassCache?: boolean;
+        heading?: number;
+        continueStraight?: boolean;
+        isReroute?: boolean;
+    }
 ): Promise<NavigationRoute[]> {
     const waypoints = options?.waypoints || [];
     const allPoints = [start, ...waypoints.map(w => w.location), endLocation];
@@ -512,39 +552,48 @@ export async function fetchRouteOptions(
         const provider = ROUTING_PROVIDERS[i];
         try {
             // 1. Direct standard OSRM request (alternatives disabled if multi-waypoint)
-            const data = await fetchRouteFromProvider(provider, allPoints, waypoints.length === 0);
+            const data = await fetchRouteFromProvider(provider, allPoints, waypoints.length === 0, options);
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 data.routes.forEach((r, idx) => {
                     parsedRoutes.push(parseOSRMRoute(r, endName, endLocation, start, idx, waypoints));
                 });
             }
 
-            // 2. Multi-corridor discovery if < 2 routes returned and single-segment
+            // 2. Multi-corridor discovery if < 2 routes returned and single-segment (query concurrently)
             if (waypoints.length === 0 && parsedRoutes.length < 3 && straightLineDist > 25000) {
                 const corridors = generateAlternativeCorridors(start, endLocation);
-                for (const corridor of corridors) {
+                const corridorPromises = corridors.map(async (corridor) => {
                     try {
                         const coords = [start, ...corridor.waypoints, endLocation]
                             .map(c => `${Number(c.lng.toFixed(5))},${Number(c.lat.toFixed(5))}`)
                             .join(';');
                         const radiuses = coords.split(';').map((_, idx, arr) => (idx === 0 || idx === arr.length - 1) ? '1500' : '10000').join(';');
-                        const cUrl = `${provider}/${coords}?overview=full&geometries=geojson&steps=true&radiuses=${radiuses}&continue_straight=false`;
-                        const cRes = await fetch(cUrl, { signal: AbortSignal.timeout(5000) });
+                        const continueStraight = options?.continueStraight ?? (options?.isReroute ? true : false);
+                        const cUrl = `${provider}/${coords}?overview=full&geometries=geojson&steps=true&radiuses=${radiuses}&continue_straight=${continueStraight ? 'true' : 'false'}`;
+                        const cRes = await fetch(cUrl, { signal: AbortSignal.timeout(2500) });
                         if (cRes.ok) {
                             const cData: OSRMResponse = await cRes.json();
                             if (cData.code === 'Ok' && cData.routes && cData.routes.length > 0) {
                                 const cRoute = parseOSRMRoute(cData.routes[0], endName, endLocation, start, parsedRoutes.length, waypoints);
-                                // Check if not a duplicate of existing route
-                                const isDup = parsedRoutes.some(p => Math.abs((p.distanceMeters || 0) - (cRoute.distanceMeters || 0)) < 1500 && Math.abs((p.durationMinutes || 0) - (cRoute.durationMinutes || 0)) < 5);
-                                if (!isDup) {
-                                    cRoute.routeType = corridor.type as any;
-                                    cRoute.summary = corridor.name;
-                                    parsedRoutes.push(cRoute);
-                                }
+                                return { cRoute, corridor };
                             }
                         }
                     } catch (err) {
                         // Corridor fetch failed, continue gracefully
+                    }
+                    return null;
+                });
+
+                const settledCorridors = await Promise.allSettled(corridorPromises);
+                for (const item of settledCorridors) {
+                    if (item.status === 'fulfilled' && item.value) {
+                        const { cRoute, corridor } = item.value;
+                        const isDup = parsedRoutes.some(p => Math.abs((p.distanceMeters || 0) - (cRoute.distanceMeters || 0)) < 1500 && Math.abs((p.durationMinutes || 0) - (cRoute.durationMinutes || 0)) < 5);
+                        if (!isDup) {
+                            cRoute.routeType = corridor.type as any;
+                            cRoute.summary = corridor.name;
+                            parsedRoutes.push(cRoute);
+                        }
                     }
                 }
             }
@@ -624,26 +673,28 @@ export async function fetchRouteOptions(
         });
     }
 
-    // Enrich routes with 100% real OpenStreetMap ground-truth traffic controls
-    for (const r of parsedRoutes) {
-        if (r.routeGeometry && r.routeGeometry.length > 0) {
-            try {
-                const realControls = await osmTrafficService.fetchControlsForRoute(r.routeGeometry);
-                r.trafficControls = realControls;
-                r.steps.forEach(step => {
-                    if (step.endLocation) {
-                        const match = realControls.find(c => getDistanceMeters(c.location, step.endLocation!) <= 35);
-                        if (match) {
-                            step.trafficControl = match.type;
-                        }
-                    }
-                });
-            } catch (e) {
-                console.warn('[OSRM] Real OSM traffic controls enrichment skipped:', e);
+    // Forward Route Prioritization / U-Turn Dead-End Suppression:
+    // If the primary route starts with a U-turn (modifier === 'uturn' or text contains "u-turn" / "turn around"),
+    // but an alternative route proceeds forward, prioritize the forward route!
+    if (parsedRoutes.length > 1 && (options?.isReroute || options?.continueStraight)) {
+        const isUTurnStep = (step?: RouteStep) => {
+            if (!step || !step.instruction) return false;
+            const text = step.instruction.toLowerCase();
+            return text.includes('u-turn') || text.includes('uturn') || text.includes('turn around');
+        };
+
+        const firstRouteHasUTurn = isUTurnStep(parsedRoutes[0].steps?.[0]) || isUTurnStep(parsedRoutes[0].steps?.[1]);
+        if (firstRouteHasUTurn) {
+            const forwardRouteIdx = parsedRoutes.findIndex((r, idx) => idx > 0 && !isUTurnStep(r.steps?.[0]) && !isUTurnStep(r.steps?.[1]));
+            if (forwardRouteIdx !== -1) {
+                console.log(`🔀 [OSRM] Demoting U-turn route in favor of forward path option (${parsedRoutes[forwardRouteIdx].summary})`);
+                const forwardRoute = parsedRoutes.splice(forwardRouteIdx, 1)[0];
+                parsedRoutes.unshift(forwardRoute);
             }
         }
     }
 
+    // Cache computed routes immediately so navigation & UI can render without waiting
     if (parsedRoutes.length > 0) {
         if (ROUTE_OPTIONS_CACHE.size > 50) {
             const firstKey = ROUTE_OPTIONS_CACHE.keys().next().value;
@@ -654,6 +705,31 @@ export async function fetchRouteOptions(
             timestamp: Date.now()
         });
     }
+
+    // Non-blocking background enrichment of traffic controls (stop signs, signals, cameras)
+    // Never delay primary route display to user for supplementary map annotations!
+    (async () => {
+        for (const r of parsedRoutes) {
+            if (r.routeGeometry && r.routeGeometry.length > 0) {
+                try {
+                    const realControls = await osmTrafficService.fetchControlsForRoute(r.routeGeometry);
+                    if (realControls && realControls.length > 0) {
+                        r.trafficControls = realControls;
+                        r.steps.forEach(step => {
+                            if (step.endLocation) {
+                                const match = realControls.find(c => getDistanceMeters(c.location, step.endLocation!) <= 35);
+                                if (match) {
+                                    step.trafficControl = match.type;
+                                }
+                            }
+                        });
+                    }
+                } catch (e) {
+                    // Silently ignore background enrichment error
+                }
+            }
+        }
+    })();
 
     return parsedRoutes;
 }
@@ -666,7 +742,15 @@ export async function getRouteFromOSRM(
     start: Location,
     endName: string,
     endLocation: Location,
-    options?: { avoidTolls?: boolean; avoidHighways?: boolean; waypoints?: RouteWaypoint[]; bypassCache?: boolean }
+    options?: {
+        avoidTolls?: boolean;
+        avoidHighways?: boolean;
+        waypoints?: RouteWaypoint[];
+        bypassCache?: boolean;
+        heading?: number;
+        continueStraight?: boolean;
+        isReroute?: boolean;
+    }
 ): Promise<NavigationRoute | null> {
     const routes = await fetchRouteOptions(start, endName, endLocation, options);
     if (routes && routes.length > 0) {
@@ -760,23 +844,6 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
             });
         }
 
-        let realControls: TrafficControlPoint[] = [];
-        if (decodedShape && decodedShape.length > 0) {
-            try {
-                realControls = await osmTrafficService.fetchControlsForRoute(decodedShape);
-                steps.forEach(step => {
-                    if (step.endLocation) {
-                        const match = realControls.find(c => getDistanceMeters(c.location, step.endLocation!) <= 35);
-                        if (match) {
-                            step.trafficControl = match.type;
-                        }
-                    }
-                });
-            } catch (e) {
-                console.warn('[Valhalla] Real OSM traffic controls enrichment skipped:', e);
-            }
-        }
-
         const fallbackRoute: NavigationRoute = {
             destinationName: endName,
             destinationLoc: endLocation,
@@ -784,9 +851,26 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
             steps: steps,
             totalDistance: formatDistance(data.trip.summary.length * 1609.34),
             totalTime: formatDuration(data.trip.summary.time),
-            routeGeometry: decodedShape,
-            trafficControls: realControls
+            routeGeometry: decodedShape
         };
+
+        if (decodedShape && decodedShape.length > 0) {
+            osmTrafficService.fetchControlsForRoute(decodedShape).then(realControls => {
+                if (realControls && realControls.length > 0) {
+                    fallbackRoute.trafficControls = realControls;
+                    steps.forEach(step => {
+                        if (step.endLocation) {
+                            const match = realControls.find(c => getDistanceMeters(c.location, step.endLocation!) <= 35);
+                            if (match) {
+                                step.trafficControl = match.type;
+                            }
+                        }
+                    });
+                }
+            }).catch(e => {
+                console.warn('[Valhalla] Real OSM traffic controls background enrichment skipped:', e);
+            });
+        }
 
         console.log('[Routing] ✅ Route via Valhalla with real OSM traffic infrastructure:', {
             steps: steps.length,
@@ -806,6 +890,22 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
  * Geocode a place name to coordinates using secure Cloud Proxy
  */
 export async function geocodePlace(query: string, nearLocation?: Location): Promise<Location | null> {
+    if (!query || query.trim().length === 0) return null;
+
+    // 0. Query Community Pins Database First: Override with crowdsourced verified entrance coordinates
+    try {
+        const communityPin = await contributionService.getCommunityPin(query.trim());
+        if (communityPin) {
+            const [lng, lat] = communityPin.coordinates && communityPin.coordinates.length === 2
+                ? communityPin.coordinates
+                : [communityPin.lng, communityPin.lat];
+            console.log(`📍 [geocodePlace] Overriding destination coordinates with community-verified data for "${query}": [${lat}, ${lng}]`);
+            return { lat, lng };
+        }
+    } catch (err) {
+        console.debug('[geocodePlace] Community pin lookup skipped:', err);
+    }
+
     if (isOffline()) {
         console.warn('[Geocode] 📴 Device is offline, skipping geocode request');
         return null;

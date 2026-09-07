@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "740093147434",
+    "firebase_url": "https://myway-gps-default-rtdb.firebaseio.com",
+    "project_id": "myway-gps",
+    "storage_bucket": "myway-gps.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:740093147434:android:0d6bb6b4d91ecd873ac653",
+        "android_client_info": {
+          "package_name": "com.mywaygps.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "740093147434-crr009ml9vtkgd6dpbhaqcmtrenfddjr.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mywaygps.app",
+            "certificate_hash": "bf0ee532407c07d4ac9f491371bedc3cb2546095"
+          }
+        },
+        {
+          "client_id": "740093147434-mdtorbehce0b5c1ia8cbhadapn4fna54.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCqocfrxs-Rg10rFLO-lwdNMwTSCaX8zrE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "740093147434-mdtorbehce0b5c1ia8cbhadapn4fna54.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -16,6 +16,7 @@ class AudioService {
     private synthesis: SpeechSynthesis | null = null;
     private voice: SpeechSynthesisVoice | null = null;
     private enabled: boolean = true;
+    private isMuted: boolean = false;
     private isSpeaking: boolean = false;
     private voiceReadyPromise: Promise<void> | null = null;
     private audioCtx: AudioContext | null = null;
@@ -23,13 +24,18 @@ class AudioService {
     private readonly IDLE_SUSPEND_DELAY_MS = 5000;
 
     constructor() {
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-            this.synthesis = window.speechSynthesis;
-            this.voiceReadyPromise = this.initVoices();
-            if (this.synthesis.onvoiceschanged !== undefined) {
-                this.synthesis.onvoiceschanged = () => {
-                    this.initVoices();
-                };
+        if (typeof window !== 'undefined') {
+            const savedMuted = localStorage.getItem('myway_voice_muted');
+            this.isMuted = savedMuted === 'true';
+
+            if ('speechSynthesis' in window) {
+                this.synthesis = window.speechSynthesis;
+                this.voiceReadyPromise = this.initVoices();
+                if (this.synthesis.onvoiceschanged !== undefined) {
+                    this.synthesis.onvoiceschanged = () => {
+                        this.initVoices();
+                    };
+                }
             }
         }
 
@@ -116,6 +122,22 @@ class AudioService {
         }
     }
 
+    public getIsMuted(): boolean {
+        return this.isMuted || !this.enabled;
+    }
+
+    public setMuted(muted: boolean): void {
+        this.isMuted = muted;
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem('myway_voice_muted', String(muted));
+            } catch {}
+        }
+        if (muted) {
+            this.cancel();
+        }
+    }
+
     /**
      * Request native Android/iOS audio session ducking
      */
@@ -148,12 +170,18 @@ class AudioService {
             if (Capacitor.isNativePlatform()) {
                 const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
                 await TextToSpeech.stop();
-            } else if (this.synthesis) {
+            }
+            if (this.synthesis) {
                 this.synthesis.cancel();
             }
         } catch {
             this.synthesis?.cancel();
         } finally {
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                try {
+                    window.speechSynthesis.cancel();
+                } catch {}
+            }
             await this.abandonNativeAudioFocus();
             if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('myway-audio-focus-end'));
@@ -161,11 +189,20 @@ class AudioService {
         }
     }
 
+    /**
+     * Play spoken audio instruction with strict mute check
+     */
+    public async playAudio(text: string): Promise<void> {
+        if (this.isMuted || !this.enabled || !text || !text.trim()) return;
+        return this.speak(text);
+    }
+
     public async speak(text: string): Promise<void> {
-        if (!this.enabled || !text || !text.trim()) return;
+        if (this.isMuted || !this.enabled || !text || !text.trim()) return;
 
         // Cancel any currently in-flight utterance first to guarantee no voices overlap
         await this.cancel();
+        if (this.isMuted || !this.enabled) return;
         this.isSpeaking = true;
 
         // Request native OS audio focus ducking (lowers Spotify, Apple Music, podcasts)
@@ -179,7 +216,17 @@ class AudioService {
         try {
             // 1. Native Mobile Platform (Android / iOS app)
             if (Capacitor.isNativePlatform()) {
+                if (this.isMuted || !this.enabled) {
+                    this.isSpeaking = false;
+                    await this.abandonNativeAudioFocus();
+                    return;
+                }
                 const { TextToSpeech, QueueStrategy } = await import('@capacitor-community/text-to-speech');
+                if (this.isMuted || !this.enabled) {
+                    this.isSpeaking = false;
+                    await this.abandonNativeAudioFocus();
+                    return;
+                }
                 await TextToSpeech.speak({
                     text,
                     lang: 'en-US',
@@ -209,8 +256,14 @@ class AudioService {
                 await this.voiceReadyPromise;
             }
 
+            if (this.isMuted || !this.enabled) {
+                this.isSpeaking = false;
+                await this.abandonNativeAudioFocus();
+                return;
+            }
+
             return new Promise<void>((resolve) => {
-                if (!this.synthesis) {
+                if (!this.synthesis || this.isMuted || !this.enabled) {
                     this.isSpeaking = false;
                     this.abandonNativeAudioFocus();
                     resolve();
@@ -307,7 +360,7 @@ class AudioService {
      * Reuses the managed AudioContext and schedules suspension upon completion.
      */
     public playChirp(frequency = 520, durationMs = 120): void {
-        if (!this.enabled || typeof window === 'undefined') return;
+        if (this.isMuted || !this.enabled || typeof window === 'undefined') return;
         try {
             const ctx = this.getAudioContext();
             if (!ctx) return;
@@ -348,7 +401,7 @@ class AudioService {
      * Automatically ducks background music on Android and iOS.
      */
     public async playAlertChime(): Promise<void> {
-        if (!this.enabled || typeof window === 'undefined') return;
+        if (this.isMuted || !this.enabled || typeof window === 'undefined') return;
         try {
             await this.requestNativeAudioFocus();
             const ctx = this.getAudioContext();

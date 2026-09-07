@@ -3,9 +3,12 @@ import { FamilyMember } from '../types';
 
 interface SafetyAlertsProps {
     members: FamilyMember[];
+    currentUserId?: string;
+    currentUserName?: string;
     onDismiss: (alertId: string) => void;
     onSendReminder: (memberId: string, type: 'charge' | 'checkin') => void;
     theme: 'light' | 'dark';
+    compact?: boolean;
 }
 
 interface Alert {
@@ -21,7 +24,15 @@ interface Alert {
     actionType?: 'charge' | 'checkin' | 'call' | 'navigate';
 }
 
-const SafetyAlerts: React.FC<SafetyAlertsProps> = ({ members, onDismiss, onSendReminder, theme, compact = false }) => {
+const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
+    members,
+    currentUserId,
+    currentUserName,
+    onDismiss,
+    onSendReminder,
+    theme,
+    compact = false
+}) => {
     const [alerts, setAlerts] = useState<Alert[]>([]);
     const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
 
@@ -30,27 +41,52 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({ members, onDismiss, onSendR
         const newAlerts: Alert[] = [];
 
         members.forEach(member => {
+            // Check if this member is the logged-in user
+            const isSelf = Boolean(
+                (currentUserId && member.id === currentUserId) ||
+                (currentUserName && member.name && member.name.trim().toLowerCase() === currentUserName.trim().toLowerCase()) ||
+                member.name?.trim().toLowerCase() === 'you' ||
+                (member as any).isCurrentUser
+            );
+
             // Low battery alert
             if (member.battery <= 15 && member.battery > 0) {
                 const alertId = `battery-${member.id}`;
                 if (!dismissedIds.has(alertId)) {
-                    newAlerts.push({
-                        id: alertId,
-                        type: 'low_battery',
-                        memberId: member.id,
-                        memberName: member.name,
-                        message: `${member.name}'s phone is at ${member.battery}%`,
-                        icon: '🔋',
-                        priority: member.battery <= 5 ? 'critical' : 'warning',
-                        timestamp: new Date(),
-                        actionLabel: 'Send Reminder',
-                        actionType: 'charge'
-                    });
+                    if (isSelf) {
+                        // For self: Inform user directly to charge their phone, do NOT prompt to remind oneself!
+                        newAlerts.push({
+                            id: alertId,
+                            type: 'low_battery',
+                            memberId: member.id,
+                            memberName: 'You',
+                            message: `Your phone battery is low (${member.battery}%). Please plug in your charger.`,
+                            icon: '🪫',
+                            priority: member.battery <= 5 ? 'critical' : 'warning',
+                            timestamp: new Date(),
+                            actionLabel: 'Got It',
+                            actionType: undefined
+                        });
+                    } else {
+                        // For other circle members: Offer Send Reminder action to family
+                        newAlerts.push({
+                            id: alertId,
+                            type: 'low_battery',
+                            memberId: member.id,
+                            memberName: member.name,
+                            message: `${member.name}'s phone is at ${member.battery}%`,
+                            icon: '🔋',
+                            priority: member.battery <= 5 ? 'critical' : 'warning',
+                            timestamp: new Date(),
+                            actionLabel: 'Send Reminder',
+                            actionType: 'charge'
+                        });
+                    }
                 }
             }
 
-            // Predictive destination (mock AI prediction)
-            if (member.status === 'Driving' && member.destination) {
+            // Predictive destination (only alert about other circle members)
+            if (!isSelf && member.status === 'Driving' && member.destination) {
                 const alertId = `predict-${member.id}`;
                 if (!dismissedIds.has(alertId)) {
                     newAlerts.push({
@@ -70,23 +106,36 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({ members, onDismiss, onSendR
             if (member.sosActive) {
                 const alertId = `sos-${member.id}`;
                 if (!dismissedIds.has(alertId)) {
-                    newAlerts.push({
-                        id: alertId,
-                        type: 'sos_alert',
-                        memberId: member.id,
-                        memberName: member.name,
-                        message: `🚨 EMERGENCY: ${member.name} needs help!`,
-                        icon: '🛡️',
-                        priority: 'critical',
-                        timestamp: new Date(),
-                        actionLabel: 'Navigate to Them',
-                        actionType: 'navigate'
-                    });
+                    if (isSelf) {
+                        newAlerts.push({
+                            id: alertId,
+                            type: 'sos_alert',
+                            memberId: member.id,
+                            memberName: 'You',
+                            message: `🚨 EMERGENCY SOS: Broadcasting your live location to your circle!`,
+                            icon: '🛡️',
+                            priority: 'critical',
+                            timestamp: new Date()
+                        });
+                    } else {
+                        newAlerts.push({
+                            id: alertId,
+                            type: 'sos_alert',
+                            memberId: member.id,
+                            memberName: member.name,
+                            message: `🚨 EMERGENCY: ${member.name} needs help!`,
+                            icon: '🛡️',
+                            priority: 'critical',
+                            timestamp: new Date(),
+                            actionLabel: 'Navigate to Them',
+                            actionType: 'navigate'
+                        });
+                    }
                 }
             }
 
-            // Arrival notification (Existing)
-            if (member.status === 'Arrived' && member.currentPlace) {
+            // Arrival notification (only for other circle members)
+            if (!isSelf && member.status === 'Arrived' && member.currentPlace) {
                 const alertId = `arrived-${member.id}-${member.currentPlace}`;
                 if (!dismissedIds.has(alertId)) {
                     const wayText = member.wayType ? member.wayType.replace('Way', ' Way') : 'their Way';
@@ -105,7 +154,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({ members, onDismiss, onSendR
         });
 
         setAlerts(newAlerts);
-    }, [members, dismissedIds]);
+    }, [members, dismissedIds, currentUserId, currentUserName]);
 
     const handleDismiss = (alertId: string) => {
         setDismissedIds(prev => new Set(prev).add(alertId));
@@ -169,8 +218,10 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({ members, onDismiss, onSendR
                             <button
                                 onClick={() => handleAction(alert)}
                                 className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition-all hover:scale-105 shadow-lg
-                  ${alert.type === 'low_battery'
+                                    ${alert.actionType === 'charge'
                                         ? 'bg-red-600 text-white hover:bg-red-700 shadow-red-500/40'
+                                        : alert.actionLabel === 'Got It'
+                                        ? (theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white border border-white/15' : 'bg-slate-200 hover:bg-slate-300 text-slate-800')
                                         : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white border-transparent hover:shadow-lg'}`}
                             >
                                 {alert.actionLabel}

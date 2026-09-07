@@ -15,6 +15,7 @@ export interface GeolocationState {
     accuracy: number;
     heading: number | null;
     speed: number | null;
+    rawSpeedMps?: number | null;
     timestamp: number;
     signalQuality: 'excellent' | 'good' | 'poor' | 'searching';
 }
@@ -182,6 +183,22 @@ class GeolocationService {
 
     public getTrackingTier(): TrackingTier {
         return this.trackingTier;
+    }
+
+    /** Returns the most recent smoothed geolocation telemetry state */
+    public getLastTelemetry(): GeolocationState | null {
+        return this.lastTelemetryState;
+    }
+
+    /** Returns current speed in meters per second (m/s) from Geolocation API coords.speed */
+    public getCurrentSpeedMps(): number {
+        if (this.lastTelemetryState?.rawSpeedMps != null && !isNaN(this.lastTelemetryState.rawSpeedMps)) {
+            return Math.max(0, this.lastTelemetryState.rawSpeedMps);
+        }
+        if (this.lastTelemetryState?.speed != null && !isNaN(this.lastTelemetryState.speed)) {
+            return Math.max(0, this.lastTelemetryState.speed / 2.23694);
+        }
+        return 0;
     }
 
     /** Run headless geofence and telemetry processing directly from background GPS stream */
@@ -599,6 +616,7 @@ class GeolocationService {
             accuracy,
             heading,
             speed: speedMph,
+            rawSpeedMps: rawSpeedMps != null && !isNaN(rawSpeedMps) ? rawSpeedMps : (speedMph ? speedMph / 2.23694 : 0),
             timestamp,
             signalQuality: quality
         };

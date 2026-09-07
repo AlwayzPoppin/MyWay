@@ -100,7 +100,7 @@ const OverlayManager: React.FC<OverlayManagerProps> = ({ children, id = 'myway-p
     const active = isActive(overlayId);
 
     return createPortal(
-        <div className={`contents transition-all duration-300 ${active ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none scale-95'}`}>
+        <div className={`contents pointer-events-none transition-all duration-300 ${active ? 'opacity-100' : 'opacity-0 scale-95'}`}>
             {children}
         </div>,
         portalRoot

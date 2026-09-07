@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import VehicleGarageModule from './VehicleGarageModule';
+import TaxExportView from './TaxExportView';
 import { vehicleFuelService, RollingFuelReport } from '../services/vehicleFuelService';
 import { getSavedTrips, formatDuration } from '../services/tripHistoryService';
 import { Vehicle, Trip } from '../types';
@@ -24,7 +25,7 @@ interface MaintenancePanelProps {
 
 type TimeFilter = 'today' | 'week' | 'month' | 'year' | 'lifetime';
 
-interface ManualExpense {
+export interface ManualExpense {
     id: string;
     date: string;
     category: 'gas' | 'oil_change' | 'tires' | 'repair' | 'insurance' | 'car_wash' | 'registration' | 'other';
@@ -35,7 +36,7 @@ interface ManualExpense {
 
 const EXPENSE_STORAGE_KEY = 'myway_maintenance_expenses';
 
-const getCategoryIcon = (cat: ManualExpense['category']) => {
+export const getCategoryIcon = (cat: ManualExpense['category']) => {
     switch (cat) {
         case 'gas': return '⛽';
         case 'oil_change': return '🛢️';
@@ -48,7 +49,7 @@ const getCategoryIcon = (cat: ManualExpense['category']) => {
     }
 };
 
-const getCategoryLabel = (cat: ManualExpense['category']) => {
+export const getCategoryLabel = (cat: ManualExpense['category']) => {
     switch (cat) {
         case 'gas': return 'Gas/Fuel';
         case 'oil_change': return 'Oil Change';
@@ -102,6 +103,7 @@ type MakeCategoryFilter = 'all' | 'popular' | 'american' | 'asian' | 'european' 
 
 const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) => {
     const [activeTab, setActiveTab] = useState<'garage' | 'maintenance'>('garage');
+    const [maintenanceSubTab, setMaintenanceSubTab] = useState<'overview' | 'tax_export'>('overview');
     const [timeFilter, setTimeFilter] = useState<TimeFilter>('month');
     const [showAddExpense, setShowAddExpense] = useState(false);
     const [showGarage, setShowGarage] = useState(false);
@@ -156,10 +158,14 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
 
     const isDark = theme === 'dark';
 
-    // Auto-open wizard if user has no vehicles
+    const [wizardDismissed, setWizardDismissed] = useState(false);
+
+    // Auto-open wizard only if user is on maintenance tab and has no vehicles
     useEffect(() => {
-        if (!hasVehicles) setShowWizard(true);
-    }, [hasVehicles]);
+        if (!hasVehicles && !wizardDismissed && activeTab === 'maintenance') {
+            setShowWizard(true);
+        }
+    }, [hasVehicles, wizardDismissed, activeTab]);
 
     // Current period summary
     const periodSummary = useMemo(() => {
@@ -390,6 +396,20 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
     /* ─── Vehicle Setup Wizard Render ─── */
     const renderWizard = () => (
         <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4">
+            {/* Skip / Close Header */}
+            <div className="flex items-center justify-between">
+                <button
+                    type="button"
+                    onClick={() => {
+                        setShowWizard(false);
+                        setWizardDismissed(true);
+                    }}
+                    className="text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                >
+                    ← Skip / Return to Garage
+                </button>
+            </div>
+
             {/* Progress Bar */}
             <div className="flex items-center gap-2">
                 {[1, 2, 3].map(s => (
@@ -896,6 +916,43 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                     /* Dashboard Mode */
                     <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4">
 
+                        {/* Maintenance Sub-Tabs: Overview vs Tax Summary & Export */}
+                        <div className={`flex p-1 rounded-xl border gap-1 shrink-0 ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
+                            <button
+                                type="button"
+                                onClick={() => setMaintenanceSubTab('overview')}
+                                className={`flex-1 py-1.5 px-3 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                    maintenanceSubTab === 'overview'
+                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                        : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                <span className="text-xs">🔧</span>
+                                <span>Maintenance & Expenses</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setMaintenanceSubTab('tax_export')}
+                                className={`flex-1 py-1.5 px-3 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                    maintenanceSubTab === 'tax_export'
+                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                        : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                <span className="text-xs">📊</span>
+                                <span>Tax Summary & Export</span>
+                            </button>
+                        </div>
+
+                        {maintenanceSubTab === 'tax_export' ? (
+                            <TaxExportView
+                                theme={theme}
+                                trips={trips}
+                                expenses={expenses}
+                                vehicle={hasVehicles ? vehicle : null}
+                            />
+                        ) : (
+                            <>
                         {/* Active Vehicle Card with Odometer and Quick Controls */}
                         {hasVehicles ? (
                             <div className={`${card} p-4`}>
@@ -949,14 +1006,13 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                                                         <span className={`text-[9px] ${subtext}`}>{v.mpg} MPG • {v.fuelType}</span>
                                                     </div>
                                                 </button>
-                                                {allVehicles.length > 1 && (
-                                                    <button
-                                                        onClick={() => { if (window.confirm(`Remove ${v.make} ${v.model}?`)) handleDeleteVehicle(v.id); }}
-                                                        className="text-[10px] text-red-400 hover:text-red-300 p-1 transition-all"
-                                                    >
-                                                        🗑️
-                                                    </button>
-                                                )}
+                                                <button
+                                                    onClick={() => { if (window.confirm(`Remove ${v.make} ${v.model}?`)) handleDeleteVehicle(v.id); }}
+                                                    className="text-[10px] text-red-400 hover:text-red-300 p-1 transition-all cursor-pointer"
+                                                    title={`Remove ${v.make} ${v.model}`}
+                                                >
+                                                    🗑️
+                                                </button>
                                             </div>
                                         ))}
                                         <button
@@ -1170,8 +1226,11 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                                                             setActiveServiceItem(item);
                                                             setServiceCost('');
                                                             setServiceNotes('');
+                                                            if (editingIntervalItem?.id === item.id) {
+                                                                setEditingIntervalItem(null);
+                                                            }
                                                         }}
-                                                        className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
+                                                        className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${
                                                             isOverdue || isDueSoon
                                                                 ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm'
                                                                 : isDark ? 'bg-white/5 text-slate-300 hover:bg-white/10' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -1181,18 +1240,127 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                                                         <span>Log Service Done</span>
                                                     </button>
                                                     <button
+                                                        type="button"
                                                         onClick={() => {
-                                                            setEditingIntervalItem(item);
-                                                            setCustomIntervalInput(item.intervalMiles.toString());
+                                                            if (editingIntervalItem?.id === item.id) {
+                                                                setEditingIntervalItem(null);
+                                                            } else {
+                                                                setEditingIntervalItem(item);
+                                                                setCustomIntervalInput(item.intervalMiles.toString());
+                                                                if (activeServiceItem?.id === item.id) {
+                                                                    setActiveServiceItem(null);
+                                                                }
+                                                            }
                                                         }}
-                                                        className={`px-2 py-1 rounded-lg text-[9px] font-bold transition-colors ${
-                                                            isDark ? 'text-slate-400 hover:text-indigo-400' : 'text-slate-500 hover:text-indigo-600'
+                                                        className={`px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${
+                                                            editingIntervalItem?.id === item.id
+                                                                ? 'bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-400'
+                                                                : isDark
+                                                                    ? 'text-slate-400 hover:text-indigo-400 hover:bg-white/5'
+                                                                    : 'text-slate-500 hover:text-indigo-600 hover:bg-slate-200/60'
                                                         }`}
                                                         title="Adjust Service Interval"
                                                     >
                                                         ⚙️ Interval
                                                     </button>
                                                 </div>
+
+                                                {/* Inline Interval Editor Accordion */}
+                                                {editingIntervalItem?.id === item.id && (
+                                                    <div
+                                                        ref={(el) => {
+                                                            if (el) {
+                                                                // Bring smoothly into view without scrolling away from card
+                                                                el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                                            }
+                                                        }}
+                                                        className={`mt-2.5 pt-2.5 border-t space-y-2.5 rounded-xl p-3 transition-all animate-in fade-in slide-in-from-top-2 duration-200 ${
+                                                            isDark
+                                                                ? 'bg-slate-800/80 border-indigo-500/30'
+                                                                : 'bg-indigo-50/70 border-indigo-200/80 shadow-xs'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                <span className="text-xs">⚙️</span>
+                                                                <h4 className={`text-[11px] font-black truncate ${text}`}>
+                                                                    Adjust {item.title} Interval
+                                                                </h4>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setEditingIntervalItem(null)}
+                                                                className={`text-xs p-1 rounded-md transition-colors cursor-pointer ${
+                                                                    isDark ? 'text-slate-400 hover:text-white hover:bg-white/10' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-200/60'
+                                                                }`}
+                                                                title="Close"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </div>
+
+                                                        <div>
+                                                            <label className={`text-[9px] font-bold uppercase tracking-wider block mb-1 ${subtext}`}>
+                                                                Interval in Miles
+                                                            </label>
+                                                            <div className="relative">
+                                                                <input
+                                                                    type="number"
+                                                                    step="500"
+                                                                    min="500"
+                                                                    max="100000"
+                                                                    value={customIntervalInput}
+                                                                    onChange={(e) => setCustomIntervalInput(e.target.value)}
+                                                                    className={`${inputCls} text-center font-black text-sm py-1.5 pr-12 w-full rounded-xl`}
+                                                                    placeholder="e.g. 5000"
+                                                                    autoFocus
+                                                                />
+                                                                <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold pointer-events-none ${subtext}`}>
+                                                                    mi
+                                                                </span>
+                                                            </div>
+
+                                                            {/* Quick Presets */}
+                                                            <div className="flex flex-wrap gap-1.5 mt-2">
+                                                                {[3000, 5000, 6000, 7500, 10000, 15000, 20000].map(val => (
+                                                                    <button
+                                                                        key={val}
+                                                                        type="button"
+                                                                        onClick={() => setCustomIntervalInput(val.toString())}
+                                                                        className={`px-2 py-1 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${
+                                                                            customIntervalInput === val.toString()
+                                                                                ? 'bg-indigo-600 text-white shadow-xs'
+                                                                                : isDark
+                                                                                    ? 'bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white border border-white/5'
+                                                                                    : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200 shadow-2xs'
+                                                                        }`}
+                                                                    >
+                                                                        {val.toLocaleString()} mi
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex gap-2 pt-1">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setEditingIntervalItem(null)}
+                                                                className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                                                                    isDark ? 'bg-white/5 text-slate-300 hover:bg-white/10' : 'bg-slate-200/80 text-slate-700 hover:bg-slate-200'
+                                                                }`}
+                                                            >
+                                                                Cancel
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={handleSaveInterval}
+                                                                className="flex-1 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-md shadow-indigo-500/25 transition-all active:scale-95 cursor-pointer"
+                                                            >
+                                                                Save Interval
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -1280,58 +1448,6 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                             </div>
                         )}
 
-                        {/* ────────────────────────────────────────────────────────────
-                            EDIT INTERVAL MODAL / SHEET
-                            ──────────────────────────────────────────────────────────── */}
-                        {editingIntervalItem && (
-                            <div className={`p-4 rounded-2xl border space-y-3 animate-in slide-in-from-bottom-2 ${
-                                isDark ? 'bg-slate-800/90 border-indigo-500/40' : 'bg-indigo-50/90 border-indigo-300 shadow-lg'
-                            }`}>
-                                <div className="flex items-center justify-between">
-                                    <h4 className={`text-xs font-black ${text}`}>
-                                        ⚙️ Adjust {editingIntervalItem.title} Interval
-                                    </h4>
-                                    <button onClick={() => setEditingIntervalItem(null)} className="text-xs text-slate-400">✕</button>
-                                </div>
-
-                                <div>
-                                    <label className={`text-[9px] font-bold uppercase ${subtext}`}>Interval in Miles</label>
-                                    <input
-                                        type="number"
-                                        step="500"
-                                        min="500"
-                                        max="100000"
-                                        value={customIntervalInput}
-                                        onChange={(e) => setCustomIntervalInput(e.target.value)}
-                                        className={`${inputCls} text-center font-black text-base mt-1`}
-                                    />
-                                    <div className="flex flex-wrap gap-1.5 mt-2">
-                                        {[3000, 5000, 6000, 7500, 10000, 15000, 20000].map(val => (
-                                            <button
-                                                key={val}
-                                                onClick={() => setCustomIntervalInput(val.toString())}
-                                                className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                                                    customIntervalInput === val.toString()
-                                                        ? 'bg-indigo-600 text-white'
-                                                        : isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-200 text-slate-700'
-                                                }`}
-                                            >
-                                                {val.toLocaleString()} mi
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div className="flex gap-2 pt-1">
-                                    <button onClick={() => setEditingIntervalItem(null)} className={`flex-1 py-2 rounded-xl text-xs font-bold ${isDark ? 'bg-white/5 text-slate-300' : 'bg-slate-200 text-slate-700'}`}>
-                                        Cancel
-                                    </button>
-                                    <button onClick={handleSaveInterval} className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold">
-                                        Save Interval
-                                    </button>
-                                </div>
-                            </div>
-                        )}
 
                         {/* Time Filter Tabs */}
                         <div className={`flex rounded-xl border p-1 gap-0.5 ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
@@ -1366,10 +1482,17 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
                                 <p className={`text-lg font-black text-emerald-400`}>${periodSummary.totalMoneySaved.toFixed(2)}</p>
                                 <p className={`text-[9px] mt-1 ${subtext}`}>Optimized routes</p>
                             </div>
-                            <div className={`${card} p-3.5`}>
-                                <p className={`text-[9px] font-bold uppercase tracking-wider mb-1 ${subtext}`}>📄 IRS Deduction</p>
+                            <div
+                                onClick={() => setMaintenanceSubTab('tax_export')}
+                                className={`${card} p-3.5 cursor-pointer hover:border-indigo-500/40 transition-all group`}
+                                title="Open Tax Summary & Mileage Export Hub"
+                            >
+                                <div className="flex items-center justify-between mb-1">
+                                    <p className={`text-[9px] font-bold uppercase tracking-wider ${subtext}`}>📄 IRS Deduction</p>
+                                    <span className="text-[9px] font-bold text-indigo-400 group-hover:translate-x-0.5 transition-transform">Tax Hub →</span>
+                                </div>
                                 <p className={`text-lg font-black text-indigo-400`}>${deductibleMileage.toFixed(2)}</p>
-                                <p className={`text-[9px] mt-1 ${subtext}`}>${IRS_MILEAGE_RATE}/mi rate</p>
+                                <p className={`text-[9px] mt-1 ${subtext}`}>${IRS_MILEAGE_RATE}/mi • Tap for Tax Hub</p>
                             </div>
                         </div>
 
@@ -1543,17 +1666,29 @@ const MaintenancePanel: React.FC<MaintenancePanelProps> = ({ theme, onClose }) =
 
                         {/* Gig Driver Tax Tip */}
                         <div className={`rounded-2xl border p-4 ${isDark ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-100'}`}>
-                            <div className="flex items-start gap-3">
-                                <span className="text-xl shrink-0">💡</span>
-                                <div>
-                                    <p className={`text-xs font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-800'}`}>Gig Driver Tax Tip</p>
-                                    <p className={`text-[10px] mt-1 leading-relaxed ${isDark ? 'text-emerald-400/80' : 'text-emerald-700'}`}>
-                                        Track your miles! The 2024 IRS standard mileage rate is <strong>${IRS_MILEAGE_RATE}/mile</strong>. 
-                                        Your {timeFilter === 'lifetime' ? 'total' : timeFilter} deductible amount: <strong>${deductibleMileage.toFixed(2)}</strong> for {periodSummary.totalDistanceMiles.toFixed(1)} business miles.
-                                    </p>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-3">
+                                    <span className="text-xl shrink-0">💡</span>
+                                    <div>
+                                        <p className={`text-xs font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-800'}`}>Gig Driver Tax Tip</p>
+                                        <p className={`text-[10px] mt-1 leading-relaxed ${isDark ? 'text-emerald-400/80' : 'text-emerald-700'}`}>
+                                            Track your miles! The 2024–2026 IRS standard mileage rate is <strong>${IRS_MILEAGE_RATE}/mile</strong>. 
+                                            Your {timeFilter === 'lifetime' ? 'total' : timeFilter} deductible amount: <strong>${deductibleMileage.toFixed(2)}</strong> for {periodSummary.totalDistanceMiles.toFixed(1)} business miles.
+                                        </p>
+                                    </div>
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setMaintenanceSubTab('tax_export')}
+                                    className="shrink-0 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer"
+                                >
+                                    Tax Export →
+                                </button>
                             </div>
                         </div>
+
+                            </>
+                        )}
 
                     </div>
                 )}

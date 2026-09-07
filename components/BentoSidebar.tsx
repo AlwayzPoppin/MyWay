@@ -1,5 +1,6 @@
 import React from 'react';
-import { FamilyMember, Place, Location } from '../types';
+import { FamilyMember, Place, Location, ParkedVehiclePlace } from '../types';
+import { parkingService } from '../services/parkingService';
 import CircleManager from './CircleManager';
 import HoldToActivate from './HoldToActivate';
 import ActivityLog from './ActivityLog';
@@ -7,6 +8,49 @@ import { getDistanceMeters, getDistanceMiles } from '../utils/geo';
 import { convoyService } from '../services/convoyService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { FamilyCircle, getCircleColor } from '../services/authService';
+import { MemberStatusText } from '../utils/memberStatus';
+import { MemberAvatarWithRing, AddMemberButton } from './MemberCard';
+import {
+    Settings,
+    Shield,
+    Fuel,
+    Navigation,
+    Users,
+    MapPin,
+    Battery,
+    MessageSquare,
+    Bell,
+    Share2,
+    Wrench,
+    Trophy,
+    AlertTriangle,
+    Sparkles,
+    ChevronLeft,
+    Car,
+    Radio,
+    Home,
+    Briefcase,
+    Edit3,
+    Trash2,
+    EyeOff,
+    GraduationCap,
+    Clock,
+    Building2,
+    Dumbbell,
+    Utensils,
+    Coffee
+} from 'lucide-react';
+
+const SIDEBAR_PLACE_CATEGORIES = [
+    { type: 'home', icon: '🏠', iconComp: Home, label: 'Home' },
+    { type: 'work', icon: '💼', iconComp: Briefcase, label: 'Work' },
+    { type: 'school', icon: '🏫', iconComp: GraduationCap, label: 'School' },
+    { type: 'gym', icon: '🏋️', iconComp: Dumbbell, label: 'Gym' },
+    { type: 'food', icon: '🍔', iconComp: Utensils, label: 'Food' },
+    { type: 'coffee', icon: '☕', iconComp: Coffee, label: 'Coffee' },
+    { type: 'gas', icon: '⛽', iconComp: Fuel, label: 'Gas' },
+    { type: 'other', icon: '📍', iconComp: MapPin, label: 'Other' },
+];
 
 interface BentoSidebarProps {
     members: FamilyMember[];
@@ -22,7 +66,6 @@ interface BentoSidebarProps {
     inviteCode?: string;
     onCreateCircle: (name: string) => Promise<any>;
     onJoinCircle: (code: string) => Promise<any>;
-    avgGasPrice?: string;
     showNotification?: (msg: string, duration?: number) => void;
     onOpenSettings?: () => void;
     onOpenTripHistory?: () => void;
@@ -35,6 +78,7 @@ interface BentoSidebarProps {
     activities?: any[];
     onResolveSOS?: (id: string, memberId?: string) => void;
     userPlaces?: Place[];
+    parkedVehicle?: ParkedVehiclePlace | null;
     selectedPlaceId?: string | null;
     onSelectPlace?: (place: Place) => void;
     onAddPlace?: (place: Omit<Place, 'id'>) => void;
@@ -59,7 +103,6 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     inviteCode,
     onCreateCircle,
     onJoinCircle,
-    avgGasPrice = '$3.45',
     showNotification,
     onOpenSettings,
     onOpenTripHistory,
@@ -72,6 +115,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     activities = [],
     onResolveSOS = () => {},
     userPlaces = [],
+    parkedVehicle,
     selectedPlaceId,
     onSelectPlace,
     onAddPlace,
@@ -87,15 +131,32 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     const [customPlaceName, setCustomPlaceName] = React.useState('');
     const [customPlaceIcon, setCustomPlaceIcon] = React.useState('📍');
     const [customPlaceType, setCustomPlaceType] = React.useState<Place['type']>('custom');
-    const getStatusIcon = (status: string, currentPlace?: string) => {
-        if (currentPlace && status === 'Stationary') return '🏠';
+
+    const renderPlaceIcon = (icon?: string) => {
+        switch (icon) {
+            case '🏠': return <Home className="w-5 h-5 text-indigo-400 shrink-0" />;
+            case '💼':
+            case '🏢': return <Briefcase className="w-5 h-5 text-indigo-400 shrink-0" />;
+            case '🏫':
+            case '🎓': return <GraduationCap className="w-5 h-5 text-indigo-400 shrink-0" />;
+            case '🏋️':
+            case '💪': return <Dumbbell className="w-5 h-5 text-indigo-400 shrink-0" />;
+            case '🍔': return <Utensils className="w-5 h-5 text-indigo-400 shrink-0" />;
+            case '☕': return <Coffee className="w-5 h-5 text-indigo-400 shrink-0" />;
+            case '⛽': return <Fuel className="w-5 h-5 text-indigo-400 shrink-0" />;
+            default: return <MapPin className="w-5 h-5 text-indigo-400 shrink-0" />;
+        }
+    };
+
+    const renderStatusIcon = (status: string, currentPlace?: string) => {
+        if (currentPlace && status === 'Stationary') return <Home className="w-2.5 h-2.5 text-indigo-400 shrink-0" />;
         switch (status) {
-            case 'Driving': return '🚗';
-            case 'Walking': return '🚶';
-            case 'Moving': return '🚶';
-            case 'Stationary': return '📍';
-            case 'Offline': return '💤';
-            default: return '📍';
+            case 'Driving': return <Car className="w-2.5 h-2.5 text-sky-400 shrink-0" />;
+            case 'Walking':
+            case 'Moving': return <Navigation className="w-2.5 h-2.5 text-emerald-400 shrink-0" />;
+            case 'Stationary': return <MapPin className="w-2.5 h-2.5 text-emerald-400 shrink-0" />;
+            case 'Offline': return <Clock className="w-2.5 h-2.5 text-slate-400 shrink-0" />;
+            default: return <MapPin className="w-2.5 h-2.5 text-slate-400 shrink-0" />;
         }
     };
 
@@ -105,6 +166,17 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
         if (miles < 0.1) return `${Math.round(miles * 5280)} ft away`;
         if (miles < 10) return `${miles.toFixed(1)} mi away`;
         return `${Math.round(miles)} mi away`;
+    };
+
+    const handleAddMember = () => {
+        if (onOpenInviteShare) {
+            onOpenInviteShare();
+        } else if (onOpenCircleSettings) {
+            onOpenCircleSettings('invite');
+        } else if (inviteCode) {
+            navigator.clipboard?.writeText(inviteCode);
+            if (showNotification) showNotification(`Invite code ${inviteCode} copied to clipboard!`);
+        }
     };
 
     return (
@@ -124,7 +196,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                             ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                         title="Settings"
                     >
-                        <span className="text-xs">⚙️</span>
+                        <Settings className="w-4 h-4 text-slate-400" />
                     </button>
                 )}
                 {/* Collapse Toggle */}
@@ -134,9 +206,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                         ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                     title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
                 >
-                    <span className={`text-xs transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`}>
-                        ◀️
-                    </span>
+                    <ChevronLeft className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`} />
                 </button>
             </div>
 
@@ -235,8 +305,9 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                             className={`min-w-0 flex-1 ${onOpenCircleSettings ? 'cursor-pointer group' : ''}`}
                                             title="Switch or Manage Circles"
                                         >
-                                            <div className="flex items-center gap-1 text-[10px] text-indigo-400 font-bold uppercase tracking-wider group-hover:text-indigo-300 transition-colors">
-                                                <span>👥 {circleName || 'Family Circle'}</span>
+                                            <div className="flex items-center gap-1.5 text-[10px] text-indigo-400 font-bold uppercase tracking-wider group-hover:text-indigo-300 transition-colors">
+                                                <Users className="w-3.5 h-3.5 shrink-0" />
+                                                <span>{circleName || 'Family Circle'}</span>
                                                 {onOpenCircleSettings && <span className="text-[8px]">▾</span>}
                                             </div>
                                             <h3 className={`text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
@@ -248,12 +319,12 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                             {onOpenCircleSettings && (
                                                 <button
                                                     onClick={() => onOpenCircleSettings('manage')}
-                                                    className={`px-2.5 py-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex items-center gap-1 cursor-pointer ${
+                                                    className={`px-2.5 py-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer ${
                                                         theme === 'dark' ? 'bg-white/10 hover:bg-white/15 text-slate-200' : 'bg-white hover:bg-slate-100 text-slate-700 shadow-sm'
                                                     }`}
                                                     title="Circle Settings & Management"
                                                 >
-                                                    <span>⚙️</span>
+                                                    <Settings className="w-3.5 h-3.5 shrink-0" />
                                                     <span>Settings</span>
                                                 </button>
                                             )}
@@ -263,7 +334,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         key={m.id}
                                                         src={getSafeAvatarUrl(m.avatar, m.name || m.id)}
                                                         onError={(e) => {
-                                                            (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(m.name || m.id);
+                                                             (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(m.name || m.id);
                                                         }}
                                                         alt={m.name}
                                                         className={`w-7 h-7 rounded-full border-2 ${theme === 'dark' ? 'border-slate-800 bg-slate-800' : 'border-white bg-slate-100'} shadow-sm object-cover`}
@@ -286,7 +357,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     : theme === 'dark' ? 'bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300' : 'bg-slate-100 border border-slate-200 text-slate-700'
                                             }`}
                                         >
-                                            <span>✨</span>
+                                            <Sparkles className="w-3.5 h-3.5 shrink-0" />
                                             <span>All Groups ({members.length})</span>
                                         </button>
                                         {userCircles.map(c => {
@@ -329,7 +400,15 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                         return (
                                         <div
                                             key={member.id}
+                                            role="button"
+                                            tabIndex={0}
                                             onClick={() => onSelect(member.id)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    onSelect(member.id);
+                                                }
+                                            }}
                                             className={`group relative flex items-center gap-3 rounded-2xl transition-all cursor-pointer border
                                             ${isCollapsed ? 'p-1.5 justify-center' : 'p-3'}
                                             ${isUnresolved
@@ -344,49 +423,41 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 }`}
                                             title={isCollapsed 
                                                 ? (isUnresolved
-                                                    ? `${member.name} • 📡 Locating…`
+                                                    ? `${member.name} • Locating…`
                                                     : member.currentTrip
-                                                        ? `${member.name} • 🚗 Driving to ${member.currentTrip.destinationName} (${member.currentTrip.totalTime})`
+                                                        ? `${member.name} • Driving to ${member.currentTrip.destinationName} (${member.currentTrip.totalTime})`
                                                         : member.name)
                                                 : undefined}
                                         >
-                                            <div className="relative shrink-0">
-                                                <img
-                                                    src={getSafeAvatarUrl(member.avatar, member.name || member.id)}
-                                                    onError={(e) => {
-                                                        (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name || member.id);
-                                                    }}
-                                                    alt={member.name}
-                                                    style={{ borderColor: isUnresolved ? '#f59e0b' : memberCircleHex }}
-                                                    className={`rounded-xl object-cover transition-all border-2 ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-100'}
-                                                      ${isCollapsed ? 'w-10 h-10' : 'w-12 h-12'}
-                                                      ${selectedId === member.id ? `ring-2 ring-indigo-500 ring-offset-2 ${theme === 'dark' ? 'ring-offset-slate-900' : 'ring-offset-white'}` : ''}
-                                                      ${member.isGhostMode ? 'blur-sm grayscale opacity-70' : ''}
-                                                      ${isUnresolved ? 'saturate-75' : ''}
-                                                    `}
+                                            <div 
+                                                className="cursor-pointer shrink-0 transition-transform group-hover:scale-105 active:scale-95"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onSelect(member.id);
+                                                }}
+                                            >
+                                                <MemberAvatarWithRing
+                                                    member={member}
+                                                    size={isCollapsed ? 'sm' : 'md'}
+                                                    theme={theme}
+                                                    isSelected={selectedId === member.id}
+                                                    isUnresolved={isUnresolved}
+                                                    circleColor={memberCircleHex}
+                                                    renderStatusBadge={true}
                                                 />
-                                                <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] border ${
-                                                    isUnresolved
-                                                        ? 'bg-amber-500 text-slate-950 font-bold border-white/20 animate-pulse'
-                                                        : member.currentTrip 
-                                                            ? 'bg-indigo-600 border-white text-white animate-pulse shadow-md' 
-                                                            : theme === 'dark' ? 'bg-slate-800 border-white/10' : 'bg-white border-slate-200 shadow-sm'
-                                                }`}>
-                                                    {isUnresolved ? '📡' : member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
-                                                </div>
-
-                                                {member.isGhostMode && (
-                                                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-xl backdrop-blur-[1px]">
-                                                        <span className="text-base drop-shadow-md">🛡️</span>
-                                                    </div>
-                                                )}
                                             </div>
 
                                             {!isCollapsed && (
                                                 <div className="flex-1 text-left min-w-0 animate-in fade-in slide-in-from-left-2">
                                                     <div className="flex items-center justify-between gap-1">
                                                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                                                            <h3 className={`font-black text-sm tracking-tight truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                                            <h3 
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onSelect(member.id);
+                                                                }}
+                                                                className={`font-black text-sm tracking-tight truncate cursor-pointer hover:underline ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}
+                                                            >
                                                                 {member.name}
                                                             </h3>
                                                             {isUnresolved ? (
@@ -424,10 +495,6 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                             ) : null}
                                                         </div>
                                                         <div className="flex items-center gap-1 shrink-0">
-                                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0
-                                                                ${member.battery <= 20 ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
-                                                                {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
-                                                            </span>
                                                             {onOpenMessages && (
                                                                 <button
                                                                     type="button"
@@ -439,7 +506,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                         ${theme === 'dark' ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/30' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100 shadow-sm'}`}
                                                                     title={`Direct message with ${member.name}`}
                                                                 >
-                                                                    <span className="text-xs">💬</span>
+                                                                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                                                                 </button>
                                                             )}
                                                         </div>
@@ -451,7 +518,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                 ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-200'
                                                                 : 'bg-indigo-50 border-indigo-200 text-indigo-800'
                                                         }`}>
-                                                            <span className="text-sm shrink-0 animate-pulse">🚗</span>
+                                                            <Car className="w-3.5 h-3.5 shrink-0 text-indigo-400 animate-pulse" />
                                                             <div className="min-w-0 flex-1">
                                                                 <div className="flex items-center justify-between gap-1">
                                                                     <p className="text-[10px] font-black uppercase tracking-wider text-indigo-400">
@@ -481,7 +548,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                         }}
                                                                         className="px-2 py-0.5 rounded-md bg-purple-600 hover:bg-purple-500 text-white text-[8px] font-black shadow-sm flex items-center gap-1 transition-all active:scale-95"
                                                                     >
-                                                                        <span>🚗🚗</span>
+                                                                        <Car className="w-3 h-3 shrink-0" />
                                                                         <span>Join Convoy</span>
                                                                     </button>
                                                                 </div>
@@ -495,32 +562,29 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                             </div>
                                                         </div>
                                                     ) : (
-                                                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                                            <span className={`text-[10px] font-bold ${
-                                                                member.currentPlace && member.status === 'Stationary' ? 'text-emerald-400' :
-                                                                member.status === 'Driving' ? 'text-indigo-400' :
-                                                                member.status === 'Walking' || member.status === 'Moving' ? 'text-sky-400' :
-                                                                member.status === 'Stationary' ? 'text-emerald-400' : 'text-slate-500'
-                                                            }`}>
-                                                                {member.currentPlace
-                                                                    ? (member.status === 'Stationary' ? `At ${member.currentPlace}` : `${member.status} • ${member.currentPlace}`)
-                                                                    : (member.status === 'Driving' ? `Driving ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
-                                                                       member.status === 'Walking' || member.status === 'Moving' ? `Walking ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
-                                                                       'Stationary')}
-                                                            </span>
+                                                        <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                                                            <MemberStatusText
+                                                                member={member}
+                                                                className={`text-[10px] font-medium truncate ${
+                                                                    theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+                                                                }`}
+                                                            />
                                                             {member.privacyMode === 'blurred' && (
-                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-purple-500/20 text-purple-300">
-                                                                    👻 ~1.5 mi
+                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-purple-500/20 text-purple-300 flex items-center gap-1">
+                                                                    <EyeOff className="w-2.5 h-2.5 shrink-0" />
+                                                                    <span>~1.5 mi</span>
                                                                 </span>
                                                             )}
                                                             {member.privacyMode === 'status_only' && (
-                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300">
-                                                                    🏫 Milestones
+                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 flex items-center gap-1">
+                                                                    <GraduationCap className="w-2.5 h-2.5 shrink-0" />
+                                                                    <span>Milestones</span>
                                                                 </span>
                                                             )}
                                                             {member.privacyMode === 'frozen' && (
-                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-sky-500/20 text-sky-300">
-                                                                    ❄️ Frozen
+                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-sky-500/20 text-sky-300 flex items-center gap-1">
+                                                                    <Shield className="w-2.5 h-2.5 shrink-0" />
+                                                                    <span>Frozen</span>
                                                                 </span>
                                                             )}
                                                         </div>
@@ -530,6 +594,14 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                         </div>
                                     );
                                 })}
+
+                                    {/* Add Member / Invite to Circle Button */}
+                                    <AddMemberButton
+                                        onClick={handleAddMember}
+                                        theme={theme}
+                                        isCollapsed={isCollapsed}
+                                        label="Add Member"
+                                    />
                                 </div>
 
                                 {/* Divider */}
@@ -537,18 +609,14 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
 
                                 {/* Stats Row - Compact or Hidden when collapsed */}
                                 {!isCollapsed && (
-                                    <div className={`p-3 rounded-2xl border flex items-center justify-around animate-in fade-in slide-in-from-bottom-2
+                                    <div className={`p-3 rounded-2xl border flex items-center justify-center animate-in fade-in slide-in-from-bottom-2
                                       ${theme === 'dark' ? 'bg-white/5 border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
-                                        <div className="flex flex-col items-center gap-0.5 text-emerald-500">
-                                            <span className="text-xl">🛡️</span>
-                                            <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{members.length} {members.length === 1 ? 'Member' : 'Members'}</span>
-                                            <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">Protected</span>
-                                        </div>
-                                        <div className={`w-px h-8 ${theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'}`} />
-                                        <div className="flex flex-col items-center gap-0.5 text-amber-500">
-                                            <span className="text-xl">⛽</span>
-                                            <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{avgGasPrice}</span>
-                                            <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">Gas Avg</span>
+                                        <div className="flex items-center gap-2.5 text-emerald-500">
+                                            <Shield className="w-5 h-5 text-emerald-400 shrink-0" />
+                                            <div className="flex flex-col">
+                                                <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{members.length} {members.length === 1 ? 'Member' : 'Members'}</span>
+                                                <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">Protected</span>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -563,7 +631,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                                                 title="My Trips"
                                             >
-                                                <span className="text-lg">🛣️</span>
+                                                <Navigation className="w-5 h-5 text-indigo-400" />
                                             </button>
                                         )}
                                         {onOpenWeeklyReport && (
@@ -573,17 +641,17 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                                                 title="My Logs"
                                             >
-                                                <span className="text-lg">📊</span>
+                                                <Trophy className="w-5 h-5 text-amber-400" />
                                             </button>
                                         )}
                                         {onOpenMessages && (
                                             <button
-                                                onClick={onOpenMessages}
+                                                onClick={() => onOpenMessages()}
                                                 className={`relative w-10 h-10 rounded-xl flex items-center justify-center border transition-all hover:scale-115 active:scale-90
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                                                 title="My Messages"
                                             >
-                                                <span className="text-lg">💬</span>
+                                                <MessageSquare className="w-5 h-5 text-indigo-400" />
                                                 {typeof unreadMessagesCount === 'number' && unreadMessagesCount > 0 && (
                                                     <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full ring-2 ring-slate-900" />
                                                 )}
@@ -596,7 +664,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                                                 title="My Alerts"
                                             >
-                                                <span className="text-lg">🔔</span>
+                                                <Bell className="w-5 h-5 text-sky-400" />
                                             </button>
                                         )}
                                         {onOpenInviteShare && (
@@ -606,7 +674,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                                                 title="My Invites"
                                             >
-                                                <span className="text-lg">📤</span>
+                                                <Share2 className="w-5 h-5 text-emerald-400" />
                                             </button>
                                         )}
                                         {onOpenMaintenance && (
@@ -616,7 +684,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
                                                 title="My Garage & Maintenance"
                                             >
-                                                <span className="text-lg">🚘</span>
+                                                <Wrench className="w-5 h-5 text-rose-400" />
                                             </button>
                                         )}
                                     </div>
@@ -632,7 +700,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
                                                 >
-                                                    <span className="text-lg">🛣️</span>
+                                                    <Navigation className="w-5 h-5 text-indigo-400 shrink-0" />
                                                     <div>
                                                         <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Trips</p>
                                                         <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Journeys</p>
@@ -645,10 +713,13 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
                                                 >
-                                                    <span className="text-lg">🏆</span>
+                                                    <Trophy className="w-5 h-5 text-amber-400 shrink-0" />
                                                     <div>
                                                         <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>Scorecard</p>
-                                                        <p className="text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">🏆 Badges</p>
+                                                        <span className="flex items-center gap-1 text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">
+                                                            <Trophy className="w-2.5 h-2.5 shrink-0" />
+                                                            <span>Badges</span>
+                                                        </span>
                                                     </div>
                                                 </button>
                                             )}
@@ -658,7 +729,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
                                                 >
-                                                    <span className="text-lg">🔔</span>
+                                                    <Bell className="w-5 h-5 text-sky-400 shrink-0" />
                                                     <div>
                                                         <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Alerts</p>
                                                         <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Alerts</p>
@@ -671,7 +742,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
                                                 >
-                                                    <span className="text-lg">🚘</span>
+                                                    <Wrench className="w-5 h-5 text-rose-400 shrink-0" />
                                                     <div>
                                                         <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Garage & Maintenance</p>
                                                         <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Garage & Logs</p>
@@ -690,7 +761,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                             duration={1500}
                                             className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl bg-red-500/10 border border-red-500/20 active:scale-95 transition-all shadow-lg active:ring-2 active:ring-red-500/50"
                                         >
-                                            <span className="text-xl">🚨</span>
+                                            <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
                                             {!isCollapsed && <span className="text-xs text-red-500 font-extrabold uppercase tracking-tighter">Emergency SOS</span>}
                                         </HoldToActivate>
                                     </div>
@@ -707,15 +778,45 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                                             Saved Geofences ({userPlaces.length})
                                         </p>
-                                        {userLocation && onAddPlace && (
-                                            <button
-                                                onClick={() => setShowAddCustomPlace(!showAddCustomPlace)}
-                                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all
-                                                    ${theme === 'dark' ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'}`}
-                                            >
-                                                {showAddCustomPlace ? 'Cancel' : '+ Pin Current'}
-                                            </button>
-                                        )}
+                                        <div className="flex items-center gap-1.5">
+                                            {!parkedVehicle && userLocation && (
+                                                <button
+                                                    onClick={() => {
+                                                        parkingService.setParkedVehicle({
+                                                            id: 'temp-parked-vehicle',
+                                                            name: 'Parked Vehicle',
+                                                            type: 'parked_vehicle',
+                                                            category: 'parked_vehicle',
+                                                            icon: '🚗',
+                                                            location: { lat: userLocation.lat, lng: userLocation.lng },
+                                                            radius: 25,
+                                                            departureRadius: 25,
+                                                            isSaved: false,
+                                                            parkedAt: Date.now(),
+                                                            hasWalkedAway: false,
+                                                            hasReturned: false,
+                                                            nearestAddress: 'Current Location',
+                                                            description: 'Parked near Current Location'
+                                                        });
+                                                        showNotification?.('📍 Marked vehicle as parked here.', 4000);
+                                                    }}
+                                                    className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all bg-cyan-600 hover:bg-cyan-500 text-white shadow-sm flex items-center gap-1 cursor-pointer"
+                                                    title="Mark where you parked your car"
+                                                >
+                                                    <Car className="w-3 h-3" />
+                                                    <span>Park</span>
+                                                </button>
+                                            )}
+                                            {userLocation && onAddPlace && (
+                                                <button
+                                                    onClick={() => setShowAddCustomPlace(!showAddCustomPlace)}
+                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer
+                                                        ${theme === 'dark' ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'}`}
+                                                >
+                                                    {showAddCustomPlace ? 'Cancel' : '+ Pin'}
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
 
@@ -734,51 +835,107 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 theme === 'dark' ? 'bg-slate-800/80 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
                                             }`}
                                         />
-                                        <div className="flex gap-2">
-                                            <select
-                                                value={customPlaceIcon}
-                                                onChange={(e) => setCustomPlaceIcon(e.target.value)}
-                                                className={`px-2 py-1.5 rounded-xl border text-xs outline-none ${
-                                                    theme === 'dark' ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
-                                                }`}
-                                            >
-                                                <option value="📍">📍 Pin</option>
-                                                <option value="🏠">🏠 Home</option>
-                                                <option value="🏢">🏢 Work</option>
-                                                <option value="🎓">🎓 School</option>
-                                                <option value="💪">💪 Gym</option>
-                                                <option value="🍔">🍔 Food</option>
-                                                <option value="☕">☕ Coffee</option>
-                                            </select>
-                                            <button
-                                                onClick={() => {
-                                                    if (customPlaceName.trim()) {
-                                                        onAddPlace({
-                                                            name: customPlaceName.trim(),
-                                                            icon: customPlaceIcon,
-                                                            location: userLocation,
-                                                            radius: 0.15,
-                                                            type: customPlaceType,
-                                                            description: 'Saved Location'
-                                                        });
-                                                        setCustomPlaceName('');
-                                                        setShowAddCustomPlace(false);
-                                                    }
-                                                }}
-                                                className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-95"
-                                            >
-                                                Save Place
-                                            </button>
+                                        <div className="space-y-1.5">
+                                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Category</span>
+                                            <div className="grid grid-cols-4 gap-1.5">
+                                                {SIDEBAR_PLACE_CATEGORIES.map((cat) => {
+                                                    const isSelected = customPlaceIcon === cat.icon;
+                                                    const IconComp = cat.iconComp;
+                                                    return (
+                                                        <button
+                                                            key={cat.type}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setCustomPlaceIcon(cat.icon);
+                                                                setCustomPlaceType(cat.type as any);
+                                                            }}
+                                                            className={`p-1.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer group ${
+                                                                isSelected
+                                                                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/30'
+                                                                    : theme === 'dark'
+                                                                        ? 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
+                                                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+                                                            }`}
+                                                            title={cat.label}
+                                                        >
+                                                            <IconComp className={`w-4 h-4 shrink-0 transition-colors ${isSelected ? 'text-white' : 'text-slate-500 group-hover:text-slate-400'}`} />
+                                                            <span className={`text-[8px] font-bold truncate ${isSelected ? 'text-white' : ''}`}>{cat.label}</span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
                                         </div>
+                                        <button
+                                            onClick={() => {
+                                                if (customPlaceName.trim()) {
+                                                    onAddPlace({
+                                                        name: customPlaceName.trim(),
+                                                        icon: customPlaceIcon,
+                                                        location: userLocation,
+                                                        radius: 0.15,
+                                                        type: customPlaceType,
+                                                        description: 'Saved Location'
+                                                    });
+                                                    setCustomPlaceName('');
+                                                    setShowAddCustomPlace(false);
+                                                }
+                                            }}
+                                            className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-95 cursor-pointer"
+                                        >
+                                            Save Place
+                                        </button>
                                     </div>
                                 )}
 
                                 {/* Places List */}
-                                {userPlaces.length === 0 ? (
+                                {parkedVehicle && (
+                                    <div
+                                        onClick={() => onSelectPlace?.(parkedVehicle)}
+                                        className={`p-3 rounded-2xl border transition-all cursor-pointer mb-2.5 flex items-center justify-between gap-3 ${
+                                            selectedPlaceId === parkedVehicle.id
+                                                ? 'bg-cyan-500/20 border-cyan-500/40 shadow-lg shadow-cyan-500/10'
+                                                : theme === 'dark'
+                                                ? 'bg-slate-800/80 hover:bg-slate-800 border-cyan-500/30'
+                                                : 'bg-cyan-50/70 hover:bg-cyan-100/70 border-cyan-200'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <div className="w-9 h-9 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                                                <Car className="w-5 h-5" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-xs font-bold truncate">Parked Vehicle</span>
+                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                                                        Active
+                                                    </span>
+                                                </div>
+                                                <p className={`text-[11px] truncate ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
+                                                    {parkedVehicle.nearestAddress || 'Saved away from Home'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onNavigatePlace?.(parkedVehicle);
+                                            }}
+                                            className="p-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white shadow-md shrink-0 transition-transform active:scale-95"
+                                            title="Walk to vehicle"
+                                        >
+                                            <Navigation className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                )}
+
+                                {userPlaces.length === 0 && !parkedVehicle ? (
                                     <div className={`p-6 rounded-2xl border text-center space-y-2
                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
                                     >
-                                        <span className="text-3xl block">📍</span>
+                                        <div className="w-12 h-12 rounded-2xl bg-slate-800/40 border border-white/5 flex items-center justify-center mx-auto mb-2 text-slate-500">
+                                            <MapPin className="w-6 h-6" />
+                                        </div>
                                         <p className="text-xs font-bold">No Saved Places Yet</p>
                                         <p className="text-[10px] leading-relaxed">
                                             Search for any location (like Taco Bell or Home) and tap ⭐ to save it as a family geofence.
@@ -831,13 +988,13 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 >
                                                     <div className="flex items-center gap-3 w-full">
                                                         {/* Place Icon */}
-                                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 border relative ${
+                                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border relative ${
                                                             theme === 'dark' ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-indigo-50 border-indigo-100'
                                                         }`}>
-                                                            {place.icon || '📍'}
+                                                            {renderPlaceIcon(place.icon)}
                                                             {membersEnRoute.length > 0 && (
-                                                                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 border border-white text-[8px] flex items-center justify-center text-white animate-pulse shadow-md">
-                                                                    🚗
+                                                                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 border border-white flex items-center justify-center text-white animate-pulse shadow-md">
+                                                                    <Car className="w-2.5 h-2.5 text-white" />
                                                                 </span>
                                                             )}
                                                         </div>
@@ -885,7 +1042,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                 ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-200 shadow-sm'
                                                                 : 'bg-indigo-50 border-indigo-200 text-indigo-800 shadow-sm'
                                                         }`}>
-                                                            <span className="text-xs animate-bounce shrink-0">🚗</span>
+                                                            <Car className="w-3.5 h-3.5 text-indigo-400 animate-bounce shrink-0" />
                                                             <div className="min-w-0 flex-1 flex items-center justify-between gap-1">
                                                                 <span className="text-[10px] font-bold truncate">
                                                                     {membersEnRoute.map(m => m.name).join(', ')} en route
@@ -908,9 +1065,10 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                         e.stopPropagation();
                                                                         onNavigatePlace(place);
                                                                     }}
-                                                                    className="flex-1 py-1 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 transition-all active:scale-95"
+                                                                    className="flex-1 py-1 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] flex items-center justify-center gap-1.5 transition-all active:scale-95"
                                                                 >
-                                                                    <span>🚀</span> Navigate
+                                                                    <Navigation className="w-3 h-3 fill-current shrink-0" />
+                                                                    <span>Navigate</span>
                                                                 </button>
                                                             )}
                                                             {onEditPlace && (
@@ -923,7 +1081,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                     className="p-1 px-2 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 text-[10px] font-bold transition-all cursor-pointer"
                                                                     title="Edit Place & Geofence"
                                                                 >
-                                                                    ✏️
+                                                                    <Edit3 className="w-3 h-3" />
                                                                 </button>
                                                             )}
                                                             {onDeletePlace && (
@@ -937,7 +1095,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                     className="p-1 px-2 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 text-[10px] font-bold transition-all"
                                                                     title="Delete Place"
                                                                 >
-                                                                    🗑️
+                                                                    <Trash2 className="w-3 h-3" />
                                                                 </button>
                                                             )}
                                                         </div>

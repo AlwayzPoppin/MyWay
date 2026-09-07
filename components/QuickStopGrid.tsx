@@ -2,6 +2,26 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Place, Location, FamilyMember } from '../types';
 import { getDistanceMeters, getDistanceMiles } from '../utils/geo';
+import BrandIcon from './BrandIcon';
+import {
+    MapPin,
+    Home,
+    Briefcase,
+    Dumbbell,
+    Coffee,
+    Utensils,
+    GraduationCap,
+    Fuel,
+    Star,
+    Zap,
+    ShoppingCart,
+    SquareParking,
+    Pill,
+    Landmark,
+    Hospital,
+    X,
+    Navigation2
+} from 'lucide-react';
 
 interface QuickStopGridProps {
     onSearch: (query: string) => void;
@@ -33,15 +53,15 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
     const [selectedRadius, setSelectedRadius] = useState(0.15); // in km
 
     const iconPresets = [
-        { icon: '📍', label: 'Pin' },
-        { icon: '🏠', label: 'Home' },
-        { icon: '💼', label: 'Work' },
-        { icon: '🏋️', label: 'Gym' },
-        { icon: '☕', label: 'Cafe' },
-        { icon: '🍔', label: 'Food' },
-        { icon: '🎓', label: 'School' },
-        { icon: '⛽', label: 'Gas' },
-        { icon: '⭐', label: 'Fav' },
+        { icon: '📍', iconComp: MapPin, label: 'Pin' },
+        { icon: '🏠', iconComp: Home, label: 'Home' },
+        { icon: '💼', iconComp: Briefcase, label: 'Work' },
+        { icon: '🏋️', iconComp: Dumbbell, label: 'Gym' },
+        { icon: '☕', iconComp: Coffee, label: 'Cafe' },
+        { icon: '🍔', iconComp: Utensils, label: 'Food' },
+        { icon: '🎓', iconComp: GraduationCap, label: 'School' },
+        { icon: '⛽', iconComp: Fuel, label: 'Gas' },
+        { icon: '⭐', iconComp: Star, label: 'Fav' },
     ];
 
     const radiusPresets = [
@@ -52,14 +72,14 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
     ];
 
     const categories = [
-        { id: 'gas', icon: '⛽', label: 'Gas', query: 'Gas Station', color: '#f97316' },
-        { id: 'coffee', icon: '☕', label: 'Coffee', query: 'Coffee Shop', color: '#22c55e' },
-        { id: 'food', icon: '🍔', label: 'Food', query: 'Restaurant', color: '#ef4444' },
-        { id: 'grocery', icon: '🛒', label: 'Grocery', query: 'Grocery Store', color: '#3b82f6' },
-        { id: 'parking', icon: '🅿️', label: 'Parking', query: 'Parking', color: '#8b5cf6' },
-        { id: 'pharmacy', icon: '💊', label: 'Pharmacy', query: 'Pharmacy', color: '#ec4899' },
-        { id: 'atm', icon: '🏧', label: 'ATM', query: 'ATM', color: '#14b8a6' },
-        { id: 'hospital', icon: '🏥', label: 'Hospital', query: 'Hospital', color: '#dc2626' },
+        { id: 'gas', iconComp: Fuel, label: 'Gas', query: 'Gas Station', color: '#f97316' },
+        { id: 'coffee', iconComp: Coffee, label: 'Coffee', query: 'Coffee Shop', color: '#22c55e' },
+        { id: 'food', iconComp: Utensils, label: 'Food', query: 'Restaurant', color: '#ef4444' },
+        { id: 'grocery', iconComp: ShoppingCart, label: 'Grocery', query: 'Grocery Store', color: '#3b82f6' },
+        { id: 'parking', iconComp: SquareParking, label: 'Parking', query: 'Parking', color: '#8b5cf6' },
+        { id: 'pharmacy', iconComp: Pill, label: 'Pharmacy', query: 'Pharmacy', color: '#ec4899' },
+        { id: 'atm', iconComp: Landmark, label: 'ATM', query: 'ATM', color: '#14b8a6' },
+        { id: 'hospital', iconComp: Hospital, label: 'Hospital', query: 'Hospital', color: '#dc2626' },
     ];
 
     const handleSelectCategory = (query: string) => {
@@ -109,7 +129,7 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                 {/* Header */}
                 <div className="flex items-center justify-between mb-4 shrink-0">
                     <div className="flex items-center gap-2">
-                        <span className="text-xl">⭐</span>
+                        <Star className="w-5 h-5 text-yellow-400 fill-current" />
                         <h3 className={`text-base font-black tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                             Saved Places & Quick Stops
                         </h3>
@@ -118,8 +138,9 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                         onClick={onClose}
                         className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors
                             ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+                        aria-label="Close"
                     >
-                        ✕
+                        <X className="w-4 h-4" />
                     </button>
                 </div>
 
@@ -129,23 +150,25 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                 >
                     <button
                         onClick={() => setActiveTab('saved')}
-                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
+                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                             activeTab === 'saved'
                                 ? 'bg-indigo-600 text-white shadow-md'
                                 : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                         }`}
                     >
-                        ⭐ Saved Places ({userPlaces.length})
+                        <Star className="w-3.5 h-3.5 fill-current text-yellow-400" />
+                        <span>Saved Places ({userPlaces.length})</span>
                     </button>
                     <button
                         onClick={() => setActiveTab('quick')}
-                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
+                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                             activeTab === 'quick'
                                 ? 'bg-indigo-600 text-white shadow-md'
                                 : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                         }`}
                     >
-                        ⚡ Quick Stops
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Quick Stops</span>
                     </button>
                 </div>
 
@@ -222,22 +245,26 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                                                     Choose Icon
                                                 </span>
                                                 <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                                                    {iconPresets.map(preset => (
-                                                        <button
-                                                            key={preset.label}
-                                                            onClick={() => setSelectedIcon(preset.icon)}
-                                                            className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1 shrink-0 transition-all ${
-                                                                selectedIcon === preset.icon
-                                                                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-md scale-105'
-                                                                    : theme === 'dark'
-                                                                        ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                                                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
-                                                            }`}
-                                                        >
-                                                            <span>{preset.icon}</span>
-                                                            <span className="text-[10px]">{preset.label}</span>
-                                                        </button>
-                                                    ))}
+                                                    {iconPresets.map(preset => {
+                                                        const isSelected = selectedIcon === preset.icon;
+                                                        const IconComp = preset.iconComp;
+                                                        return (
+                                                            <button
+                                                                key={preset.label}
+                                                                onClick={() => setSelectedIcon(preset.icon)}
+                                                                className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all ${
+                                                                    isSelected
+                                                                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-md scale-105'
+                                                                        : theme === 'dark'
+                                                                            ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                                                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                                                                }`}
+                                                            >
+                                                                <IconComp className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-400'}`} />
+                                                                <span className="text-[10px]">{preset.label}</span>
+                                                            </button>
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
 
@@ -313,10 +340,10 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                                                     }`}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 border ${
+                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
                                                         theme === 'dark' ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-indigo-50 border-indigo-100'
                                                     }`}>
-                                                        {place.icon || '📍'}
+                                                        <BrandIcon icon={place.icon || '📍'} name={place.name} className="w-5 h-5 text-indigo-400" />
                                                     </div>
 
                                                     <div className="flex-1 min-w-0">
@@ -361,11 +388,12 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                                                             if (onSelectPlace) onSelectPlace(place);
                                                             onClose();
                                                         }}
-                                                        className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-bold transition-all text-center ${
+                                                        className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-bold transition-all text-center flex items-center justify-center gap-1.5 ${
                                                             theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-white border-slate-200 text-slate-800'
                                                         }`}
                                                     >
-                                                        🗺️ View on Map
+                                                        <MapPin className="w-3.5 h-3.5 text-indigo-400" />
+                                                        <span>View on Map</span>
                                                     </button>
                                                     {onNavigatePlace && (
                                                         <button
@@ -376,7 +404,8 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                                                             }}
                                                             className="flex-1 py-1.5 px-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-md transition-all active:scale-95"
                                                         >
-                                                            <span>🚀</span> Navigate
+                                                            <Navigation2 className="w-3.5 h-3.5" />
+                                                            <span>Navigate</span>
                                                         </button>
                                                     )}
                                                 </div>
@@ -391,30 +420,33 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                            QUICK STOPS TAB
                            ────────────────────────────────────────── */
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 sm:gap-3 py-2">
-                            {categories.map((cat, index) => (
-                                <button
-                                    key={cat.id}
-                                    onClick={() => handleSelectCategory(cat.query)}
-                                    className={`group flex flex-col items-center gap-2 p-2.5 sm:p-3 rounded-2xl transition-all duration-200
-                                        hover:scale-105 active:scale-95
-                                        ${theme === 'dark' ? 'bg-white/5 hover:bg-white/10 border border-white/5' : 'bg-slate-50 hover:bg-slate-100 border border-slate-100'}`}
-                                    style={{ animationDelay: `${index * 30}ms` }}
-                                >
-                                    <div
-                                        className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl transition-transform group-hover:scale-110"
-                                        style={{
-                                            backgroundColor: `${cat.color}20`,
-                                            boxShadow: `0 4px 12px ${cat.color}30`
-                                        }}
+                            {categories.map((cat, index) => {
+                                const IconComp = cat.iconComp;
+                                return (
+                                    <button
+                                        key={cat.id}
+                                        onClick={() => handleSelectCategory(cat.query)}
+                                        className={`group flex flex-col items-center gap-2 p-2.5 sm:p-3 rounded-2xl transition-all duration-200
+                                            hover:scale-105 active:scale-95
+                                            ${theme === 'dark' ? 'bg-white/5 hover:bg-white/10 border border-white/5' : 'bg-slate-50 hover:bg-slate-100 border border-slate-100'}`}
+                                        style={{ animationDelay: `${index * 30}ms` }}
                                     >
-                                        {cat.icon}
-                                    </div>
-                                    <span className={`text-[10px] font-semibold uppercase tracking-wide
-                                        ${theme === 'dark' ? 'text-slate-400 group-hover:text-white' : 'text-slate-500 group-hover:text-slate-900'}`}>
-                                        {cat.label}
-                                    </span>
-                                </button>
-                            ))}
+                                        <div
+                                            className="w-12 h-12 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
+                                            style={{
+                                                backgroundColor: `${cat.color}20`,
+                                                boxShadow: `0 4px 12px ${cat.color}30`
+                                            }}
+                                        >
+                                            <IconComp className="w-6 h-6" style={{ color: cat.color }} />
+                                        </div>
+                                        <span className={`text-[10px] font-semibold uppercase tracking-wide
+                                            ${theme === 'dark' ? 'text-slate-400 group-hover:text-white' : 'text-slate-500 group-hover:text-slate-900'}`}>
+                                            {cat.label}
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
                 </div>

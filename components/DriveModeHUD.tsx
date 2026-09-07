@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { NavigationRoute, FamilyMember, Location, IncidentReport, IncidentType, Place } from '../types';
 import { speechService } from '../services/speechService';
+import { audioService } from '../services/audioService';
 import { BetterRouteSuggestion, UpcomingTollAlert, LeaderDivertedPrompt, AmbientMaintenanceAdvisory } from '../hooks/useNavigation';
 import { convoyService, ConvoyMember, ConvoySession } from '../services/convoyService';
 import { maintenanceAlertService } from '../services/maintenanceAlertService';
@@ -9,6 +10,59 @@ import { vehicleFuelService } from '../services/vehicleFuelService';
 import { incidentService } from '../services/incidentService';
 import { getDistanceMeters } from '../utils/geo';
 import IncidentReporter from './IncidentReporter';
+import {
+  OctagonAlert,
+  TrafficCone,
+  TrainFront,
+  Camera,
+  Flag,
+  Signpost,
+  ShieldAlert,
+  ShieldCheck,
+  AlertTriangle,
+  Car,
+  HardHat,
+  Gauge,
+  ThumbsUp,
+  Check,
+  CheckCircle2,
+  Maximize2,
+  SquareParking,
+  Package,
+  DoorOpen,
+  GitFork,
+  Zap,
+  Navigation,
+  Wrench,
+  Plus,
+  CreditCard,
+  Users,
+  Route,
+  RefreshCw,
+  Volume2,
+  VolumeX,
+  Crosshair,
+  ChevronDown,
+  ChevronUp,
+  Lightbulb,
+  Coffee,
+  XCircle,
+  X,
+  Fuel,
+  Disc,
+  CloudRain
+} from 'lucide-react';
+
+const renderAdvisoryIcon = (iconName?: string, type?: string, className: string = "w-4 h-4") => {
+  if (iconName === 'wrench') return <Wrench className={className} />;
+  if (iconName === 'oil' || iconName === 'oil_change') return <Fuel className={className} />;
+  if (iconName === 'tire' || iconName === 'tires' || iconName === 'disc') return <Disc className={className} />;
+  if (iconName === 'brakes') return <OctagonAlert className={className} />;
+  if (type === 'weather') return <CloudRain className={className} />;
+  if (type === 'traffic') return <Car className={className} />;
+  if (type === 'crime') return <ShieldAlert className={className} />;
+  return <AlertTriangle className={className} />;
+};
 
 interface DriveModeHUDProps {
   route: NavigationRoute;
@@ -20,6 +74,9 @@ interface DriveModeHUDProps {
   sessionPoints?: number;
   isMobile?: boolean;
   betterRouteSuggestion?: BetterRouteSuggestion | null;
+  alternativeRoutes?: NavigationRoute[];
+  onRecalculateRoutes?: () => void;
+  isRecalculatingRoutes?: boolean;
   onSwitchRoute?: (route: NavigationRoute) => void;
   onDismissReroute?: () => void;
   upcomingTollAlert?: UpcomingTollAlert | null;
@@ -145,7 +202,178 @@ export const detectJunctionOrExit = (step?: { instruction?: string; distance?: s
   };
 };
 
-const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
+export interface SpeedometerWidgetProps {
+  speed: number;
+  currentSpeedLimit: number;
+  isSpeeding: boolean;
+  isSevereSpeeding: boolean;
+  hasCameraNearby?: boolean;
+}
+
+export interface SpeedometerDialProps {
+  speed: number;
+  isSpeeding: boolean;
+  isSevereSpeeding: boolean;
+  className?: string;
+}
+
+export const SpeedometerDial: React.FC<SpeedometerDialProps> = React.memo(({
+  speed,
+  isSpeeding,
+  isSevereSpeeding,
+  className
+}) => {
+  return (
+    <div className={`relative shrink-0 pointer-events-auto ${className || ''}`}>
+      <div className="bg-white border-4 border-purple-500 rounded-2xl w-14 h-14 sm:w-16 sm:h-16 flex flex-col items-center justify-center shadow-lg">
+        <span className={`font-black text-xl sm:text-2xl leading-none transition-colors duration-300 ${
+          isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600' : 'text-gray-900'
+        }`}>{speed}</span>
+        <span className="font-bold text-gray-900 uppercase text-[7px] sm:text-[8px] tracking-wider mt-0.5">MPH</span>
+        <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none">
+          <circle
+            cx="32" cy="32" r="28"
+            fill="none" stroke="currentColor" strokeWidth="2.5"
+            strokeDasharray="176"
+            strokeDashoffset={176 - (176 * (Math.min(speed, 80) / 80))}
+            className={`${
+              isSevereSpeeding ? 'text-red-500' : isSpeeding ? 'text-amber-500' : 'text-purple-500'
+            } transition-all duration-500`}
+          />
+        </svg>
+      </div>
+    </div>
+  );
+});
+
+export interface SpeedLimitWidgetProps {
+  currentSpeedLimit: number;
+  isSpeeding: boolean;
+  isSevereSpeeding: boolean;
+  hasCameraNearby?: boolean;
+  className?: string;
+}
+
+export const SpeedLimitWidget: React.FC<SpeedLimitWidgetProps> = React.memo(({
+  currentSpeedLimit,
+  isSpeeding,
+  isSevereSpeeding,
+  hasCameraNearby,
+  className
+}) => {
+  return (
+    <div className={`flex items-center gap-1 shrink-0 pointer-events-auto ${className || ''}`}>
+      <div className={`relative shrink-0 rounded-xl border-2 flex flex-col items-center justify-center w-10 h-14 sm:w-11 sm:h-16 p-0.5 transition-all duration-300 ${
+        isSevereSpeeding
+          ? 'bg-red-50 border-red-600 ring-2 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.75)] animate-pulse'
+          : isSpeeding
+          ? 'bg-amber-50 border-amber-500 ring-1.5 ring-amber-400 shadow-[0_0_14px_rgba(245,158,11,0.65)]'
+          : 'bg-white border-black shadow-lg'
+      }`}>
+        <span className={`font-black uppercase tracking-tighter text-[5px] sm:text-[6px] leading-tight ${
+          isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+        }`}>SPEED</span>
+        <span className={`font-black uppercase tracking-tighter text-[5px] sm:text-[6px] leading-tight ${
+          isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
+        }`}>LIMIT</span>
+        <span className={`font-black text-base sm:text-lg tracking-tight leading-none mt-0.5 ${
+          isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600 font-black' : 'text-black'
+        }`}>
+          {currentSpeedLimit}
+        </span>
+      </div>
+
+      {hasCameraNearby && (
+        <div className="h-14 sm:h-16 px-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-[8px] sm:text-[9px] font-black text-amber-300 flex flex-col items-center justify-center gap-0.5 shadow-md animate-pulse shrink-0">
+          <Camera className="w-3 h-3 text-amber-300 shrink-0" />
+          <span className="leading-none text-center text-[7px]">CAM</span>
+        </div>
+      )}
+    </div>
+  );
+});
+
+export const SpeedometerWidget: React.FC<SpeedometerWidgetProps> = React.memo((props) => {
+  return (
+    <div className="flex items-center gap-2 shrink-0 transform-gpu will-change-transform">
+      <SpeedometerDial speed={props.speed} isSpeeding={props.isSpeeding} isSevereSpeeding={props.isSevereSpeeding} />
+      <SpeedLimitWidget currentSpeedLimit={props.currentSpeedLimit} isSpeeding={props.isSpeeding} isSevereSpeeding={props.isSevereSpeeding} hasCameraNearby={props.hasCameraNearby} />
+    </div>
+  );
+});
+
+export interface TripSummaryCardProps {
+  activeStop: any;
+  currentLegIdx: number;
+  displayEta: string;
+  displayDist: string;
+  hasWaypoints: boolean;
+  route: any;
+  safetyScore: number;
+  sessionPoints?: number;
+  className?: string;
+  onClick?: () => void;
+}
+
+export const TripSummaryCard: React.FC<TripSummaryCardProps> = React.memo(({
+  activeStop,
+  currentLegIdx,
+  displayEta,
+  displayDist,
+  hasWaypoints,
+  route,
+  safetyScore,
+  sessionPoints,
+  className,
+  onClick
+}) => {
+  return (
+    <div 
+      onClick={onClick}
+      className={`bg-white border border-gray-100 rounded-2xl px-3.5 sm:px-4 py-2 shadow-lg hover:shadow-xl transition-all shrink-0 transform-gpu will-change-transform h-14 sm:h-16 flex flex-col justify-center ${className || 'w-auto'}`}
+    >
+      <div className="flex items-center justify-between gap-3 sm:gap-4">
+        <div className="flex flex-col gap-0.5">
+          <div className="flex gap-2.5 sm:gap-4 items-center">
+            <div>
+              <p className="font-bold text-gray-500 uppercase tracking-wider text-[7px] sm:text-[8px] leading-tight">
+                {activeStop ? `Stop ${currentLegIdx + 1} ETA` : 'Estimated Arrival'}
+              </p>
+              <p className="font-black text-gray-900 text-base sm:text-lg tracking-tight leading-none">{displayEta}</p>
+            </div>
+            <div className="w-px h-5 sm:h-6 bg-gray-200" />
+            <div>
+              <p className="font-bold text-gray-500 uppercase tracking-wider text-[7px] sm:text-[8px] leading-tight">
+                {activeStop ? `To Stop ${currentLegIdx + 1}` : 'Distance'}
+              </p>
+              <p className="font-black text-gray-900 text-base sm:text-lg tracking-tight leading-none">{displayDist}</p>
+            </div>
+          </div>
+          {hasWaypoints && (
+            <div className="flex items-center gap-1 text-[7px] sm:text-[8px] font-bold text-gray-500">
+              <Flag className="w-2.5 h-2.5 text-amber-500 fill-amber-500/20 shrink-0" />
+              <span>Trip: <span className="text-gray-900 font-black">{route.totalTime}</span> • <span className="text-gray-900 font-black">{route.totalDistance}</span></span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col items-end gap-0.5">
+          <div className="px-1.5 sm:px-2 py-0.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-1 sm:gap-1.5">
+            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+            <span className="text-[9px] sm:text-[10px] font-black text-emerald-700">{safetyScore}%</span>
+          </div>
+          {sessionPoints !== undefined && (
+            <span className="text-[7px] sm:text-[8px] font-black text-amber-600 px-1">
+              {sessionPoints > 0 ? `+${sessionPoints} Pts` : '0 Pts'}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
   route,
   speed,
   onCancel,
@@ -155,6 +383,9 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   sessionPoints,
   isMobile = false,
   betterRouteSuggestion,
+  alternativeRoutes = [],
+  onRecalculateRoutes,
+  isRecalculatingRoutes = false,
   onSwitchRoute,
   onDismissReroute,
   upcomingTollAlert,
@@ -173,6 +404,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   onRecenter
 }) => {
   const [showDetails, setShowDetails] = useState(!isMobile);
+  const [isAlternativesModalOpen, setIsAlternativesModalOpen] = useState(false);
   const [advisoryDismissed, setAdvisoryDismissed] = useState(false);
   const [advisoryExpanded, setAdvisoryExpanded] = useState(false);
   const [isVoiceMuted, setIsVoiceMuted] = useState(() => speechService.getIsMuted());
@@ -277,25 +509,23 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
         if (health.overallStatus === 'overdue' && health.items.length > 0) {
           const overdueItems = health.items.filter(i => i.status === 'overdue');
           const primaryItem = overdueItems[0] || health.items[0];
-          const icon = primaryItem.icon || '🔧';
           return {
             type: 'warning' as const,
             severity: 'high' as const,
             title: `Vehicle Alert: ${primaryItem.title}`,
-            description: `${icon} Service overdue by ${Math.abs(Math.round(primaryItem.milesRemaining)).toLocaleString()} mi. Schedule maintenance soon.`,
-            icon
+            description: `Service overdue by ${Math.abs(Math.round(primaryItem.milesRemaining)).toLocaleString()} mi. Schedule maintenance soon.`,
+            icon: primaryItem.category || 'wrench'
           };
         } else if (health.overallStatus === 'due_soon' && health.items.length > 0) {
           const dueSoonItems = health.items.filter(i => i.status === 'due_soon');
           if (dueSoonItems.length > 0) {
             const primaryItem = dueSoonItems[0];
-            const icon = primaryItem.icon || '🔧';
             return {
               type: 'warning' as const,
               severity: 'medium' as const,
               title: `Service Due Soon: ${primaryItem.title}`,
-              description: `${icon} ${Math.round(primaryItem.milesRemaining).toLocaleString()} mi remaining until recommended service.`,
-              icon
+              description: `${Math.round(primaryItem.milesRemaining).toLocaleString()} mi remaining until recommended service.`,
+              icon: primaryItem.category || 'wrench'
             };
           }
         }
@@ -311,7 +541,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
         severity: 'medium' as const,
         title: 'Safety Advisory',
         description: route.safetyAdvisory,
-        icon: '⚠️'
+        icon: 'warning'
       };
     }
 
@@ -372,978 +602,753 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
   const displayDist = activeLeg?.distance || route.totalDistance;
 
   return (
-    <div className="absolute inset-0 z-[100] flex flex-col pointer-events-none">
-      {/* Top Navigation Bar - Glassmorphism with Mobile Notch / Status Bar Safe-Area Padding */}
+    <div className="absolute inset-0 z-[100] pointer-events-none overflow-hidden">
+      {/* Top-Center Turn Banner & Navigation Alerts Stack */}
       <div 
-        className={`w-full pointer-events-auto transition-all duration-300 ${isMobile ? 'px-3' : 'pt-12 px-6'}`}
+        className="absolute top-4 left-1/2 transform -translate-x-1/2 z-40 pointer-events-none w-full max-w-lg px-3 sm:px-4 flex flex-col items-center"
         style={{
-          paddingTop: isMobile 
-            ? 'max(calc(env(safe-area-inset-top, 0px) + 12px), 48px)' 
-            : undefined
+          paddingTop: 'max(calc(env(safe-area-inset-top, 0px)), 0px)'
         }}
       >
-        <div className={`max-w-xl mx-auto bg-black/40 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center overflow-hidden relative ${
-          isMobile ? 'rounded-2xl p-3 gap-3' : 'rounded-[2.5rem] p-6 gap-6'
-        }`}>
-          <div className="absolute -left-20 -top-20 w-40 h-40 bg-indigo-500/20 blur-[80px]" />
-
-          {/* Next Turn Icon — color shifts with distance */}
-          <div className={`bg-gradient-to-br ${distBorder} flex items-center justify-center text-white shadow-lg shrink-0 transition-all duration-500 ${
-            isMobile ? 'w-12 h-12 rounded-xl' : 'w-20 h-20 rounded-3xl'
-          }`}>
-            <svg className={isMobile ? 'w-7 h-7' : 'w-12 h-12'} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-            </svg>
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`font-black tracking-tighter transition-colors duration-500 ${distColor} ${
-                isMobile ? 'text-3xl' : 'text-5xl'
-              }`}>{currentStep.distance}</span>
-
-              {/* Upcoming Traffic Control Badge (Stop Sign, Traffic Light, Rail Crossing) */}
-              {currentStep.trafficControl && (
-                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full border shadow-md animate-in fade-in zoom-in-95 duration-300 ${
-                  currentStep.trafficControl === 'stop_sign'
-                    ? 'bg-red-500/25 border-red-500/50 text-red-200'
-                    : currentStep.trafficControl === 'traffic_light'
-                    ? 'bg-amber-500/25 border-amber-500/50 text-amber-200'
-                    : currentStep.trafficControl === 'railroad_crossing'
-                    ? 'bg-yellow-500/30 border-yellow-500/60 text-yellow-200'
-                    : 'bg-indigo-500/25 border-indigo-500/50 text-indigo-200'
-                }`}>
-                  <span className="text-xs">
-                    {currentStep.trafficControl === 'stop_sign' ? '🛑' :
-                     currentStep.trafficControl === 'traffic_light' ? '🚦' :
-                     currentStep.trafficControl === 'railroad_crossing' ? '🚂' : '📷'}
-                  </span>
-                  <span className="text-[10px] font-black uppercase tracking-wider">
-                    {currentStep.trafficControl === 'stop_sign' ? 'Stop Sign' :
-                     currentStep.trafficControl === 'traffic_light' ? 'Traffic Light' :
-                     currentStep.trafficControl === 'railroad_crossing' ? 'Rail Crossing' : 'Camera'}
-                  </span>
-                </div>
-              )}
-            </div>
-            <p className={`font-bold text-slate-200 truncate ${isMobile ? 'text-sm' : 'text-2xl'}`}>{currentStep.instruction}</p>
-
-            {/* Active Multi-Stop Waypoint Indicator */}
-            {hasWaypoints && (
-              <div className="flex items-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-950/90 via-black/85 to-amber-950/90 border border-amber-500/60 shadow-[0_0_15px_rgba(245,158,11,0.25)] backdrop-blur-md w-fit max-w-full">
-                <span className="w-4 h-4 rounded-md bg-amber-500 text-black font-black text-[9px] flex items-center justify-center shrink-0 shadow-sm">
-                  {activeStop ? currentLegIdx + 1 : '🏁'}
-                </span>
-                <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 truncate">
-                  {activeStop
-                    ? `STOP ${currentLegIdx + 1} OF ${route.waypoints!.length}: ${activeStop.name}${activeLeg?.distance ? ` (${activeLeg.distance})` : ''}`
-                    : `FINAL STOP: ${route.destinationName}`}
-                </span>
+        {/* TOP SECTION: Turn Banner & In-Drive Alerts Stack */}
+        <div className="w-full flex flex-col gap-2 shrink-0 pointer-events-auto landscape:mt-1">
+          {/* Top Navigation Bar - Clean Default Light Skin Card */}
+          <div className="w-full bg-white border border-gray-100 shadow-xl flex flex-col overflow-hidden relative z-30 transform-gpu will-change-transform rounded-2xl p-3.5 landscape:p-2.5 landscape:rounded-xl">
+            {/* Primary Maneuver Row: Turn Icon + Instruction Details */}
+            <div className="flex items-center w-full gap-3">
+              {/* Next Turn Icon — color shifts with distance */}
+              <div className={`bg-gradient-to-br ${distBorder} flex items-center justify-center text-white shadow-md shrink-0 transition-all duration-500 w-12 h-12 rounded-xl`}>
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                </svg>
               </div>
-            )}
 
-            {/* Highway Junction & Off-Ramp Amber Signboard HUD with Dynamic Beacon Pulse */}
-            {junctionInfo && (
-              <div className="flex items-center gap-2 mt-2 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-950/90 via-black/85 to-amber-950/90 border border-orange-500/70 shadow-[0_0_20px_rgba(249,115,22,0.35)] backdrop-blur-md animate-in fade-in slide-in-from-top-1 duration-300 w-fit max-w-full">
-                {/* Dynamic Amber Beacon Pulse */}
-                <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
-                  <div className="absolute w-4 h-4 rounded-full bg-orange-500 opacity-75 animate-ping" />
-                  <div className="relative w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_#f97316] border border-black/50" />
-                </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-black tracking-tighter text-gray-900 text-2xl">{currentStep.distance}</span>
 
-                {/* Exit Badge */}
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-500 text-black font-black text-[10px] tracking-wider uppercase shrink-0 shadow-sm">
-                  <span>🛣️</span>
-                  <span>{junctionInfo.exitCode}</span>
-                </div>
-
-                {/* Destination Highway / Corridor & Lane Advice */}
-                <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-                  {junctionInfo.targetName && (
-                    <span className="text-xs font-black text-amber-200 uppercase tracking-tight truncate">
-                      {junctionInfo.targetName}
-                    </span>
+                  {/* Upcoming Traffic Control Badge (Stop Sign, Traffic Light, Rail Crossing) */}
+                  {currentStep.trafficControl && (
+                    <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border shadow-sm animate-in fade-in zoom-in-95 duration-300 ${
+                      currentStep.trafficControl === 'stop_sign'
+                        ? 'bg-red-50 border-red-200 text-red-700'
+                        : currentStep.trafficControl === 'traffic_light'
+                        ? 'bg-amber-50 border-amber-200 text-amber-800'
+                        : currentStep.trafficControl === 'railroad_crossing'
+                        ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                        : 'bg-purple-50 border-purple-200 text-purple-800'
+                    }`}>
+                      <span className="flex items-center">
+                        {currentStep.trafficControl === 'stop_sign' ? <OctagonAlert className="w-3.5 h-3.5 text-red-600" /> :
+                         currentStep.trafficControl === 'traffic_light' ? <TrafficCone className="w-3.5 h-3.5 text-amber-600" /> :
+                         currentStep.trafficControl === 'railroad_crossing' ? <TrainFront className="w-3.5 h-3.5 text-yellow-600" /> :
+                         <Camera className="w-3.5 h-3.5 text-purple-600" />}
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-wider">
+                        {currentStep.trafficControl === 'stop_sign' ? 'Stop Sign' :
+                         currentStep.trafficControl === 'traffic_light' ? 'Traffic Light' :
+                         currentStep.trafficControl === 'railroad_crossing' ? 'Rail Crossing' : 'Camera'}
+                      </span>
+                    </div>
                   )}
-                  <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30 shrink-0 uppercase tracking-wider">
-                    {junctionInfo.laneAdvice}
-                  </span>
                 </div>
+                <p className="font-bold text-gray-900 truncate text-sm">{currentStep.instruction}</p>
+
+                {/* Active Multi-Stop Waypoint Indicator */}
+                {hasWaypoints && (
+                  <div className="flex items-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 shadow-sm w-fit max-w-full">
+                    <span className="w-4 h-4 rounded-md bg-amber-500 text-white font-black text-[9px] flex items-center justify-center shrink-0 shadow-sm">
+                      {activeStop ? currentLegIdx + 1 : <Flag className="w-2.5 h-2.5 text-white fill-white" />}
+                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 truncate">
+                      {activeStop
+                        ? `STOP ${currentLegIdx + 1} OF ${route.waypoints!.length}: ${activeStop.name}${activeLeg?.distance ? ` (${activeLeg.distance})` : ''}`
+                        : `FINAL STOP: ${route.destinationName}`}
+                    </span>
+                  </div>
+                )}
+
+                {/* Highway Junction & Off-Ramp Amber Signboard HUD with Dynamic Beacon Pulse */}
+                {junctionInfo && (
+                  <div className="flex items-center gap-2 mt-2 px-2.5 py-1.5 rounded-xl bg-orange-50 border border-orange-200 shadow-sm animate-in fade-in slide-in-from-top-1 duration-300 w-fit max-w-full">
+                    {/* Dynamic Amber Beacon Pulse */}
+                    <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
+                      <div className="absolute w-4 h-4 rounded-full bg-orange-500 opacity-50 animate-ping" />
+                      <div className="relative w-2.5 h-2.5 rounded-full bg-amber-500 shadow-sm" />
+                    </div>
+
+                    {/* Exit Badge */}
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-500 text-white font-black text-[10px] tracking-wider uppercase shrink-0 shadow-sm">
+                      <Signpost className="w-3 h-3 text-white" />
+                      <span>{junctionInfo.exitCode}</span>
+                    </div>
+
+                    {/* Destination Highway / Corridor & Lane Advice */}
+                    <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                      {junctionInfo.targetName && (
+                        <span className="text-xs font-black text-gray-900 uppercase tracking-tight truncate">
+                          {junctionInfo.targetName}
+                        </span>
+                      )}
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 shrink-0 uppercase tracking-wider">
+                        {junctionInfo.laneAdvice}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Visual Lane Guidance Arrows Strip */}
+                {currentStep.lanes && currentStep.lanes.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-2 p-1.5 bg-gray-50 rounded-2xl border border-gray-100 w-fit shadow-sm animate-in fade-in slide-in-from-top-1 duration-300">
+                    {currentStep.lanes.map((lane, lIdx) => (
+                      <div
+                        key={lIdx}
+                        title={lane.isValid ? "Recommended Lane" : "Other Lane"}
+                        className={`rounded-xl flex items-center justify-center transition-all w-6 h-6 ${
+                          lane.isValid
+                            ? 'bg-purple-100 border-2 border-purple-500 text-purple-700 shadow-sm scale-105'
+                            : 'bg-gray-200/60 border border-gray-200 text-gray-400 opacity-60'
+                        }`}
+                      >
+                        {renderLaneIcon(lane.direction, lane.isValid)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Secondary Next Maneuver Preview — Integrated Cleanly with Distinct Divider */}
+            {steps[stepIndex + 1] && (
+              <div className="flex items-center gap-2.5 mt-3 pt-2.5 border-t border-gray-100 text-gray-600 w-full animate-in fade-in duration-300">
+                <span className="text-[9px] font-black text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0 shadow-xs">
+                  Next
+                </span>
+                <p className="text-xs font-semibold text-gray-700 truncate flex-1">
+                  {steps[stepIndex + 1].instruction}
+                </p>
+                {steps[stepIndex + 1].distance && (
+                  <span className="text-[10px] font-bold text-gray-500 shrink-0">
+                    {steps[stepIndex + 1].distance}
+                  </span>
+                )}
               </div>
             )}
 
-            {/* Visual Lane Guidance Arrows Strip */}
-            {currentStep.lanes && currentStep.lanes.length > 0 && (
-              <div className="flex items-center gap-1.5 mt-2 p-1.5 bg-black/60 backdrop-blur-md rounded-2xl border border-white/15 w-fit shadow-xl animate-in fade-in slide-in-from-top-1 duration-300">
-                {currentStep.lanes.map((lane, lIdx) => (
-                  <div
-                    key={lIdx}
-                    title={lane.isValid ? "Recommended Lane" : "Other Lane"}
-                    className={`rounded-xl flex items-center justify-center transition-all ${
-                      isMobile ? 'w-6 h-6' : 'w-8 h-8'
-                    } ${
-                      lane.isValid
-                        ? 'bg-sky-500/25 border-2 border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.5)] scale-105'
-                        : 'bg-white/5 border border-white/5 opacity-35'
-                    }`}
-                  >
-                    {renderLaneIcon(lane.direction, lane.isValid)}
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* Progress Indicator */}
+            <div className="absolute bottom-0 left-0 h-1 bg-purple-600 transition-all duration-500" style={{ width: `${progress}%` }} />
           </div>
 
-          {/* Progress Indicator */}
-          <div className="absolute bottom-0 left-0 h-1 bg-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+          {/* Crowd-Sourced Road Incident Ahead: Interactive Confirmation Banner */}
+          {approachingIncident && (
+            <div className="w-full relative z-30 animate-in slide-in-from-top duration-300">
+              <div className="bg-slate-950/95 backdrop-blur-2xl border-2 border-amber-500/60 rounded-2xl p-3 shadow-[0_15px_40px_rgba(245,158,11,0.3)] flex items-center justify-between gap-2.5 w-full">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-400/40 shrink-0 shadow-inner">
+                    {approachingIncident.type === 'police' ? <ShieldAlert className="w-4 h-4 text-blue-400" /> :
+                     approachingIncident.type === 'hazard' ? <AlertTriangle className="w-4 h-4 text-amber-400" /> :
+                     approachingIncident.type === 'shoulder' ? <Car className="w-4 h-4 text-orange-400" /> :
+                     approachingIncident.type === 'construction' ? <HardHat className="w-4 h-4 text-yellow-400" /> :
+                     approachingIncident.type === 'traffic' ? <Gauge className="w-4 h-4 text-red-400" /> :
+                     <ShieldAlert className="w-4 h-4 text-amber-400" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h4 className="text-[11px] font-black text-white uppercase tracking-wider truncate">
+                        {approachingIncident.type === 'police' ? 'Police Trap' :
+                         approachingIncident.type === 'hazard' ? 'Road Hazard' :
+                         approachingIncident.type === 'shoulder' ? 'Vehicle Shoulder' :
+                         approachingIncident.type === 'construction' ? 'Work Zone' : 'Traffic Slow'}
+                      </h4>
+                      <span className="text-[10px] font-bold text-amber-400">
+                        ({(getDistanceMeters(userLocation || { lat: 0, lng: 0 }, approachingIncident.location) * 0.000621371).toFixed(1)} mi)
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-300 truncate">Is this still there?</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      incidentService.upvoteIncident(approachingIncident.id, currentUserId || 'driver');
+                      setDismissedIncidentIds(prev => new Set(prev).add(approachingIncident.id));
+                    }}
+                    className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black shadow-md active:scale-95 transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <ThumbsUp className="w-3 h-3" />
+                    <span>Yes</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      incidentService.clearIncident(approachingIncident.id, currentUserId || 'driver');
+                      setDismissedIncidentIds(prev => new Set(prev).add(approachingIncident.id));
+                    }}
+                    className="px-2 py-1.5 bg-white/10 hover:bg-white/20 text-slate-300 rounded-xl text-[10px] font-bold active:scale-95 transition-all flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span>Clear</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Final 150-Foot Storefront Approach Card */}
+          {isApproachingStorefront && (
+            <div className="w-full relative z-30 animate-in slide-in-from-top zoom-in-95 duration-300">
+              <div className="bg-slate-950/95 backdrop-blur-2xl border-2 border-emerald-500/70 rounded-2xl p-3 shadow-[0_15px_45px_rgba(16,185,129,0.35)] flex flex-col gap-2 w-full">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 flex items-center gap-1">
+                      <Flag className="w-3 h-3 text-emerald-400 fill-emerald-400/20" />
+                      <span>Approaching Entrance</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {distanceToDestinationMeters !== null && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[9px] font-black border border-emerald-500/30">
+                        {Math.round(distanceToDestinationMeters * 3.28084)} ft
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setIsStorefrontCardDismissed(true)}
+                      className="w-5 h-5 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center transition-all cursor-pointer"
+                      title="Dismiss approach card"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  {route.destinationImageUrl && (
+                    <div 
+                      onClick={() => setIsStorefrontLightboxOpen(true)}
+                      className="relative w-16 h-14 rounded-xl overflow-hidden border border-emerald-400/60 shadow-md shrink-0 group cursor-pointer"
+                    >
+                      <img
+                        src={route.destinationImageUrl}
+                        alt={route.destinationName}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-xs font-black text-white truncate">
+                      {route.destinationName}
+                    </h4>
+                    {route.destinationEntranceNotes ? (
+                      <p className="text-[10px] font-bold text-amber-300 truncate mt-0.5">
+                        {route.destinationEntranceNotes}
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-slate-300 truncate">
+                        Look for building entrance.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hive-Mind Convoy Leader Diverted Countdown */}
+          {leaderDivertedPrompt && (
+            <div className="w-full relative z-30 animate-in slide-in-from-top-4 duration-300">
+              <div className="bg-gradient-to-r from-purple-950/95 via-slate-900/98 to-indigo-950/95 backdrop-blur-2xl border-2 border-purple-500/60 rounded-2xl p-3 shadow-[0_20px_50px_rgba(168,85,247,0.4)] flex flex-col gap-2.5 w-full relative overflow-hidden">
+                <div 
+                  className="absolute top-0 left-0 h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 transition-all duration-1000 ease-linear"
+                  style={{ width: `${(leaderDivertedPrompt.timeRemainingSeconds / 10) * 100}%` }}
+                />
+
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center shrink-0">
+                    <GitFork className="w-4 h-4 text-purple-300" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-black text-purple-300 uppercase tracking-wider">
+                        Leader Diverted
+                      </span>
+                      <span className="text-[8px] font-black px-1.5 py-0.2 rounded-full bg-purple-500/30 text-purple-200 border border-purple-400/40 animate-pulse">
+                        {leaderDivertedPrompt.timeRemainingSeconds}s
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-bold text-slate-100 truncate">
+                      {leaderDivertedPrompt.leaderName}: {leaderDivertedPrompt.reason}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={onFollowLeader}
+                    className="py-2 px-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-[10px] rounded-xl shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Zap className="w-3 h-3 fill-current" />
+                    <span>Follow Leader</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onKeepOriginalRoute}
+                    className="py-2 px-2 bg-white/10 hover:bg-white/20 active:scale-95 text-slate-300 font-bold text-[10px] rounded-xl border border-white/10 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Navigation className="w-3 h-3" />
+                    <span>Keep Route</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Predictive Commute Maintenance Advisory */}
+          {ambientMaintenanceAdvisory && (
+            <div className="w-full relative z-30 animate-in slide-in-from-top-3 duration-300">
+              <div className="bg-gradient-to-r from-amber-950/95 via-slate-900/98 to-orange-950/95 backdrop-blur-2xl border-2 border-amber-500/60 rounded-2xl p-3 shadow-[0_15px_40px_rgba(245,158,11,0.35)] flex items-center justify-between gap-2.5 w-full">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                    <Wrench className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider">
+                        {ambientMaintenanceAdvisory.item.title}
+                      </span>
+                      <span className="text-[8px] font-bold px-1 rounded bg-amber-500/20 text-amber-300">
+                        {Math.round(ambientMaintenanceAdvisory.item.milesRemaining)} mi
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-bold text-slate-200 truncate">
+                      {ambientMaintenanceAdvisory.recommendedPlace.name}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onSelectMaintenanceStop && onSelectMaintenanceStop(ambientMaintenanceAdvisory.recommendedPlace)}
+                    className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-[10px] rounded-xl shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Add</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDismissMaintenanceAdvisory && onDismissMaintenanceAdvisory()}
+                    className="w-7 h-7 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Dynamic In-Drive Reroute Option */}
+          {betterRouteSuggestion && (
+            <div className="w-full relative z-30 animate-in slide-in-from-top-3 duration-300">
+              <div className="bg-gradient-to-r from-emerald-950/95 via-slate-900/98 to-indigo-950/95 backdrop-blur-2xl border-2 border-emerald-500/50 rounded-2xl p-3 shadow-[0_15px_40px_rgba(16,185,129,0.35)] flex items-center justify-between gap-2.5 w-full">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                    <Zap className="w-4 h-4 text-amber-400 fill-amber-400/20" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider">
+                      {betterRouteSuggestion.savingsLabel}
+                    </span>
+                    <p className="text-[11px] font-bold text-slate-200 truncate">
+                      {betterRouteSuggestion.reason}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onSwitchRoute && onSwitchRoute(betterRouteSuggestion.route)}
+                    className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-[10px] rounded-xl shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <GitFork className="w-3 h-3" />
+                    <span>Switch</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDismissReroute && onDismissReroute()}
+                    className="w-7 h-7 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Dynamic Toll Avoidance Alert */}
+          {upcomingTollAlert && (
+            <div className="w-full relative z-30 animate-in slide-in-from-top-3 duration-300">
+              <div className="bg-gradient-to-r from-rose-950/95 via-slate-900/98 to-amber-950/95 backdrop-blur-2xl border-2 border-rose-500/50 rounded-2xl p-3 shadow-[0_15px_40px_rgba(244,63,94,0.35)] flex items-center justify-between gap-2.5 w-full">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center shrink-0">
+                    <CreditCard className="w-4 h-4 text-rose-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] font-black text-rose-400 uppercase tracking-wider">
+                      Toll Plaza (~${upcomingTollAlert.estimatedToll.toFixed(2)})
+                    </span>
+                    <p className="text-[11px] font-bold text-slate-200 truncate">
+                      {upcomingTollAlert.tollName}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onTakeTollFreeExit && onTakeTollFreeExit()}
+                    className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black text-[10px] rounded-xl shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <Signpost className="w-3 h-3" />
+                    <span>Exit</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDismissTollAlert && onDismissTollAlert()}
+                    className="w-7 h-7 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Convoy Telemetry Pill */}
+          {(activeConvoy || convoyTelemetry.length > 0) && (
+            <div className="w-full relative z-30 animate-in slide-in-from-top-2 duration-300">
+              <div 
+                onClick={() => setIsConvoyDrawerOpen(true)}
+                className="bg-gradient-to-r from-purple-950/95 via-slate-900/98 to-indigo-950/95 backdrop-blur-2xl border-2 border-purple-500/50 rounded-2xl p-2.5 shadow-[0_12px_35px_rgba(168,85,247,0.3)] flex items-center justify-between gap-2.5 w-full cursor-pointer hover:border-purple-400 transition-all group"
+              >
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-7 h-7 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+                    <Users className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-300">
+                      {activeConvoy ? 'Convoy Active' : 'Nearby Circle'}
+                    </span>
+                    {convoyTelemetry.length > 0 && (
+                      <p className="text-[10px] text-slate-300 truncate">
+                        {convoyTelemetry[0].name}: {convoyTelemetry[0].distanceToUserMiles.toFixed(1)} mi ({convoyTelemetry[0].speed} MPH)
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <span className="px-2 py-1 rounded-lg bg-purple-600 text-white text-[9px] font-black shrink-0">
+                  View ({convoyTelemetry.length})
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Road Advisory Banner */}
+          {advisory && !advisoryDismissed && (
+            <div className="w-full relative z-25 animate-in slide-in-from-top duration-300">
+              <div className={`p-3 rounded-2xl border backdrop-blur-xl shadow-xl w-full flex items-start justify-between gap-2
+                ${advisory.severity === 'high' ? 'bg-red-950/90 border-red-500/50 shadow-[0_10px_30px_rgba(239,68,68,0.3)]' :
+                  advisory.severity === 'medium' ? 'bg-amber-950/90 border-amber-500/50 shadow-[0_10px_30px_rgba(245,158,11,0.3)]' :
+                    'bg-slate-950/90 border-indigo-500/40 shadow-[0_10px_30px_rgba(99,102,241,0.3)]'}
+              `}>
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 border ${
+                    advisory.severity === 'high' ? 'bg-red-500/20 border-red-400/40 text-red-300' :
+                    advisory.severity === 'medium' ? 'bg-amber-500/20 border-amber-400/40 text-amber-300' :
+                    'bg-indigo-500/20 border-indigo-400/40 text-indigo-300'
+                  }`}>
+                    {renderAdvisoryIcon(advisory.icon, advisory.type, "w-3.5 h-3.5")}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-white font-bold uppercase tracking-wider text-[9px] leading-tight mb-0.5">{advisory.title}</h4>
+                    <p className="text-slate-300 text-[10px] leading-snug">{advisory.description}</p>
+                  </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setAdvisoryDismissed(true)} 
+                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                  title="Dismiss advisory"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Crowd-Sourced Road Incident Ahead: Interactive Still-There / Cleared Confirmation Banner */}
-      {approachingIncident && (
-        <div className="w-full pointer-events-auto flex justify-center mt-2 px-3 animate-in slide-in-from-top duration-300">
-          <div className="bg-slate-950/95 backdrop-blur-2xl border-2 border-amber-500/60 rounded-2xl p-3 shadow-[0_15px_40px_rgba(245,158,11,0.3)] flex items-center justify-between gap-3 max-w-lg w-full">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-2xl flex items-center justify-center border border-amber-400/40 shrink-0 shadow-inner">
-                {approachingIncident.type === 'police' ? '🚔' :
-                 approachingIncident.type === 'hazard' ? '⚠️' :
-                 approachingIncident.type === 'shoulder' ? '🚗' :
-                 approachingIncident.type === 'construction' ? '🚧' :
-                 approachingIncident.type === 'traffic' ? '🚙' : '🛡️'}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <h4 className="text-xs font-black text-white uppercase tracking-wider">
-                    {approachingIncident.type === 'police' ? 'Police Trap Reported' :
-                     approachingIncident.type === 'hazard' ? 'Road Hazard Ahead' :
-                     approachingIncident.type === 'shoulder' ? 'Vehicle on Shoulder' :
-                     approachingIncident.type === 'construction' ? 'Work Zone Ahead' : 'Traffic Slowdown'}
-                  </h4>
-                  <span className="text-[10px] font-bold text-amber-400">
-                    ({(getDistanceMeters(userLocation || { lat: 0, lng: 0 }, approachingIncident.location) * 0.000621371).toFixed(1)} mi)
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-300 truncate">Is this still there?</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  incidentService.upvoteIncident(approachingIncident.id, currentUserId || 'driver');
-                  setDismissedIncidentIds(prev => new Set(prev).add(approachingIncident.id));
-                }}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black shadow-md active:scale-95 transition-all flex items-center gap-1 cursor-pointer"
-              >
-                <span>👍</span>
-                <span>Still There</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  incidentService.clearIncident(approachingIncident.id, currentUserId || 'driver');
-                  setDismissedIncidentIds(prev => new Set(prev).add(approachingIncident.id));
-                }}
-                className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-slate-300 rounded-xl text-[10px] font-bold active:scale-95 transition-all cursor-pointer"
-              >
-                <span>Cleared ✕</span>
-              </button>
-            </div>
-          </div>
+      {/* Floating Recenter Map Button (when camera is moved away from vehicle) */}
+      {isCameraFree && (
+        <div className="absolute bottom-24 sm:bottom-28 left-1/2 transform -translate-x-1/2 z-40 pointer-events-auto animate-in fade-in zoom-in duration-200">
+          <button
+            type="button"
+            onClick={onRecenter}
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-gray-900 rounded-full shadow-xl border border-gray-100 font-black text-xs uppercase tracking-wider active:scale-95 transition-all cursor-pointer ring-2 ring-purple-500/20"
+          >
+            <Crosshair className="w-4 h-4 text-purple-600 animate-pulse" />
+            <span>Recenter Map</span>
+          </button>
         </div>
       )}
 
-      {/* Final 150-Foot "Storefront Approach Card" (Visual Confirmation) */}
-      {isApproachingStorefront && (
-        <div className="w-full pointer-events-auto flex justify-center mt-2 px-3 animate-in slide-in-from-top zoom-in-95 duration-300">
-          <div className="bg-slate-950/95 backdrop-blur-2xl border-2 border-emerald-500/70 rounded-2xl p-3 shadow-[0_15px_45px_rgba(16,185,129,0.35)] flex flex-col gap-2.5 max-w-lg w-full">
-            {/* Top Row: Badge, Live Distance, Close Button */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2.5 w-2.5 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                </span>
-                <span className="text-[11px] font-black uppercase tracking-wider text-emerald-300 flex items-center gap-1">
-                  <span>🏁 Approaching Entrance</span>
-                </span>
+      {/* BOTTOM-CENTER HORIZONTAL ROW */}
+      <div 
+        className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex flex-row items-end justify-center gap-2 z-40 pointer-events-none w-max max-w-[98vw] px-2"
+        style={{
+          paddingBottom: 'max(calc(env(safe-area-inset-bottom, 0px)), 0px)'
+        }}
+      >
+        {/* 1. Speedometer Widget */}
+        <SpeedometerDial
+          speed={speed}
+          isSpeeding={isSpeeding}
+          isSevereSpeeding={isSevereSpeeding}
+        />
+
+        {/* 2. Speed Limit Widget */}
+        <SpeedLimitWidget
+          currentSpeedLimit={currentSpeedLimit}
+          isSpeeding={isSpeeding}
+          isSevereSpeeding={isSevereSpeeding}
+          hasCameraNearby={hasCameraNearby}
+        />
+
+        {/* 3. The Main ETA/Trip Summary Card (w-auto so it fits naturally) */}
+        <div className="w-auto shrink-0 pointer-events-auto">
+          <TripSummaryCard
+            activeStop={activeStop}
+            currentLegIdx={currentLegIdx}
+            displayEta={displayEta}
+            displayDist={displayDist}
+            hasWaypoints={hasWaypoints}
+            route={route}
+            safetyScore={safetyScore}
+            sessionPoints={sessionPoints}
+            onClick={() => setShowDetails(!showDetails)}
+          />
+        </div>
+
+        {/* 4. Recenter Button (Crosshair) */}
+        <button
+          type="button"
+          onClick={onRecenter}
+          title="Recenter Map onto Vehicle"
+          className={`w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-2xl border flex items-center justify-center shadow-md transition-all active:scale-95 cursor-pointer pointer-events-auto ${
+            isCameraFree
+              ? 'bg-amber-500 text-white border-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.5)] animate-pulse'
+              : 'bg-white border-gray-100 text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+          }`}
+        >
+          <Crosshair className="w-5 h-5 sm:w-6 sm:h-6" />
+        </button>
+
+        {/* 5. Alternate Routes Button (Arrows) */}
+        <button
+          type="button"
+          onClick={() => {
+            setIsAlternativesModalOpen(prev => !prev);
+            if (!isAlternativesModalOpen && onRecalculateRoutes) {
+              onRecalculateRoutes();
+            }
+          }}
+          title="Alternative Routes & Recalculate"
+          className={`w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-2xl border flex items-center justify-center shadow-md transition-all active:scale-95 cursor-pointer pointer-events-auto ${
+            isAlternativesModalOpen || isRecalculatingRoutes
+              ? 'bg-purple-600 text-white border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.4)]'
+              : 'bg-white border-gray-100 text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+          }`}
+        >
+          <RefreshCw className={`w-5 h-5 sm:w-6 sm:h-6 ${isRecalculatingRoutes ? 'animate-spin' : ''}`} />
+        </button>
+
+        {/* 6. Mute Button (Speaker) */}
+        <button
+          type="button"
+          onClick={() => {
+            const next = speechService.toggleMuted();
+            setIsVoiceMuted(next);
+            if (next) {
+              // Explicitly and instantly cancel any ongoing speech utterance and flush TTS queue
+              if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                try {
+                  window.speechSynthesis.cancel();
+                } catch {}
+              }
+              audioService.cancel();
+            }
+          }}
+          title={isVoiceMuted ? "Unmute voice guidance" : "Mute voice guidance"}
+          className={`w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-2xl border flex items-center justify-center shadow-md transition-all active:scale-95 cursor-pointer pointer-events-auto ${
+            isVoiceMuted 
+              ? 'bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100' 
+              : 'bg-white border-gray-100 text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+          }`}
+        >
+          {isVoiceMuted ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6" /> : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6" />}
+        </button>
+
+        {/* 7. End Trip Button (Red X) */}
+        <button
+          type="button"
+          onClick={onCancel}
+          title="Exit Navigation"
+          className="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-2xl bg-red-50 border border-red-200 text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 flex items-center justify-center shadow-md transition-all active:scale-95 cursor-pointer pointer-events-auto"
+        >
+          <X className="w-6 h-6 sm:w-7 sm:h-7" />
+        </button>
+      </div>
+
+      {/* Alternative Routes & On-the-Fly Reroute Selection Modal */}
+      {isAlternativesModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 pointer-events-auto">
+          <div className="bg-slate-900/98 border border-white/15 rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-[0_25px_70px_rgba(0,0,0,0.85)] space-y-4 max-h-[85vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-md text-white">
+                  <Route className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white">Route Alternatives</h3>
+                  <p className="text-xs text-slate-400 truncate max-w-[200px] sm:max-w-[280px]">
+                    To: <span className="text-slate-200 font-bold">{route.destinationName}</span>
+                  </p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                {distanceToDestinationMeters !== null && (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-black border border-emerald-500/30">
-                    {Math.round(distanceToDestinationMeters * 3.28084)} ft away
-                  </span>
-                )}
                 <button
                   type="button"
-                  onClick={() => setIsStorefrontCardDismissed(true)}
-                  className="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center text-xs font-bold transition-all cursor-pointer"
-                  title="Dismiss approach card"
+                  onClick={() => onRecalculateRoutes && onRecalculateRoutes()}
+                  disabled={isRecalculatingRoutes}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Recalculate fresh routes from current GPS"
                 >
-                  ✕
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRecalculatingRoutes ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">{isRecalculatingRoutes ? 'Evaluating...' : 'Refresh'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAlternativesModalOpen(false)}
+                  className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* Content Row: Photo Thumbnail + Guidance */}
-            <div className="flex items-center gap-3">
-              {route.destinationImageUrl && (
-                <div 
-                  onClick={() => setIsStorefrontLightboxOpen(true)}
-                  className="relative w-20 h-16 sm:w-24 sm:h-20 rounded-xl overflow-hidden border-2 border-emerald-400/60 shadow-md shrink-0 group cursor-pointer"
-                >
-                  <img
-                    src={route.destinationImageUrl}
-                    alt={route.destinationName}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                  <span className="absolute bottom-1 right-1 text-[8px] font-bold text-white bg-black/60 px-1 py-0.5 rounded">
-                    🔍 View
-                  </span>
-                </div>
-              )}
+            {/* Content List */}
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1 no-scrollbar">
+              {((alternativeRoutes && alternativeRoutes.length > 0) ? alternativeRoutes : [route]).map((r, idx) => {
+                const isActive = (r.id === route.id) || (r.summary === route.summary && r.totalDistance === route.totalDistance);
 
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <h4 className="text-sm font-black text-white truncate">
-                    {route.destinationName}
-                  </h4>
-                  {route.destinationEntranceType && (
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border flex items-center gap-1 shrink-0 ${
-                      route.destinationEntranceType === 'drive_thru'
-                        ? 'bg-amber-500/25 text-amber-300 border-amber-500/50 shadow-sm'
-                        : route.destinationEntranceType === 'parking'
-                        ? 'bg-sky-500/25 text-sky-300 border-sky-500/50 shadow-sm'
-                        : route.destinationEntranceType === 'curbside'
-                        ? 'bg-purple-500/25 text-purple-300 border-purple-500/50 shadow-sm'
-                        : 'bg-emerald-500/25 text-emerald-300 border-emerald-500/50 shadow-sm'
-                    }`}>
-                      <span>
-                        {route.destinationEntranceType === 'drive_thru' ? '🚗' :
-                         route.destinationEntranceType === 'parking' ? '🅿️' :
-                         route.destinationEntranceType === 'curbside' ? '📦' : '🚪'}
-                      </span>
-                      <span>
-                        {route.destinationEntranceType === 'drive_thru' ? 'Drive-Thru' :
-                         route.destinationEntranceType === 'parking' ? 'Parking Lot' :
-                         route.destinationEntranceType === 'curbside' ? 'Curbside' : 'Main Door'}
-                      </span>
-                    </span>
-                  )}
-                </div>
-                {route.destinationEntranceNotes ? (
-                  <p className="text-xs font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-xl mt-1 line-clamp-2">
-                    🚗 {route.destinationEntranceNotes}
-                  </p>
-                ) : (
-                  <p className="text-xs text-slate-300 mt-0.5 font-medium">
-                    Storefront photo attached. Look for this building entrance.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Hive-Mind Fleet Routing: Leader Diverted Interactive 10-Second Countdown Card */}
-      {leaderDivertedPrompt && (
-        <div className={`w-full pointer-events-auto flex justify-center mt-2.5 px-4 animate-in slide-in-from-top-4 duration-300`}>
-          <div className="bg-gradient-to-r from-purple-950/95 via-slate-900/98 to-indigo-950/95 backdrop-blur-2xl border-2 border-purple-500/60 rounded-2xl sm:rounded-3xl p-3.5 sm:px-5 sm:py-4 shadow-[0_20px_50px_rgba(168,85,247,0.4)] flex flex-col gap-3 max-w-lg w-full relative overflow-hidden">
-            {/* 10-Second Auto-Sync Progress Bar */}
-            <div 
-              className="absolute top-0 left-0 h-1.5 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 transition-all duration-1000 ease-linear"
-              style={{ width: `${(leaderDivertedPrompt.timeRemainingSeconds / 10) * 100}%` }}
-            />
-
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-xl shrink-0 shadow-md animate-pulse">
-                  🔀
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-black text-purple-300 uppercase tracking-wider">
-                      Convoy Leader Diverted
-                    </span>
-                    <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-purple-500/30 text-purple-200 border border-purple-400/40 animate-pulse">
-                      Auto-sync in {leaderDivertedPrompt.timeRemainingSeconds}s
-                    </span>
-                  </div>
-                  <p className="text-xs font-bold text-slate-100 truncate mt-0.5">
-                    {leaderDivertedPrompt.leaderName} took new path: {leaderDivertedPrompt.reason}
-                  </p>
-                  <p className="text-[10px] text-slate-400 font-medium">
-                    New ETA: {leaderDivertedPrompt.newRoute.totalTime} • {leaderDivertedPrompt.newRoute.totalDistance}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Decision Action Buttons */}
-            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
-              <button
-                type="button"
-                onClick={onFollowLeader}
-                className="py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-600/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <span>⚡ Follow Leader</span>
-              </button>
-              <button
-                type="button"
-                onClick={onKeepOriginalRoute}
-                className="py-2.5 px-3 bg-white/10 hover:bg-white/20 active:scale-95 text-slate-300 hover:text-white font-bold text-xs rounded-xl border border-white/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <span>🛑 Keep My Route</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Predictive Ambient Maintenance: Commute Corridor Auto-Service Highlight */}
-      {ambientMaintenanceAdvisory && (
-        <div className={`w-full pointer-events-auto flex justify-center mt-2.5 px-4 animate-in slide-in-from-top-3 duration-300`}>
-          <div className="bg-gradient-to-r from-amber-950/95 via-slate-900/98 to-orange-950/95 backdrop-blur-2xl border-2 border-amber-500/60 rounded-2xl sm:rounded-3xl p-3 sm:px-5 sm:py-3.5 shadow-[0_15px_40px_rgba(245,158,11,0.35)] flex items-center justify-between gap-3 sm:gap-6 max-w-lg w-full">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shrink-0 shadow-md animate-pulse">
-                {ambientMaintenanceAdvisory.item.icon || '🔧'}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-black text-amber-400 uppercase tracking-wider">
-                    {ambientMaintenanceAdvisory.item.title} Due Soon
-                  </span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                    {Math.round(ambientMaintenanceAdvisory.item.milesRemaining)} mi left
-                  </span>
-                </div>
-                <p className="text-xs font-bold text-slate-200 truncate mt-0.5">
-                  Stop: {ambientMaintenanceAdvisory.recommendedPlace.name}
-                </p>
-                <p className="text-[10px] text-slate-400 truncate">
-                  {ambientMaintenanceAdvisory.places.length} mechanics along your standard commute
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => onSelectMaintenanceStop && onSelectMaintenanceStop(ambientMaintenanceAdvisory.recommendedPlace)}
-                className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/30 transition-all flex items-center gap-1 cursor-pointer"
-              >
-                <span>➕</span> Add Stop
-              </button>
-              <button
-                type="button"
-                onClick={() => onDismissMaintenanceAdvisory && onDismissMaintenanceAdvisory()}
-                className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
-                title="Dismiss recommendation"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Dynamic In-Drive Reroute Option Switcher Pill */}
-      {betterRouteSuggestion && (
-        <div className={`w-full pointer-events-auto flex justify-center mt-2.5 px-4 animate-in slide-in-from-top-3 duration-300`}>
-          <div className="bg-gradient-to-r from-emerald-950/95 via-slate-900/98 to-indigo-950/95 backdrop-blur-2xl border-2 border-emerald-500/50 rounded-2xl sm:rounded-3xl p-3 sm:px-5 sm:py-3.5 shadow-[0_15px_40px_rgba(16,185,129,0.35)] flex items-center justify-between gap-3 sm:gap-6 max-w-lg w-full">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-lg shrink-0 shadow-md">
-                {betterRouteSuggestion.route.routeType === 'toll_free' ? '🟢' : '⚡'}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-black text-emerald-400 uppercase tracking-wider">
-                    {betterRouteSuggestion.savingsLabel}
-                  </span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                    {betterRouteSuggestion.route.totalTime}
-                  </span>
-                </div>
-                <p className="text-xs font-bold text-slate-200 truncate mt-0.5">
-                  {betterRouteSuggestion.reason}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => onSwitchRoute && onSwitchRoute(betterRouteSuggestion.route)}
-                className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-500/30 transition-all flex items-center gap-1"
-              >
-                <span>🔀</span> Switch
-              </button>
-              <button
-                type="button"
-                onClick={() => onDismissReroute && onDismissReroute()}
-                className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center"
-                title="Dismiss suggestion"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Dynamic In-Drive Toll Avoidance Switcher Chip */}
-      {upcomingTollAlert && (
-        <div className={`w-full pointer-events-auto flex justify-center mt-2 px-4 animate-in slide-in-from-top-3 duration-300`}>
-          <div className="bg-gradient-to-r from-rose-950/95 via-slate-900/98 to-amber-950/95 backdrop-blur-2xl border-2 border-rose-500/50 rounded-2xl sm:rounded-3xl p-3 sm:px-5 sm:py-3.5 shadow-[0_15px_40px_rgba(244,63,94,0.35)] flex items-center justify-between gap-3 sm:gap-6 max-w-lg w-full">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-lg shrink-0 shadow-md">
-                💳
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-black text-rose-400 uppercase tracking-wider">
-                    Toll Plaza Ahead (~${upcomingTollAlert.estimatedToll.toFixed(2)})
-                  </span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300">
-                    in {(upcomingTollAlert.distanceMeters / 1609).toFixed(1)} mi
-                  </span>
-                </div>
-                <p className="text-xs font-bold text-slate-200 truncate mt-0.5">
-                  {upcomingTollAlert.tollName}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => onTakeTollFreeExit && onTakeTollFreeExit()}
-                className="px-3.5 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-500/30 transition-all flex items-center gap-1"
-              >
-                <span>🛣️</span> Take Toll-Free Exit
-              </button>
-              <button
-                type="button"
-                onClick={() => onDismissTollAlert && onDismissTollAlert()}
-                className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center"
-                title="Dismiss toll alert"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Multi-Vehicle Caravan & Convoy Telemetry Pill */}
-      {(activeConvoy || convoyTelemetry.length > 0) && (
-        <div className={`w-full pointer-events-auto flex justify-center mt-2 px-4 animate-in slide-in-from-top-2 duration-300`}>
-          <div 
-            onClick={() => setIsConvoyDrawerOpen(true)}
-            className="bg-gradient-to-r from-purple-950/95 via-slate-900/98 to-indigo-950/95 backdrop-blur-2xl border-2 border-purple-500/50 rounded-2xl sm:rounded-3xl p-2.5 sm:px-4 sm:py-2.5 shadow-[0_12px_35px_rgba(168,85,247,0.3)] flex items-center justify-between gap-3 max-w-lg w-full cursor-pointer hover:border-purple-400 transition-all group"
-          >
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <span className="text-base sm:text-lg animate-pulse">🚗🚗</span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-purple-300">
-                    {activeConvoy ? 'Convoy Active' : 'Nearby Circle'}
-                  </span>
-                  {convoyTelemetry.length > 0 && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-purple-500/25 text-purple-200 truncate">
-                      {convoyTelemetry[0].name}: {convoyTelemetry[0].distanceToUserMiles.toFixed(1)} mi {convoyTelemetry[0].isAhead ? 'ahead' : 'behind'} ({convoyTelemetry[0].speed} MPH)
-                    </span>
-                  )}
-                </div>
-                {convoyTelemetry.length > 0 && convoyTelemetry[0].status === 'lagging' && (
-                  <p className="text-[10px] text-amber-300 font-bold truncate mt-0.5 animate-pulse">
-                    ⚠️ {convoyTelemetry[0].name} is falling behind
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsConvoyDrawerOpen(true);
-              }}
-              className="px-2.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-black shadow-md flex items-center gap-1 shrink-0"
-            >
-              <span>⚙️</span> Convoy ({convoyTelemetry.length})
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Upcoming maneuver preview */}
-      {steps[stepIndex + 1] && (
-        <div className={`w-full pointer-events-auto flex justify-center mt-2 px-3 transition-all duration-700 animate-in fade-in slide-in-from-top-2`}>
-          <div className="bg-black/40 backdrop-blur-xl border border-white/5 rounded-full px-4 py-1.5 flex items-center gap-3 shadow-lg">
-            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Next</span>
-            <div className="w-px h-3 bg-white/10" />
-            <p className="text-[11px] font-bold text-slate-300 truncate max-w-[200px]">
-              {steps[stepIndex + 1].instruction}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Advisory Alert */}
-      {advisory && !advisoryDismissed && (
-        isMobile ? (
-          <div 
-            className="absolute left-3.5 z-10 pointer-events-auto"
-            style={{ top: 'max(calc(env(safe-area-inset-top, 0px) + 180px), 195px)' }}
-          >
-            {advisoryExpanded ? (
-              <div className={`p-3 rounded-xl border backdrop-blur-xl animate-in slide-in-from-left duration-300 shadow-xl max-w-[250px]
-                ${advisory.severity === 'high' ? 'bg-red-500/30 border-red-500/40' :
-                  advisory.severity === 'medium' ? 'bg-amber-500/30 border-amber-500/40' :
-                    'bg-indigo-500/30 border-indigo-500/40'}
-              `}>
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm">
-                      {advisory.icon || (advisory.type === 'weather' ? '⛈️' : advisory.type === 'traffic' ? '🚗' : advisory.type === 'crime' ? '🛡️' : '⚠️')}
-                    </span>
-                    <h4 className="text-white font-bold uppercase tracking-wider text-[9px]">{advisory.title}</h4>
-                  </div>
-                  <button onClick={() => setAdvisoryDismissed(true)} className="text-slate-400 hover:text-white text-xs">✕</button>
-                </div>
-                <p className="text-slate-200 text-[11px] leading-tight">{advisory.description}</p>
-              </div>
-            ) : (
-              <button
-                onClick={() => setAdvisoryExpanded(true)}
-                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg border backdrop-blur-xl transition-all active:scale-90
-                ${advisory.severity === 'high' ? 'bg-red-500/40 border-red-500/50' :
-                  advisory.severity === 'medium' ? 'bg-amber-500/40 border-amber-500/50' :
-                    'bg-indigo-500/40 border-indigo-500/50'}
-                `}
-              >
-                <span className="text-sm">
-                  {advisory.icon || (advisory.type === 'weather' ? '⛈️' : advisory.type === 'traffic' ? '🚗' : advisory.type === 'crime' ? '🛡️' : '⚠️')}
-                </span>
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="absolute top-44 left-6 z-10 pointer-events-auto">
-            <div className={`p-4 rounded-2xl border backdrop-blur-xl animate-in slide-in-from-right duration-500 shadow-xl max-w-xs
-              ${advisory.severity === 'high' ? 'bg-red-500/30 border-red-500/40' :
-                advisory.severity === 'medium' ? 'bg-amber-500/30 border-amber-500/40' :
-                  'bg-indigo-500/30 border-indigo-500/40'}
-            `}>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-lg">
-                  {advisory.icon || (advisory.type === 'weather' ? '⛈️' : advisory.type === 'traffic' ? '🚗' : advisory.type === 'crime' ? '🛡️' : '⚠️')}
-                </span>
-                <h4 className="text-white font-bold uppercase tracking-wider text-[10px]">{advisory.title}</h4>
-              </div>
-              <p className="text-slate-200 text-xs leading-snug">{advisory.description}</p>
-            </div>
-          </div>
-        )
-      )}
-
-      {/* Spacer - Map visible in center */}
-      <div className="flex-1" />
-
-      {/* DESKTOP / TABLET: Left Docked Navigation Cockpit + Right Action Buttons */}
-      {!isMobile ? (
-        <>
-          {/* Left Docked Navigation Sidebar (Flush Far-Left Margin) */}
-          <div className="absolute left-6 bottom-6 z-20 pointer-events-auto flex flex-col gap-3 w-[340px] max-w-[360px] animate-in slide-in-from-left duration-500">
-            {/* ETA & Distance Summary Card */}
-            <div className="bg-black/80 backdrop-blur-2xl border border-white/15 rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col gap-1">
-                  <div className="flex gap-5">
-                    <div>
-                      <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">
-                        {activeStop ? `Stop ${currentLegIdx + 1} ETA` : 'Estimated Arrival'}
-                      </p>
-                      <p className="font-black text-white text-2xl tracking-tight">{displayEta}</p>
-                    </div>
-                    <div className="w-px bg-white/15" />
-                    <div>
-                      <p className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">
-                        {activeStop ? `To Stop ${currentLegIdx + 1}` : 'Distance'}
-                      </p>
-                      <p className="font-black text-white text-2xl tracking-tight">{displayDist}</p>
-                    </div>
-                  </div>
-                  {hasWaypoints && (
-                    <p className="text-[9px] font-bold text-slate-400">
-                      🏁 Trip Total: <span className="text-white font-black">{route.totalTime}</span> • <span className="text-white font-black">{route.totalDistance}</span>
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex flex-col items-end gap-1">
-                  <div className="px-2 py-0.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1">
-                    <span className="text-[11px]">🛡️</span>
-                    <span className="text-[10px] font-black text-emerald-400">{safetyScore}% Safety</span>
-                  </div>
-                  {sessionPoints !== undefined && (
-                    <span className="text-[10px] font-black text-amber-400/80 px-1">
-                      {sessionPoints > 0 ? `+${sessionPoints} Pts` : '0 Pts'}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Step-by-Step Itinerary Deck */}
-            <div className="bg-black/80 backdrop-blur-2xl border border-white/15 rounded-3xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
-                  Upcoming Itinerary ({steps.length - stepIndex} Remaining)
-                </p>
-                <span className="text-[9px] text-slate-400 font-bold truncate max-w-[120px]" title={route.destinationName}>
-                  {route.destinationName}
-                </span>
-              </div>
-
-              {showDetails && (
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar animate-in fade-in duration-300">
-                  {steps.slice(stepIndex).map((step, sliceIdx) => {
-                    const actualIdx = stepIndex + sliceIdx;
-                    const isCurrent = sliceIdx === 0;
-
-                    return (
-                      <div key={actualIdx} className={`flex gap-2.5 items-center p-2 rounded-2xl transition-all ${
-                        isCurrent 
-                          ? 'bg-indigo-500/25 border border-indigo-500/50 shadow-lg' 
-                          : 'bg-white/5 border border-white/5 opacity-75 hover:opacity-100'
-                      }`}>
-                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
-                          isCurrent ? 'bg-indigo-600 text-white shadow-md' : 'bg-white/10 text-slate-400'
-                        }`}>
-                          <span className="text-[10px] font-black">{actualIdx + 1}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-[11px] font-bold leading-snug ${isCurrent ? 'text-white' : 'text-slate-300'}`}>
-                            {step.instruction}
-                          </p>
-                          {step.lanes && step.lanes.length > 0 && (
-                            <div className="flex items-center gap-1 mt-1">
-                              {step.lanes.map((l, lk) => (
-                                <span
-                                  key={lk}
-                                  className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[8px] font-black ${
-                                    l.isValid ? 'bg-sky-500/30 text-sky-300 border border-sky-400/40' : 'bg-white/5 text-slate-500'
-                                  }`}
-                                >
-                                  {l.direction === 'right' || l.direction === 'slight_right' ? '↗' : l.direction === 'left' || l.direction === 'slight_left' ? '↖' : l.direction === 'uturn' ? '↶' : '↑'}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {step.speedLimit && (
-                            <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-black text-slate-300">
-                              {step.speedLimit} MPH
+                return (
+                  <div
+                    key={r.id || `route_card_${idx}`}
+                    className={`p-4 rounded-2xl border transition-all duration-200 ${
+                      isActive
+                        ? 'bg-indigo-950/40 border-cyan-400/60 shadow-[0_0_20px_rgba(6,182,212,0.25)] ring-1 ring-cyan-400/40'
+                        : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                            isActive
+                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                              : r.routeType === 'toll_free' || !r.hasTolls
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                          }`}>
+                            {isActive ? 'Active Route' : (r.routeLabel || (r.routeType === 'toll_free' ? 'Toll-Free' : `Option ${idx + 1}`))}
+                          </span>
+                          {r.hasTolls ? (
+                            <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                              {r.tollCostEstimate || `$${r.estimatedTolls?.toFixed(2)} Tolls`}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                              No Tolls
                             </span>
                           )}
-                          <span className={`text-[10px] font-bold ${isCurrent ? 'text-indigo-300' : 'text-slate-500'}`}>
-                            {step.distance}
-                          </span>
+                        </div>
+
+                        <h4 className="text-sm sm:text-base font-black text-white truncate">
+                          {r.summary || 'Fastest Route'}
+                        </h4>
+
+                        <div className="flex items-center gap-3 text-xs text-slate-300 mt-1.5 flex-wrap">
+                          <span className="font-bold text-white text-sm">{r.totalTime}</span>
+                          <span className="text-slate-500">•</span>
+                          <span>{r.totalDistance}</span>
+                          {r.fuelCostEstimate && (
+                            <>
+                              <span className="text-slate-500">•</span>
+                              <span className="text-slate-400">{r.fuelCostEstimate} fuel</span>
+                            </>
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
 
-              <button
-                onClick={() => setShowDetails(!showDetails)}
-                className="mt-2.5 w-full flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-400 hover:text-white py-1 bg-white/5 hover:bg-white/10 rounded-xl border border-white/5 transition-all active:scale-95 cursor-pointer"
-              >
-                <span className="text-[9px] opacity-70">{showDetails ? '▼' : '▲'}</span>
-                <span>{showDetails ? 'Minimize Itinerary' : 'Expand Itinerary'}</span>
-              </button>
-            </div>
-
-            {/* Bottom Row: Speedometer Dial + Speed Limit Sign + Camera Warning */}
-            <div className="flex items-center gap-3">
-              {/* Speedometer Dial */}
-              <div className="relative shrink-0">
-                <div className="bg-black/80 backdrop-blur-2xl border-4 border-indigo-500/40 rounded-3xl w-24 h-24 flex flex-col items-center justify-center shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
-                  <span className={`font-black text-4xl leading-none transition-colors duration-300 ${
-                    isSevereSpeeding ? 'text-red-400' : isSpeeding ? 'text-amber-300' : 'text-white'
-                  }`}>{speed}</span>
-                  <span className="font-bold text-indigo-300 uppercase text-[10px] tracking-wider mt-0.5">MPH</span>
-                  <svg className="absolute inset-0 w-full h-full -rotate-90">
-                    <circle
-                      cx="48" cy="48" r="42"
-                      fill="none" stroke="currentColor" strokeWidth="3"
-                      strokeDasharray="264"
-                      strokeDashoffset={264 - (264 * (Math.min(speed, 80) / 80))}
-                      className={`${
-                        isSevereSpeeding ? 'text-red-500' : isSpeeding ? 'text-amber-400' : 'text-indigo-500'
-                      } transition-all duration-500`}
-                    />
-                  </svg>
-                </div>
-              </div>
-
-              {/* MUTCD Speed Limit Sign */}
-              <div className={`shrink-0 rounded-2xl border-2 flex flex-col items-center justify-center w-14 h-24 p-1 transition-all duration-300 ${
-                isSevereSpeeding
-                  ? 'bg-red-50 border-red-600 ring-4 ring-red-500/80 shadow-[0_0_25px_rgba(239,68,68,0.75)] animate-pulse'
-                  : isSpeeding
-                  ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400 shadow-[0_0_18px_rgba(245,158,11,0.65)]'
-                  : 'bg-white border-black shadow-xl'
-              }`}>
-                <span className={`font-black uppercase tracking-tighter text-[8px] leading-tight ${
-                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
-                }`}>SPEED</span>
-                <span className={`font-black uppercase tracking-tighter text-[8px] leading-tight ${
-                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
-                }`}>LIMIT</span>
-                <span className={`font-black text-2xl tracking-tight leading-none mt-1 ${
-                  isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600 font-black' : 'text-black'
-                }`}>
-                  {currentSpeedLimit}
-                </span>
-              </div>
-
-              {/* Safety / Speed Camera Warning Badge */}
-              {hasCameraNearby && (
-                <div className="flex-1 px-3 py-2 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-[10px] font-black text-amber-300 flex items-center justify-center gap-1.5 shadow-lg animate-pulse">
-                  <span>📷</span>
-                  <span className="leading-tight text-center">CAMERA ZONE</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Desktop Floating Recenter Button */}
-          {isCameraFree && (
-            <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in zoom-in duration-200">
-              <button
-                onClick={onRecenter}
-                className="flex items-center gap-2.5 px-6 py-3 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-full shadow-[0_12px_30px_rgba(99,102,241,0.65)] border-2 border-white/40 font-black text-xs uppercase tracking-wider backdrop-blur-xl active:scale-95 transition-all cursor-pointer"
-              >
-                <span className="text-base animate-pulse">🎯</span>
-                <span>Recenter Map</span>
-              </button>
-            </div>
-          )}
-
-          {/* Right Action Controls: Recenter + Voice Mute + Cancel */}
-          <div className="absolute right-6 bottom-6 z-20 pointer-events-auto flex items-center gap-3 animate-in slide-in-from-right duration-500">
-            {/* Recenter Button */}
-            <button
-              onClick={onRecenter}
-              title="Recenter Map onto Vehicle"
-              className={`border flex items-center justify-center shadow-2xl transition-all backdrop-blur-xl active:scale-95 h-20 w-20 rounded-3xl text-2xl cursor-pointer ${
-                isCameraFree
-                  ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_25px_rgba(245,158,11,0.7)] animate-pulse'
-                  : 'bg-black/60 border-white/20 text-white hover:bg-black/80 hover:border-white/40'
-              }`}
-            >
-              <span>🎯</span>
-            </button>
-
-            {/* Voice Mute / Unmute Toggle */}
-            <button
-              onClick={() => {
-                const next = speechService.toggleMuted();
-                setIsVoiceMuted(next);
-              }}
-              title={isVoiceMuted ? "Unmute voice guidance" : "Mute voice guidance"}
-              className={`border flex items-center justify-center shadow-2xl transition-all backdrop-blur-xl active:scale-95 h-20 w-20 rounded-3xl text-2xl ${
-                isVoiceMuted 
-                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-400 hover:bg-amber-500/30' 
-                  : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30'
-              }`}
-            >
-              <span>{isVoiceMuted ? '🔇' : '🔊'}</span>
-            </button>
-
-            {/* Cancel Navigation */}
-            <button
-              onClick={onCancel}
-              title="Exit Navigation"
-              className="bg-red-500/20 border border-red-500/40 text-red-500 flex items-center justify-center shadow-2xl hover:bg-red-500/40 transition-all backdrop-blur-xl active:scale-95 h-20 w-20 rounded-3xl"
-            >
-              <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </>
-      ) : (
-        /* MOBILE: Compact Bottom Sheet Layout */
-        <div className="w-full pointer-events-auto pb-3 px-3">
-          {/* Mobile Floating Recenter Button */}
-          {isCameraFree && (
-            <div className="flex justify-center mb-3 animate-in fade-in zoom-in duration-200">
-              <button
-                onClick={onRecenter}
-                className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-black rounded-full shadow-[0_8px_25px_rgba(245,158,11,0.6)] border-2 border-white font-black text-xs uppercase tracking-wider active:scale-95 transition-all cursor-pointer"
-              >
-                <span className="text-sm animate-pulse">🎯</span>
-                <span>Recenter Map</span>
-              </button>
-            </div>
-          )}
-          <div className="max-w-xl mx-auto flex items-end justify-between gap-3">
-            {/* Left: Speed + Speed Limit + ETA */}
-            <div className="flex items-end gap-2 flex-1">
-              {/* Speedometer */}
-              <div className="relative shrink-0">
-                <div className="bg-black/70 backdrop-blur-xl border-4 border-indigo-500/40 flex flex-col items-center justify-center shadow-xl rounded-2xl w-16 h-16">
-                  <span className={`font-black text-2xl leading-none ${
-                    isSevereSpeeding ? 'text-red-400' : isSpeeding ? 'text-amber-300' : 'text-white'
-                  }`}>{speed}</span>
-                  <span className="font-bold text-indigo-300 uppercase text-[7px]">MPH</span>
-                  <svg className="absolute inset-0 w-full h-full -rotate-90">
-                    <circle
-                      cx="32" cy="32" r="28"
-                      fill="none" stroke="currentColor" strokeWidth="2.5"
-                      strokeDasharray="176"
-                      strokeDashoffset={176 - (176 * (Math.min(speed, 80) / 80))}
-                      className={`${
-                        isSevereSpeeding ? 'text-red-500' : isSpeeding ? 'text-amber-400' : 'text-indigo-500'
-                      } transition-all duration-500`}
-                    />
-                  </svg>
-                </div>
-              </div>
-
-              {/* Mini Speed Limit Sign */}
-              <div className={`rounded-xl border flex flex-col items-center justify-center w-10 h-16 p-1 shrink-0 transition-all duration-300 ${
-                isSevereSpeeding
-                  ? 'bg-red-50 border-red-600 ring-2 ring-red-500 shadow-[0_0_14px_rgba(239,68,68,0.75)] animate-pulse'
-                  : isSpeeding
-                  ? 'bg-amber-50 border-amber-500 ring-1.5 ring-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.6)]'
-                  : 'bg-white border-black shadow-md'
-              }`}>
-                <span className={`font-black uppercase tracking-tighter text-[6px] leading-tight ${
-                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
-                }`}>SPEED</span>
-                <span className={`font-black uppercase tracking-tighter text-[6px] leading-tight ${
-                  isSevereSpeeding ? 'text-red-700' : isSpeeding ? 'text-amber-900' : 'text-black'
-                }`}>LIMIT</span>
-                <span className={`font-black text-base tracking-tight leading-none mt-0.5 ${
-                  isSevereSpeeding ? 'text-red-600' : isSpeeding ? 'text-amber-600 font-black' : 'text-black'
-                }`}>
-                  {currentSpeedLimit}
-                </span>
-              </div>
-
-              {/* ETA + Distance */}
-              <div className="bg-black/70 backdrop-blur-2xl border border-white/15 rounded-t-[2rem] rounded-b-xl p-3 flex-1 transition-all duration-500">
-                <div className="w-10 h-1 bg-white/10 rounded-full mx-auto mb-3" />
-                <div className="flex flex-col gap-1">
-                  <div className="flex gap-3">
-                    <div>
-                      <p className="font-bold text-slate-500 uppercase tracking-wider text-[7px]">
-                        {activeStop ? `Stop ${currentLegIdx + 1} ETA` : 'ETA'}
-                      </p>
-                      <p className="font-black text-white text-lg">{displayEta}</p>
-                    </div>
-                    <div className="w-px bg-white/10" />
-                    <div>
-                      <p className="font-bold text-slate-500 uppercase tracking-wider text-[7px]">
-                        {activeStop ? `To Stop ${currentLegIdx + 1}` : 'Distance'}
-                      </p>
-                      <p className="font-black text-white text-lg">{displayDist}</p>
-                    </div>
-                  </div>
-                  {hasWaypoints && (
-                    <p className="text-[8px] font-bold text-slate-400">
-                      🏁 Trip: <span className="text-white font-black">{route.totalTime}</span> • <span className="text-white font-black">{route.totalDistance}</span>
-                    </p>
-                  )}
-                </div>
-
-                {showDetails && (
-                  <div className="mt-3 pt-3 border-t border-white/10 animate-in slide-in-from-bottom duration-300">
-                    <div className="flex gap-6 mb-3 justify-between">
-                      <div>
-                        <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Safety</p>
-                        <p className="text-lg font-black text-emerald-400">{safetyScore}%</p>
-                      </div>
-                      {sessionPoints && sessionPoints > 0 && (
-                        <div>
-                          <p className="text-[9px] font-bold text-amber-500 uppercase tracking-widest">Points</p>
-                          <p className="text-lg font-black text-amber-400">+{sessionPoints}</p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
-                      {steps.slice(stepIndex, stepIndex + 3).map((step, sliceIdx) => {
-                        const actualIdx = stepIndex + sliceIdx;
-                        const isCurrent = sliceIdx === 0;
-
-                        return (
-                          <div key={actualIdx} className={`flex gap-2 items-center p-1.5 rounded-lg ${isCurrent ? 'bg-indigo-500/20 text-white' : 'text-slate-400'}`}>
-                            <span className="text-[10px] font-black w-4">{actualIdx + 1}</span>
-                            <p className="text-[11px] font-bold truncate flex-1">{step.instruction}</p>
-                            <span className="text-[10px] text-slate-500 shrink-0">{step.distance}</span>
+                      {/* Action Button */}
+                      <div className="shrink-0 pt-1">
+                        {isActive ? (
+                          <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-xs font-black">
+                            <Check className="w-3.5 h-3.5 text-cyan-300" />
+                            <span>Selected</span>
                           </div>
-                        );
-                      })}
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (onSwitchRoute) {
+                                onSwitchRoute(r);
+                                setIsAlternativesModalOpen(false);
+                              }
+                            }}
+                            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-xs shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <GitFork className="w-3.5 h-3.5" />
+                            <span>Select</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                )}
-
-                <button
-                  onClick={() => setShowDetails(!showDetails)}
-                  className="mt-2 w-full flex items-center justify-center gap-1 py-1.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20 text-indigo-300 font-bold text-[9px] uppercase tracking-wider active:scale-95"
-                >
-                  <span>{showDetails ? '▼ Hide Details' : '▲ More Stats'}</span>
-                </button>
-              </div>
+                );
+              })}
             </div>
 
-            {/* Mobile Right Action Controls: Recenter + Voice Mute + Cancel */}
-            <div className="flex items-center gap-2">
-              {/* Recenter Button */}
-              <button
-                onClick={onRecenter}
-                title="Recenter Map"
-                className={`border flex items-center justify-center shadow-2xl transition-all backdrop-blur-xl active:scale-95 h-14 w-14 rounded-xl text-xl cursor-pointer ${
-                  isCameraFree
-                    ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.6)] animate-pulse'
-                    : 'bg-black/60 border-white/20 text-white hover:bg-black/80'
-                }`}
-              >
-                <span>🎯</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  const next = speechService.toggleMuted();
-                  setIsVoiceMuted(next);
-                }}
-                className={`border flex items-center justify-center shadow-2xl transition-all backdrop-blur-xl active:scale-95 h-14 w-14 rounded-xl text-xl ${
-                  isVoiceMuted 
-                    ? 'bg-amber-500/20 border-amber-500/40 text-amber-400' 
-                    : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                }`}
-              >
-                <span>{isVoiceMuted ? '🔇' : '🔊'}</span>
-              </button>
-
-              <button
-                onClick={onCancel}
-                className="bg-red-500/20 border border-red-500/40 text-red-500 flex items-center justify-center shadow-2xl hover:bg-red-500/40 transition-all backdrop-blur-xl active:scale-95 h-14 w-14 rounded-xl"
-              >
-                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+            {/* Footer Tip */}
+            <div className="pt-2 border-t border-white/10 text-center shrink-0">
+              <p className="text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span><span className="text-slate-300 font-semibold">Tip:</span> You can also tap alternative route lines directly on the map to switch routes.</span>
+              </p>
             </div>
           </div>
         </div>
@@ -1351,11 +1356,13 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
 
       {/* Convoy Control Center Modal */}
       {isConvoyDrawerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200 pointer-events-auto">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200 pointer-events-auto">
           <div className="bg-slate-900 border border-purple-500/40 rounded-3xl p-5 max-w-md w-full shadow-[0_25px_60px_rgba(0,0,0,0.8)] space-y-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">🚗🚗</span>
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shadow-md shrink-0">
+                  <Users className="w-5 h-5" />
+                </div>
                 <div>
                   <h3 className="text-base font-black text-white">Caravan & Convoy Mode</h3>
                   <p className="text-xs text-purple-300">Multi-Vehicle Road Trip Linking</p>
@@ -1364,9 +1371,9 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               <button
                 type="button"
                 onClick={() => setIsConvoyDrawerOpen(false)}
-                className="w-8 h-8 rounded-full bg-white/10 text-slate-300 hover:text-white flex items-center justify-center"
+                className="w-8 h-8 rounded-full bg-white/10 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -1407,14 +1414,29 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
                       </div>
                     </div>
 
-                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-md ${
+                    <span className={`text-[9px] font-black px-2 py-1 rounded-md flex items-center gap-1.5 ${
                       member.status === 'lagging'
                         ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
                         : member.status === 'stopped'
-                        ? 'bg-red-500/20 text-red-300'
-                        : 'bg-emerald-500/20 text-emerald-300'
+                        ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                     }`}>
-                      {member.status === 'lagging' ? '⚠️ Lagging' : member.status === 'stopped' ? '🛑 Stopped' : '✅ In Sync'}
+                      {member.status === 'lagging' ? (
+                        <>
+                          <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          <span>Lagging</span>
+                        </>
+                      ) : member.status === 'stopped' ? (
+                        <>
+                          <OctagonAlert className="w-3 h-3 text-red-400" />
+                          <span>Stopped</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>In Sync</span>
+                        </>
+                      )}
                     </span>
                   </div>
                 ))
@@ -1440,7 +1462,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
                             convoyService.broadcastInvite(activeConvoy, 'Convoy Leader');
                           }
                         }}
-                        className="px-2 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-black shadow-sm"
+                        className="px-2 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-black shadow-sm cursor-pointer"
                       >
                         + Invite
                       </button>
@@ -1459,9 +1481,10 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
                     onClick={() => {
                       speechService.speak('Broadcasting pit stop request to convoy members.');
                     }}
-                    className="py-2.5 px-3 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-500/30 transition-all flex items-center justify-center gap-1.5"
+                    className="py-2.5 px-3 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <span>☕</span> Suggest Pit Stop
+                    <Coffee className="w-3.5 h-3.5" />
+                    <span>Suggest Pit Stop</span>
                   </button>
                   <button
                     type="button"
@@ -1469,9 +1492,10 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
                       convoyService.endConvoy();
                       setIsConvoyDrawerOpen(false);
                     }}
-                    className="py-2.5 px-3 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-bold hover:bg-red-500/30 transition-all flex items-center justify-center gap-1.5"
+                    className="py-2.5 px-3 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-bold hover:bg-red-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <span>⏹</span> End Convoy
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>End Convoy</span>
                   </button>
                 </div>
               ) : (
@@ -1487,9 +1511,10 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
                     );
                     setIsConvoyDrawerOpen(false);
                   }}
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-black shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-black shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <span>🚗🚗</span> Start Convoy with All Circle Members
+                  <Users className="w-4 h-4" />
+                  <span>Start Convoy with All Circle Members</span>
                 </button>
               )}
             </div>
@@ -1534,7 +1559,10 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
               <div className="min-w-0 flex-1 pr-2">
                 <h4 className="text-sm font-black text-white truncate">{route.destinationName}</h4>
                 {route.destinationEntranceNotes && (
-                  <p className="text-xs text-amber-300 font-bold truncate">🚗 {route.destinationEntranceNotes}</p>
+                  <p className="text-xs text-amber-300 font-bold truncate flex items-center gap-1.5 mt-0.5">
+                    <Car className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>{route.destinationEntranceNotes}</span>
+                  </p>
                 )}
               </div>
               <button
@@ -1550,6 +1578,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = ({
       )}
     </div>
   );
-};
+});
 
+export const DriveHUD = DriveModeHUD;
 export default DriveModeHUD;

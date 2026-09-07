@@ -11,7 +11,7 @@ import {
     UserProfile
 } from '../services/authService';
 import { encryptLocation, decryptLocation, getFuzzyLocation, getNeighborhoodCentroid } from '../services/cryptoService';
-import { detectTransition } from '../services/geofenceService';
+import { detectTransition, getEntranceArrivalMessage, isPointInEntranceZone } from '../services/geofenceService';
 import { getDistanceFromCoords } from '../utils/geo';
 import { FamilyMember, PrivacyMode } from '../types';
 import { useUI } from '../contexts/UIContext';
@@ -24,6 +24,8 @@ import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { registerDeadZone } from '../services/offlineLocationBuffer';
 import { backgroundKeySyncService } from '../services/backgroundKeySyncService';
 import { getCirclePrivacyMode, CirclePrivacyMode } from '../services/privacyService';
+import { checkTier1MicroZone, resolveLocationStatus } from '../services/locationService';
+import { parkingService } from '../services/parkingService';
 
 export const useLocationSync = (
     user: any,
@@ -139,7 +141,7 @@ export const useLocationSync = (
     useEffect(() => {
         const unsubscribe = batteryService.subscribe((info) => {
             if (user?.uid) {
-                setMembers(prev => prev.map(m => m.id === user.uid ? { ...m, battery: info.level } : m));
+                setMembers(prev => prev.map(m => m.id === user.uid ? { ...m, battery: info.level, batteryLevel: info.level, isCharging: info.isCharging } : m));
             }
         });
         return () => unsubscribe();
@@ -171,8 +173,66 @@ export const useLocationSync = (
         geolocationService.watchPosition((location) => {
             // Geofence Detection with Strict Accuracy Filtering, Dynamic Hysteresis Buffer & 45-Second PENDING_EXIT Debounce
             geofences.forEach(gf => {
-                const gfLat = gf?.entranceLocation?.lat ?? gf?.location?.lat ?? gf?.lat;
-                const gfLng = gf?.entranceLocation?.lng ?? gf?.location?.lng ?? gf?.lng;
+                // 0. Granular Entrance Arrival Check (Driveway / Parking pin with rectangular footprint)
+                const entranceLoc = gf.entrancePrecision?.location || gf.entranceLocation;
+                if (gf.entranceType && entranceLoc) {
+                    const isEntranceInside = isPointInEntranceZone(
+                        { lat: location.latitude, lng: location.longitude },
+                        gf.entrancePrecision,
+                        gf.entranceLocation,
+                        gf.entranceType
+                    );
+                    const storedEntranceStatus = localStorage.getItem(`gf_entrance_${gf.id}`);
+
+                    if (isEntranceInside && storedEntranceStatus !== 'INSIDE') {
+                        localStorage.setItem(`gf_entrance_${gf.id}`, 'INSIDE');
+
+                        // Only notify entrance if not already confirmed INSIDE the main place geofence
+                        const curConfirmed = localStorage.getItem(`gf_state_${gf.id}`);
+                        if (curConfirmed !== 'INSIDE') {
+                            const circleId = currentCircleIdRef.current || profileRef.current?.familyCircleId;
+                            const uid = userRef.current?.uid;
+                            const memberName = profileRef.current?.displayName || userRef.current?.displayName || 'You';
+
+                            if (circleId && uid) {
+                                broadcastGeofencePushAlert(
+                                    circleId,
+                                    uid,
+                                    memberName,
+                                    gf.name,
+                                    'arrival',
+                                    { lat: location.latitude, lng: location.longitude },
+                                    gf.entranceType
+                                ).catch(e => console.warn('Could not broadcast entrance push alert:', e));
+                            }
+
+                            const entranceMsg = getEntranceArrivalMessage(memberName, gf.name, gf.entranceType);
+                            speechService.speak(entranceMsg.title.replace(/^[^\w]+/, ''), { chime: 'arrival' });
+
+                            onTransitionRef.current?.({
+                                geofence: { ...gf, name: `${gf.name} (${entranceMsg.title})` },
+                                from: 'OUTSIDE',
+                                to: 'INSIDE',
+                                timestamp: Date.now()
+                            });
+                        }
+                    } else if (storedEntranceStatus === 'INSIDE') {
+                        // Reset entrance state with 15m departure hysteresis buffer
+                        const isStillInside = isPointInEntranceZone(
+                            { lat: location.latitude, lng: location.longitude },
+                            gf.entrancePrecision,
+                            gf.entranceLocation,
+                            gf.entranceType,
+                            15
+                        );
+                        if (!isStillInside) {
+                            localStorage.setItem(`gf_entrance_${gf.id}`, 'OUTSIDE');
+                        }
+                    }
+                }
+
+                const gfLat = gf?.location?.lat ?? gf?.lat;
+                const gfLng = gf?.location?.lng ?? gf?.lng;
                 if (typeof gfLat !== 'number' || typeof gfLng !== 'number') return;
 
                 const distance = getDistanceFromCoords(location.latitude, location.longitude, gfLat, gfLng);
@@ -227,6 +287,7 @@ export const useLocationSync = (
 
                                 // Officially commit OUTSIDE
                                 localStorage.setItem(`gf_state_${gf.id}`, 'OUTSIDE');
+                                localStorage.setItem(`gf_entrance_${gf.id}`, 'OUTSIDE');
                                 console.log(`🚶 Geofence: Officially broadcast Left ${gf.name} after 45s debounce window (${currentPending.fixCount} fixes outside).`);
 
                                 const circleId = currentCircleIdRef.current || profileRef.current?.familyCircleId;
@@ -389,9 +450,12 @@ export const useLocationSync = (
             const status: 'Driving' | 'Walking' | 'Stationary' = (speedMph > 5) ? 'Driving' : (speedMph > 0.6) ? 'Walking' : 'Stationary';
             const currentCoords = { lat: location.latitude, lng: location.longitude };
 
-            // Determine if user is currently inside any saved place zone
+            // Determine if user is currently inside any saved place zone or micro-zone (Tier 1)
             let currentPlaceName: string | undefined = undefined;
-            if (geofences && geofences.length > 0) {
+            const microMatch = checkTier1MicroZone(currentCoords);
+            if (microMatch) {
+                currentPlaceName = `${microMatch.place.name} (${microMatch.zoneName})`;
+            } else if (geofences && geofences.length > 0) {
                 for (const g of geofences) {
                     const gLat = g?.location?.lat ?? (g as any)?.lat;
                     const gLng = g?.location?.lng ?? (g as any)?.lng;
@@ -406,10 +470,20 @@ export const useLocationSync = (
                 }
             }
 
+            const effectiveStatus = (parkingService.isParkedInDriveway() && speedMph <= 1.5)
+                ? 'Parked in Driveway'
+                : resolveLocationStatus(currentCoords, {
+                    status,
+                    speed: speedMph,
+                    currentPlace: currentPlaceName,
+                    places: geofences
+                });
+            const resolvedLabel = effectiveStatus;
+
             // 1. MUTATE REF IN-PLACE FOR ZERO-LATENCY NON-REACT CONSUMERS (MapLibre 3D, Audio, Crash Telemetry)
             const selfInRef = membersRef.current.find(m => m.id === targetId);
             if (selfInRef) {
-                selfInRef.location = currentCoords;
+                selfInRef.location = { ...currentCoords, label: resolvedLabel };
                 selfInRef.speed = speedMph;
                 selfInRef.heading = heading;
                 selfInRef.accuracy = location.accuracy;
@@ -428,6 +502,19 @@ export const useLocationSync = (
                     heading
                 );
             }
+
+            // 2b. DYNAMIC LAST PARKED TELEMETRY EVALUATION
+            parkingService.processTelemetry({
+                userLocation: currentCoords,
+                speedMph,
+                status,
+                places: geofences,
+                user,
+                profile,
+                circleId: currentCircleId
+            }).catch(e => {
+                console.warn('[useLocationSync] Parking telemetry processing error:', e);
+            });
 
             // 3. PERSIST LAST KNOWN LOCATION
             localStorage.setItem('myway_last_known_location', JSON.stringify(currentCoords));
@@ -482,6 +569,8 @@ export const useLocationSync = (
                             status,
                             currentPlace: currentPlaceName,
                             battery: currentBattery,
+                            batteryLevel: currentBattery,
+                            isCharging: batteryService.getBatteryInfo().isCharging,
                             membershipTier: profile?.membershipTier || 'free',
                             lastUpdated: new Date().toISOString(),
                             accuracy: location.accuracy,
@@ -591,7 +680,9 @@ export const useLocationSync = (
 
                         let targetLat = location.latitude;
                         let targetLng = location.longitude;
-                        let statusText = 'Online';
+                        let statusText = (parkingService.isParkedInDriveway() && (location.speed || 0) <= 1.5)
+                            ? 'Parked in Driveway'
+                            : (resolvedLabel || 'Online');
                         let blurredRadius: number | undefined = undefined;
 
                         if (circlePrivacyMode === 'blurred') {
@@ -957,10 +1048,23 @@ export const useLocationSync = (
                     memberStatus = 'Moving';
                 }
 
+                const memberMicro = checkTier1MicroZone({ lat, lng });
+                if (memberMicro) {
+                    memberPlaceName = `${memberMicro.place.name} (${memberMicro.zoneName})`;
+                }
+
+                const memberLabel = resolveLocationStatus({ lat, lng }, {
+                    status: loc.status || memberStatus,
+                    speed,
+                    currentPlace: memberPlaceName
+                });
+
                 return {
                     ...member,
-                    location: { lat, lng },
+                    location: { lat, lng, label: memberLabel },
                     battery: loc.battery !== undefined ? loc.battery : member.battery,
+                    batteryLevel: loc.battery !== undefined ? loc.battery : member.batteryLevel,
+                    isCharging: (loc as any).isCharging !== undefined ? (loc as any).isCharging : member.isCharging,
                     speed: loc.speed !== undefined ? loc.speed : member.speed,
                     heading: loc.heading !== undefined ? loc.heading : member.heading,
                     accuracy: loc.accuracy !== undefined ? loc.accuracy : member.accuracy,

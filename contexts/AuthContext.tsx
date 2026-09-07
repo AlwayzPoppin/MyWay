@@ -23,7 +23,8 @@ import {
     renameFamilyCircle,
     deleteFamilyCircle,
     updateCircleColor as updateCircleColorService,
-    deleteAccount as deleteAccountService
+    deleteAccount as deleteAccountService,
+    resetPassword as resetPasswordService
 } from '../services/authService';
 
 interface AuthContextType {
@@ -39,6 +40,7 @@ interface AuthContextType {
     signUpWithEmail: (email: string, password: string, displayName: string) => Promise<void>;
     sendMagicLink: (email: string) => Promise<void>;
     completeMagicLinkSignIn: (email?: string) => Promise<void>;
+    sendPasswordReset: (email: string) => Promise<void>;
     logout: () => Promise<void>;
     clearError: () => void;
     createCircle: (name: string, color?: string) => Promise<FamilyCircle>;
@@ -48,7 +50,7 @@ interface AuthContextType {
     renameCircle: (circleId: string, name: string) => Promise<void>;
     updateCircleColor: (circleId: string, color: string) => Promise<void>;
     deleteCircle: (circleId: string) => Promise<void>;
-    deleteUserAccount: () => Promise<void>;
+    deleteUserAccount: (password?: string) => Promise<void>;
     refreshCircles: () => Promise<void>;
 }
 
@@ -159,13 +161,37 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
     }, [user?.uid, profile?.familyCircleId, refreshCircles]);
 
+const formatAuthError = (err: any, defaultMsg: string): string => {
+    const code = err?.code || '';
+    const msg = err?.message || '';
+    if (code === 'auth/email-already-in-use' || msg.includes('auth/email-already-in-use') || msg.includes('EMAIL_EXISTS')) {
+        return 'This email is already in use. Please sign in instead, or use "Forgot password?" to reset your credentials.';
+    }
+    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || msg.includes('auth/invalid-credential') || msg.includes('INVALID_LOGIN_CREDENTIALS')) {
+        return 'Incorrect email or password. Please check your credentials or click "Forgot password?".';
+    }
+    if (code === 'auth/user-not-found' || msg.includes('auth/user-not-found')) {
+        return 'No account found with this email. Please click "Sign Up" below to create an account.';
+    }
+    if (code === 'auth/weak-password' || msg.includes('auth/weak-password')) {
+        return 'Password should be at least 6 characters.';
+    }
+    if (code === 'auth/too-many-requests' || msg.includes('auth/too-many-requests')) {
+        return 'Too many failed attempts. Account temporarily locked. Please reset your password or try again later.';
+    }
+    if (code === 'auth/invalid-email' || msg.includes('auth/invalid-email')) {
+        return 'Please enter a valid email address.';
+    }
+    return err?.message || defaultMsg;
+};
+
     const handleSignInWithGoogle = async () => {
         try {
             setError(null);
             setLoading(true);
             await signInWithGoogle();
         } catch (err: any) {
-            setError(err.message || 'Failed to sign in with Google');
+            setError(formatAuthError(err, 'Failed to sign in with Google'));
         } finally {
             setLoading(false);
         }
@@ -177,7 +203,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setLoading(true);
             await signInWithEmail(email, password);
         } catch (err: any) {
-            setError(err.message || 'Failed to sign in');
+            setError(formatAuthError(err, 'Failed to sign in'));
         } finally {
             setLoading(false);
         }
@@ -189,7 +215,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setLoading(true);
             await signUpWithEmail(email, password, displayName);
         } catch (err: any) {
-            setError(err.message || 'Failed to create account');
+            setError(formatAuthError(err, 'Failed to create account'));
         } finally {
             setLoading(false);
         }
@@ -292,9 +318,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         await refreshCircles();
     };
 
-    const handleDeleteUserAccount = async () => {
+    const handleSendPasswordReset = async (email: string) => {
+        try {
+            setError(null);
+            setLoading(true);
+            await resetPasswordService(email);
+        } catch (err: any) {
+            setError(err.message || 'Failed to send password reset email');
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDeleteUserAccount = async (password?: string) => {
         if (!user) return;
-        await deleteAccountService(user.uid, profile?.familyCircleId || undefined);
+        await deleteAccountService(user.uid, profile?.familyCircleId || undefined, password);
         setUser(null);
         setProfile(null);
         setCurrentCircle(null);
@@ -314,6 +353,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         signUpWithEmail: handleSignUpWithEmail,
         sendMagicLink: handleSendMagicLink,
         completeMagicLinkSignIn: handleCompleteMagicLinkSignIn,
+        sendPasswordReset: handleSendPasswordReset,
         logout: handleLogout,
         clearError,
         createCircle: handleCreateCircle,

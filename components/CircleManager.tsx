@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { QrCode } from 'lucide-react';
 import { formatSegmentedInviteCode, cleanInviteCode } from '../utils/inviteCode';
 import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
+import QRScannerModal from './QRScannerModal';
 
 interface CircleManagerProps {
     onCreateCircle: (name: string) => Promise<any>;
@@ -14,6 +16,7 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
     const [code, setCode] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isScannerOpen, setIsScannerOpen] = useState(false);
     const autoSubmitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
@@ -70,6 +73,18 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
         e.preventDefault();
         const cleaned = cleanInviteCode(code);
         executeJoin(cleaned);
+    };
+
+    const handleScanResult = (scannedInviteCode: string) => {
+        setIsScannerOpen(false);
+        const cleaned = cleanInviteCode(scannedInviteCode);
+        if (cleaned) {
+            const formatted = formatSegmentedInviteCode(cleaned);
+            setCode(formatted);
+            if (cleaned.length === 8) {
+                executeJoin(cleaned);
+            }
+        }
     };
 
     const handleCodeChange = (val: string) => {
@@ -204,6 +219,20 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
                         </span>
                     </div>
 
+                    {/* Scan QR Code Button */}
+                    <button
+                        type="button"
+                        onClick={() => setIsScannerOpen(true)}
+                        className={`w-full py-3 px-4 rounded-2xl border text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${
+                            isDark
+                                ? 'border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300'
+                                : 'border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                        }`}
+                    >
+                        <QrCode className="w-4 h-4 text-indigo-400" />
+                        <span>Scan QR Code</span>
+                    </button>
+
                     {error && <p className="text-xs text-red-500 font-bold">{error}</p>}
 
                     <button
@@ -219,6 +248,16 @@ const CircleManager: React.FC<CircleManagerProps> = ({ onCreateCircle, onJoinCir
                     </button>
                 </form>
             )}
+
+            {/* Camera QR Scanner Modal */}
+            <QRScannerModal
+                isOpen={isScannerOpen}
+                onClose={() => setIsScannerOpen(false)}
+                onScan={handleScanResult}
+                theme={theme}
+                title="Scan Circle QR Code"
+                description="Scan another member's invite QR code to join their Circle instantly"
+            />
         </div>
     );
 };

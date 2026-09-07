@@ -23,6 +23,18 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom'],
+            'firebase-vendor': ['firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/database', 'firebase/storage', 'firebase/functions'],
+            'maplibre-vendor': ['maplibre-gl'],
+          },
+        },
+      },
+      chunkSizeWarningLimit: 1000,
+    },
     // SECURITY: API keys removed from client bundle
     // All sensitive APIs are accessed via Firebase Functions proxy (see functions/src/index.ts)
     define: {},

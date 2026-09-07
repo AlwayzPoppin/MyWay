@@ -1,7 +1,8 @@
 
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Place, Location, NavigationRoute, FamilyMember, RouteWaypoint } from '../types';
 import { fetchRouteOptions, fetchDetourDeltas } from '../services/osrmService';
+import { getDistanceMeters } from '../utils/geo';
 import { vehicleFuelService } from '../services/vehicleFuelService';
 import { convoyService } from '../services/convoyService';
 import { placeCorrectionService } from '../services/placeCorrectionService';
@@ -11,6 +12,49 @@ import { audioService } from '../services/audioService';
 import { placePhotoService, PlacePhotoContribution } from '../services/placePhotoService';
 import { hapticSuccess, hapticTick } from '../utils/haptics';
 import BrandIcon from './BrandIcon';
+import {
+    Navigation,
+    Car,
+    Edit3,
+    Share2,
+    Star,
+    X,
+    Plus,
+    Trash2,
+    Camera,
+    AlertCircle,
+    Expand,
+    ThumbsUp,
+    ThumbsDown,
+    Check,
+    GripVertical,
+    CheckCircle2,
+    MapPin,
+    Fuel,
+    CreditCard,
+    RefreshCw,
+    Zap,
+    Leaf,
+    TreePine,
+    Route,
+    Globe,
+    Crosshair,
+    ShieldCheck,
+    Home,
+    Briefcase,
+    GraduationCap,
+    Dumbbell,
+    Utensils,
+    Coffee,
+    Pill,
+    DollarSign,
+    Flag,
+    Battery,
+    Loader2,
+    Images
+} from 'lucide-react';
+import SavedPlaceHubCard from './SavedPlaceHubCard';
+import ParkedVehicleCard from './ParkedVehicleCard';
 
 interface PlaceDetailPanelProps {
     place: Place;
@@ -64,10 +108,11 @@ function formatRelativeTime(timestamp?: number): string {
 }
 
 const GEOFENCE_PRESETS = [
-    { label: 'Driveway', value: 0.015, meters: '15m' },
+    { label: 'Tight', value: 0.015, meters: '15m' },
     { label: 'Street', value: 0.05, meters: '50m' },
     { label: 'Neighborhood', value: 0.15, meters: '150m' },
-    { label: 'City Area', value: 1.0, meters: '1km' }
+    { label: 'City Area', value: 1.0, meters: '1km' },
+    { label: 'Metro', value: 2.0, meters: '2km' }
 ];
 
 interface WaypointRowProps {
@@ -120,59 +165,35 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
         const dy = touch.clientY - touchStartRef.current.y;
 
         if (isHorizontalSwipeRef.current === null) {
-            if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
-                isHorizontalSwipeRef.current = true;
-            } else if (Math.abs(dy) > 10) {
-                isHorizontalSwipeRef.current = false;
-                return;
-            } else {
-                return;
+            if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+                isHorizontalSwipeRef.current = Math.abs(dx) > Math.abs(dy);
             }
         }
 
-        if (!isHorizontalSwipeRef.current) return;
-
-        // When horizontal swipe delta exceeds 40px leftward, translate the card via inline CSS (transform: translateX(-Xpx))
-        if (dx < -40) {
-            setSwipeOffset(Math.max(-180, dx));
-        } else {
-            setSwipeOffset(0);
+        if (isHorizontalSwipeRef.current === true) {
+            e.preventDefault();
+            if (dx < 0) {
+                const resisted = -Math.pow(-dx, 0.88);
+                setSwipeOffset(Math.max(-140, resisted));
+            } else {
+                setSwipeOffset(Math.min(20, dx * 0.2));
+            }
         }
     };
 
     const handleCardTouchEnd = () => {
         setIsSwiping(false);
-        if (!touchStartRef.current || !isHorizontalSwipeRef.current) {
-            setSwipeOffset(0);
-            touchStartRef.current = null;
-            return;
+        if (swipeOffset < -70) {
+            hapticSuccess();
+            onRemove(wIdx);
         }
-
-        const elapsed = Date.now() - touchStartRef.current.time;
-        const distance = Math.abs(swipeOffset);
-        const velocity = distance / Math.max(elapsed, 1);
-
-        // If released past 120px (or swiped with velocity), trigger handleRemoveStop and fire haptic/audio alert
-        if (distance >= 120 || (distance >= 50 && velocity > 0.4)) {
-            setSwipeOffset(-350);
-            try { navigator.vibrate(40); } catch {}
-            try { audioService.playChirp(400, 100); } catch {}
-            setTimeout(() => {
-                onRemove(wIdx);
-            }, 180);
-        } else {
-            // Snap back smoothly via transition-transform duration-200
-            setSwipeOffset(0);
-        }
-
+        setSwipeOffset(0);
         touchStartRef.current = null;
         isHorizontalSwipeRef.current = null;
     };
 
     return (
         <div
-            data-waypoint-row="true"
-            data-idx={wIdx}
             className="relative overflow-hidden rounded-xl select-none"
             draggable
             onDragStart={(e) => {
@@ -197,7 +218,7 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
         >
             {/* Red background tray revealed on left swipe */}
             <div className="absolute inset-0 bg-gradient-to-l from-red-600 via-rose-600 to-red-700 rounded-xl flex items-center justify-end px-4 text-white font-bold gap-1.5 z-0">
-                <span className="text-sm">🗑️</span>
+                <Trash2 className="w-4 h-4 text-white shrink-0" />
                 <span className="text-[10px] font-black tracking-wider uppercase">Delete</span>
             </div>
 
@@ -222,7 +243,7 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
                 }`}
             >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {/* Subtle 6-dot drag handle icon (⠿) */}
+                    {/* Subtle 6-dot drag handle icon */}
                     <div
                         role="button"
                         tabIndex={0}
@@ -234,7 +255,7 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
                         onTouchEnd={onTouchDragEnd}
                         onTouchCancel={onTouchDragEnd}
                     >
-                        ⠿
+                        <GripVertical className="w-4 h-4 shrink-0" />
                     </div>
 
                     {/* Numbered diamond badge */}
@@ -260,20 +281,29 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
                             e.stopPropagation();
                             onRemove(wIdx);
                         }}
-                        className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold transition-all cursor-pointer opacity-80 md:opacity-0 md:group-hover:opacity-100 ${
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer opacity-80 md:opacity-0 md:group-hover:opacity-100 ${
                             theme === 'dark'
                                 ? 'text-red-400 hover:bg-red-500/25 hover:text-red-300 active:scale-90'
                                 : 'text-red-500 hover:bg-red-100 hover:text-red-600 active:scale-90'
                         }`}
                         title="Remove Stop"
                     >
-                        ✕
+                        <X className="w-4 h-4 shrink-0" />
                     </button>
                 </div>
             </div>
         </div>
     );
 };
+
+interface GlobalRouteCalcCacheEntry {
+    destKey: string;
+    origin: Location;
+    avoidTolls: boolean;
+    waypointsKey: string;
+    routes: NavigationRoute[];
+}
+const globalRouteCalcCache = new Map<string, GlobalRouteCalcCacheEntry>();
 
 const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     place,
@@ -296,6 +326,25 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState(false);
     const textColor = theme === 'dark' ? 'text-white' : 'text-slate-900';
     const subTextColor = theme === 'dark' ? 'text-slate-400' : 'text-slate-500';
+
+    // Check if the current place is a saved/favorite location (Home, Work, etc.)
+    const isSavedLocation = useMemo(() => {
+        if (place?.type === 'parked_vehicle' || place?.id === 'temp-parked-vehicle') return false;
+        if (isSaved) return true;
+        if (place?.isSaved) return true;
+        const savedTypes = ['home', 'residential', 'work', 'school', 'gym'];
+        if (place?.type && savedTypes.includes(place.type)) return true;
+        const nameLower = (place?.name || '').trim().toLowerCase();
+        if (['home', 'house', 'work', 'office', 'school', 'gym'].includes(nameLower)) return true;
+        if (userPlaces && userPlaces.length > 0) {
+            return userPlaces.some(p => 
+                p.id === place.id || 
+                ((p.name || '').trim().toLowerCase() === nameLower) ||
+                (p.location && place.location && Math.abs(p.location.lat - place.location.lat) < 0.0005 && Math.abs(p.location.lng - place.location.lng) < 0.0005)
+            );
+        }
+        return false;
+    }, [isSaved, place, userPlaces]);
 
     // Location Photo Contributions (Firestore & Firebase Storage)
     const [photos, setPhotos] = useState<PlacePhotoContribution[]>([]);
@@ -418,139 +467,142 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         const currentPhotoObj = photos.find(p => p.url === currentUrl);
 
         return (
-            <div className={`mt-2 mb-2 select-none ${isMobileView ? '' : 'mb-3'}`}>
+            <div className={`mt-1.5 mb-2 landscape:mt-1 landscape:mb-1.5 select-none ${isMobileView ? '' : 'mb-2.5'}`}>
                 {hasPhotos && currentUrl ? (
-                    <div className="relative rounded-2xl overflow-hidden border border-white/20 shadow-md bg-black/40">
-                        {/* Main Active Photo */}
+                    <div
+                        className={`relative rounded-xl border p-1.5 sm:p-2 landscape:p-1.5 flex items-center justify-between gap-2.5 landscape:gap-1.5 transition-all shadow-xs ${
+                            theme === 'dark'
+                                ? 'bg-white/5 border-white/10 hover:border-white/20'
+                                : 'bg-slate-50/90 border-slate-200 hover:border-slate-300'
+                        }`}
+                    >
+                        {/* Small square thumbnail with lightbox trigger */}
                         <div
+                            role="button"
+                            tabIndex={0}
                             onClick={() => setIsPhotoLightboxOpen(true)}
-                            className="relative cursor-pointer group"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    setIsPhotoLightboxOpen(true);
+                                }
+                            }}
+                            className="relative w-10 h-10 sm:w-11 sm:h-11 landscape:w-8 landscape:h-8 rounded-lg overflow-hidden shrink-0 border border-black/10 dark:border-white/15 cursor-pointer group shadow-sm"
+                            title="Tap thumbnail to view photo"
                         >
                             <img
                                 src={currentUrl}
                                 alt={place.name}
-                                className={`w-full ${isMobileView ? 'h-28' : 'h-36'} object-cover group-hover:scale-[1.02] transition-transform duration-300`}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
-
-                            {/* Top Badges */}
-                            <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none">
-                                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 backdrop-blur-md flex items-center gap-1 shadow-sm">
-                                    <span>📸</span> Storefront & Entrance
-                                </span>
-                                {photoUrls.length > 1 && (
-                                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-black/70 text-white backdrop-blur-md border border-white/20 shadow-sm">
-                                        {activePhotoIndex + 1} / {photoUrls.length}
-                                    </span>
-                                )}
+                            <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <Expand className="w-3 h-3 text-white drop-shadow" />
                             </div>
-
-                            {/* Bottom Metadata */}
-                            <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                    {currentPhotoObj?.caption ? (
-                                        <p className="text-[11px] font-bold text-white truncate drop-shadow">
-                                            "{currentPhotoObj.caption}"
-                                        </p>
-                                    ) : (
-                                        <p className="text-[10px] font-semibold text-slate-300 truncate drop-shadow">
-                                            {currentPhotoObj?.userName ? `By ${currentPhotoObj.userName}` : 'Tap to expand full photo'}
-                                        </p>
-                                    )}
-                                </div>
-                                <span className="text-[9px] font-bold text-slate-200 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-full shrink-0 shadow-sm">
-                                    🔍 Expand
+                            {photoUrls.length > 1 && (
+                                <span className="absolute bottom-0.5 right-0.5 text-[8px] font-black px-1 rounded bg-black/75 text-white backdrop-blur-xs leading-tight">
+                                    {photoUrls.length}
                                 </span>
-                            </div>
+                            )}
                         </div>
 
-                        {/* Thumbnail Carousel (if multiple photos) */}
-                        {photoUrls.length > 1 && (
-                            <div className="flex items-center gap-1.5 p-1.5 bg-black/50 backdrop-blur-md overflow-x-auto no-scrollbar border-t border-white/10">
-                                {photoUrls.map((url, idx) => (
-                                    <button
-                                        key={url + idx}
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setActivePhotoIndex(idx);
-                                        }}
-                                        className={`relative w-12 h-9 rounded-lg overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
-                                            idx === activePhotoIndex
-                                                ? 'border-cyan-400 scale-105 shadow-md shadow-cyan-500/40'
-                                                : 'border-transparent opacity-65 hover:opacity-100'
-                                        }`}
-                                    >
-                                        <img src={url} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover" />
-                                    </button>
-                                ))}
+                        {/* Text label alongside thumbnail */}
+                        <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setIsPhotoLightboxOpen(true)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    setIsPhotoLightboxOpen(true);
+                                }
+                            }}
+                            className="min-w-0 flex-1 cursor-pointer"
+                            title="Tap to view photo"
+                        >
+                            <div className="flex items-center gap-1.5">
+                                <Camera className="w-3 h-3 text-emerald-400 shrink-0" />
+                                <span className={`text-xs landscape:text-[11px] font-bold truncate ${textColor}`}>
+                                    Building & Access
+                                </span>
                             </div>
-                        )}
+                            <p className="text-[10px] landscape:text-[9px] text-slate-400 font-medium truncate mt-0.5">
+                                {currentPhotoObj?.caption ? (
+                                    `"${currentPhotoObj.caption}"`
+                                ) : photoUrls.length > 1 ? (
+                                    `${photoUrls.length} photos • Tap to preview`
+                                ) : currentPhotoObj?.userName ? (
+                                    `By ${currentPhotoObj.userName}`
+                                ) : (
+                                    'Tap thumbnail to view'
+                                )}
+                            </p>
+                        </div>
 
-                        {/* Action Toolbar */}
-                        <div className={`p-2 flex items-center justify-between gap-2 border-t ${
-                            theme === 'dark' ? 'bg-[#0f172a]/90 border-white/10' : 'bg-slate-50 border-slate-200'
-                        }`}>
+                        {/* Actions: Add Photo & Discrete Edit Icon */}
+                        <div className="flex items-center gap-1.5 shrink-0">
                             <button
                                 type="button"
                                 onClick={handleTriggerCamera}
                                 disabled={isUploadingPhoto}
-                                className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                                className={`px-2 py-1 sm:px-2.5 sm:py-1 rounded-lg font-bold text-[10px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer disabled:opacity-50 shrink-0 ${
+                                    theme === 'dark'
+                                        ? 'bg-white/10 hover:bg-white/15 text-slate-200 border border-white/10'
+                                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 shadow-xs'
+                                }`}
+                                title="Snap another building photo"
                             >
-                                <span>{isUploadingPhoto ? '⏳' : '📷'}</span>
+                                {isUploadingPhoto ? (
+                                    <Loader2 className="w-3 h-3 animate-spin shrink-0 text-cyan-400" />
+                                ) : (
+                                    <Camera className="w-3 h-3 shrink-0 text-cyan-400" />
+                                )}
                                 <span>{isUploadingPhoto ? 'Uploading...' : 'Snap Photo'}</span>
                             </button>
 
-                            {myContributions.length > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={() => setIsManagePhotosOpen(true)}
-                                    className="px-2.5 py-1 rounded-xl border font-bold text-[10px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
-                                >
-                                    <span>🖼️</span>
-                                    <span>Manage My Photos ({myContributions.length})</span>
-                                </button>
-                            )}
+                            <button
+                                type="button"
+                                onClick={() => setIsManagePhotosOpen(true)}
+                                className={`p-1.5 rounded-lg border transition-all active:scale-95 cursor-pointer shrink-0 ${
+                                    myContributions.length > 0
+                                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                                        : theme === 'dark'
+                                        ? 'border-white/10 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+                                        : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-500 hover:text-slate-800'
+                                }`}
+                                title={myContributions.length > 0 ? `Manage photos (${myContributions.length})` : 'Manage photos'}
+                            >
+                                <Edit3 className="w-3.5 h-3.5" />
+                            </button>
                         </div>
                     </div>
                 ) : (
-                    /* Empty state: prompt to take first photo */
-                    <div className={`rounded-2xl border p-3 transition-all ${
-                        theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-                    }`}>
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
-                                    <span className="text-sm">📸</span>
-                                    <h5 className={`text-xs font-black ${textColor}`}>Storefront & Entrance Photo</h5>
-                                </div>
-                                <p className="text-[10px] text-slate-400 font-medium mt-0.5 leading-snug">
-                                    Capture a live photo of the entrance to help your circle navigate with precision.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={handleTriggerCamera}
-                                disabled={isUploadingPhoto}
-                                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white font-black text-xs flex items-center gap-1.5 shadow-md shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50 shrink-0"
-                            >
-                                <span>{isUploadingPhoto ? '⏳' : '📷'}</span>
-                                <span>{isUploadingPhoto ? 'Uploading...' : 'Snap Photo'}</span>
-                            </button>
+                    /* Clean single button row taking minimal height */
+                    <button
+                        type="button"
+                        onClick={handleTriggerCamera}
+                        disabled={isUploadingPhoto}
+                        className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border transition-all active:scale-[0.99] cursor-pointer group disabled:opacity-50 ${
+                            theme === 'dark'
+                                ? 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-200 hover:text-white'
+                                : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700 hover:text-slate-900'
+                        }`}
+                        title="Add Building Photo"
+                    >
+                        <div
+                            className={`p-1 rounded-md shrink-0 ${
+                                theme === 'dark' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'
+                            }`}
+                        >
+                            {isUploadingPhoto ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                                <Camera className="w-3.5 h-3.5" />
+                            )}
                         </div>
-                        {myContributions.length > 0 && (
-                            <div className="mt-2 pt-2 border-t border-white/10 flex justify-end">
-                                <button
-                                    type="button"
-                                    onClick={() => setIsManagePhotosOpen(true)}
-                                    className="text-[10px] font-black text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
-                                >
-                                    <span>🖼️</span>
-                                    <span>Manage My Photos ({myContributions.length})</span>
-                                </button>
-                            </div>
-                        )}
-                    </div>
+                        <span className="text-xs font-semibold truncate">
+                            {isUploadingPhoto ? 'Uploading Photo...' : 'Add Building Photo'}
+                        </span>
+                    </button>
                 )}
             </div>
         );
@@ -582,8 +634,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         setHasUpvoted(Array.isArray(place?.helpfulUserIds) && currentUserId ? place.helpfulUserIds.includes(currentUserId) : false);
     }, [place?.id, place?.helpfulCount, place?.helpfulUserIds, currentUserId]);
 
-    const isVerified = Boolean(place?.isCorrected || publicReport);
+    const isVerified = Boolean(place?.isCommunityVerified || place?.isCorrected || publicReport);
     const hasPrecisionPin = Boolean(
+        place?.isCommunityVerified ||
         place?.isCorrected ||
         publicReport ||
         place?.tags?.includes('Verified Precision Pin') ||
@@ -717,38 +770,145 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
     const activeVehicle = useMemo(() => vehicleFuelService.getActiveVehicle(), []);
 
-    // Reset waypoints when destination place changes
+    const lastCalculatedParamsRef = useRef<{
+        destKey: string;
+        origin: Location;
+        avoidTolls: boolean;
+        waypointsKey: string;
+    } | null>(null);
+    const isCalculatingRoutesRef = useRef(false);
+    const lastPreviewedRouteIdRef = useRef<string>('');
+    const isComponentAliveRef = useRef(true);
+    const activeRequestIdRef = useRef(0);
+    const [retryTrigger, setRetryTrigger] = useState(0);
+
+    // Track component mounting lifecycle to prevent setting state on unmounted component
+    useEffect(() => {
+        isComponentAliveRef.current = true;
+        return () => {
+            isComponentAliveRef.current = false;
+        };
+    }, []);
+
+    // Manual retry handler to re-trigger route calculation
+    const handleRetryRoutes = useCallback(() => {
+        lastCalculatedParamsRef.current = null;
+        isCalculatingRoutesRef.current = false;
+        setRouteOptions([]);
+        setIsLoadingRoutes(true);
+        setRetryTrigger(prev => prev + 1);
+    }, []);
+
+    // Reset waypoints and cached calculation when destination place changes
     useEffect(() => {
         setWaypoints([]);
         setShowAddStopDrawer(false);
         setStopSearchQuery('');
         setStopSearchResults([]);
-    }, [place.id, place.name]);
+        lastCalculatedParamsRef.current = null;
+        setRouteOptions([]);
+        setIsLoadingRoutes(true);
+    }, [place.id, place.name, place.location?.lat, place.location?.lng]);
+
+    // Safety watchdog: ensure loader never remains permanently stuck if network promise hangs
+    useEffect(() => {
+        if (!isLoadingRoutes) return;
+        const timer = setTimeout(() => {
+            if (isComponentAliveRef.current && isLoadingRoutes) {
+                console.warn('⚠️ [PlaceDetailPanel] Route calculation watchdog timed out after 8s - resetting loader');
+                setIsLoadingRoutes(false);
+                isCalculatingRoutesRef.current = false;
+            }
+        }, 8000);
+        return () => clearTimeout(timer);
+    }, [isLoadingRoutes]);
 
     useEffect(() => {
         if (!userLocation || !place.location) {
             setIsLoadingRoutes(false);
             return;
         }
-        let isMounted = true;
-        setIsLoadingRoutes(true);
+
+        const destKey = `${place.id || place.name}_${place.location.lat.toFixed(5)}_${place.location.lng.toFixed(5)}`;
+        const waypointsKey = waypoints.map(w => `${w.id}_${w.location.lat.toFixed(5)}_${w.location.lng.toFixed(5)}`).join('|');
+        const cached = globalRouteCalcCache.get(destKey);
+        const lastParams = lastCalculatedParamsRef.current || cached;
+
+        // Check if destination, tolls setting, or waypoints changed
+        const isParamChange = !lastParams || 
+            lastParams.destKey !== destKey || 
+            lastParams.avoidTolls !== avoidTolls || 
+            lastParams.waypointsKey !== waypointsKey;
+
+        // Check if user has moved significantly (> 100 meters) from the origin where routes were calculated
+        const hasMovedSignificantly = !lastParams || 
+            getDistanceMeters(lastParams.origin, userLocation) > 100;
+
+        // If neither parameters changed nor significant movement occurred, skip recalculation to prevent flicker
+        if (!isParamChange && !hasMovedSignificantly) {
+            if (cached && routeOptions.length === 0) {
+                setRouteOptions(cached.routes);
+                setIsLoadingRoutes(false);
+            }
+            return;
+        }
+
+        // Prevent redundant concurrent in-flight fetches for the same request
+        if (isCalculatingRoutesRef.current && !isParamChange) {
+            return;
+        }
+
+        const requestId = ++activeRequestIdRef.current;
+        isCalculatingRoutesRef.current = true;
+
+        // Non-destructive loading: only show the full loading placeholder if we have no routes yet.
+        // If routes already exist on screen, keep them visible so the user can see & tap them without flickering!
+        if (routeOptions.length === 0 || isParamChange) {
+            setIsLoadingRoutes(true);
+        }
+
+        lastCalculatedParamsRef.current = {
+            destKey,
+            origin: { ...userLocation },
+            avoidTolls,
+            waypointsKey
+        };
+
         fetchRouteOptions(userLocation, place.name || 'Destination', place.location, { avoidTolls, waypoints })
             .then(routes => {
-                if (isMounted) {
+                globalRouteCalcCache.set(destKey, {
+                    destKey,
+                    origin: { ...userLocation },
+                    avoidTolls,
+                    waypointsKey,
+                    routes
+                });
+                // Ensure state only updates if the component is still mounted and this is the latest in-flight request
+                if (isComponentAliveRef.current && activeRequestIdRef.current === requestId) {
                     setRouteOptions(routes);
-                    setSelectedRouteIdx(0);
                     setIsLoadingRoutes(false);
+                    isCalculatingRoutesRef.current = false;
+
+                    // Preserve selected route index if still valid
+                    setSelectedRouteIdx(prevIdx => (prevIdx >= 0 && prevIdx < routes.length ? prevIdx : 0));
+
                     if (routes.length > 0 && onSelectRoutePreview) {
-                        onSelectRoutePreview(routes[0]);
+                        const targetRoute = routes[0];
+                        const routeKey = `${targetRoute.id || targetRoute.summary}_${targetRoute.totalDistance}`;
+                        if (lastPreviewedRouteIdRef.current !== routeKey) {
+                            lastPreviewedRouteIdRef.current = routeKey;
+                            onSelectRoutePreview(targetRoute);
+                        }
                     }
                 }
             })
             .catch(() => {
-                if (isMounted) setIsLoadingRoutes(false);
+                if (isComponentAliveRef.current && activeRequestIdRef.current === requestId) {
+                    setIsLoadingRoutes(false);
+                    isCalculatingRoutesRef.current = false;
+                }
             });
-
-        return () => { isMounted = false; };
-    }, [place.name, place.location, userLocation, avoidTolls, waypoints]);
+    }, [place.name, place.id, place.location?.lat, place.location?.lng, userLocation?.lat, userLocation?.lng, avoidTolls, waypoints, onSelectRoutePreview, retryTrigger]);
 
     const handleAddStop = (p: Place) => {
         if (!p.location) return;
@@ -977,19 +1137,19 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const typeLabel = useMemo(() => {
         if (!place.type) return '';
         switch (place.type) {
-            case 'gas': return '⛽ Gas Station';
-            case 'fire_station': return '🚒 Fire Station';
-            case 'hospital': case 'emergency': return '🏥 Hospital / ER';
-            case 'police': return '🚓 Police Dept';
-            case 'grocery': return '🛒 Supermarket';
-            case 'pharmacy': return '💊 Pharmacy';
-            case 'food': return '🍔 Food & Dining';
-            case 'coffee': return '☕ Coffee';
-            case 'home': return '🏠 Home';
-            case 'work': return '💼 Work';
-            case 'school': return '🏫 School';
-            case 'gym': return '💪 Gym';
-            case 'maintenance': case 'mechanic': return '🔧 Auto Service';
+            case 'gas': return 'Gas Station';
+            case 'fire_station': return 'Fire Station';
+            case 'hospital': case 'emergency': return 'Hospital / ER';
+            case 'police': return 'Police Dept';
+            case 'grocery': return 'Supermarket';
+            case 'pharmacy': return 'Pharmacy';
+            case 'food': return 'Food & Dining';
+            case 'coffee': return 'Coffee';
+            case 'home': return 'Home';
+            case 'work': return 'Work';
+            case 'school': return 'School';
+            case 'gym': return 'Gym';
+            case 'maintenance': case 'mechanic': return 'Auto Service';
             default: return place.type.replace('_', ' ');
         }
     }, [place.type]);
@@ -1009,26 +1169,36 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         }
         return theme === 'dark' ? 'bg-indigo-500/20 text-indigo-300' : 'bg-indigo-100 text-indigo-700';
     }, [place.type, theme]);
-    const bgColor = theme === 'dark' ? 'bg-[#0f172a]/95 border-white/10' : 'bg-white/95 border-slate-200';
+    const bgColor = theme === 'dark' ? 'bg-[#0f172a]/95 border-white/10 text-white' : 'bg-[#fdfbf7]/95 border-slate-200/80 shadow-2xl text-slate-900';
 
     if (isSavingPlace) {
         return (
             <div
-                className={`w-full max-w-sm max-h-[min(60vh,420px)] overflow-y-auto overscroll-contain no-scrollbar rounded-[2rem] shadow-[0_10px_50px_rgba(0,0,0,0.5)] border backdrop-blur-2xl p-6 animate-in fade-in duration-200 pb-safe ${bgColor}`}
-                style={isMobile ? { paddingBottom: 'max(env(safe-area-inset-bottom, 16px), 16px)' } : {}}
+                className={`w-full max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-t-[2.5rem] sm:rounded-[2rem] shadow-[0_10px_50px_rgba(0,0,0,0.5)] border backdrop-blur-2xl animate-in fade-in duration-200 ${bgColor}`}
             >
-                <div className="flex justify-between items-center mb-4">
+                {/* Mobile Drag Handle Pill */}
+                {isMobile && (
+                    <div 
+                        className="pt-3 pb-1 cursor-grab active:cursor-grabbing shrink-0 flex justify-center"
+                        onClick={() => setIsSavingPlace(false)}
+                    >
+                        <div className={`w-12 h-1.5 rounded-full mx-auto ${theme === 'dark' ? 'bg-white/20 hover:bg-white/30' : 'bg-slate-300 hover:bg-slate-400'}`} />
+                    </div>
+                )}
+                <div className="flex justify-between items-center px-6 pt-3 pb-3 border-b border-white/10 shrink-0">
                     <h3 className={`text-base font-black uppercase tracking-wider ${textColor}`}>Save to Circle</h3>
                     <button
+                        type="button"
                         onClick={() => setIsSavingPlace(false)}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                            theme === 'dark' ? 'bg-white/10 text-white' : 'bg-slate-100 text-slate-600'
+                        className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+                            theme === 'dark' ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
+                        aria-label="Close"
                     >
-                        ✕
+                        <X className="w-5 h-5 shrink-0" />
                     </button>
                 </div>
-                <div className="space-y-4">
+                <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 space-y-4 no-scrollbar">
                     <div>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Place Name</label>
                         <input
@@ -1042,35 +1212,45 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         />
                     </div>
                     <div>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Category & Icon</label>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-2">Category & Icon</label>
                         <div className="grid grid-cols-4 gap-2">
                             {[
-                                { type: 'home', icon: '🏠', label: 'Home' },
-                                { type: 'work', icon: '💼', label: 'Work' },
-                                { type: 'school', icon: '🏫', label: 'School' },
-                                { type: 'gym', icon: '🏋️', label: 'Gym' },
-                                { type: 'food', icon: '🍔', label: 'Food' },
-                                { type: 'coffee', icon: '☕', label: 'Coffee' },
-                                { type: 'gas', icon: '⛽', label: 'Gas' },
-                                { type: 'other', icon: '📍', label: 'Other' },
-                            ].map((item) => (
-                                <button
-                                    key={item.type}
-                                    type="button"
-                                    onClick={() => {
-                                        setNewPlaceType(item.type as any);
-                                        setNewPlaceIcon(item.icon);
-                                    }}
-                                    className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
-                                        newPlaceType === item.type
-                                            ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
-                                            : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                                    }`}
-                                >
-                                    <span className="text-xl">{item.icon}</span>
-                                    <span className="text-[10px] font-bold">{item.label}</span>
-                                </button>
-                            ))}
+                                { type: 'home', icon: '🏠', iconComp: Home, label: 'Home' },
+                                { type: 'work', icon: '💼', iconComp: Briefcase, label: 'Work' },
+                                { type: 'school', icon: '🏫', iconComp: GraduationCap, label: 'School' },
+                                { type: 'gym', icon: '🏋️', iconComp: Dumbbell, label: 'Gym' },
+                                { type: 'food', icon: '🍔', iconComp: Utensils, label: 'Food' },
+                                { type: 'coffee', icon: '☕', iconComp: Coffee, label: 'Coffee' },
+                                { type: 'gas', icon: '⛽', iconComp: Fuel, label: 'Gas' },
+                                { type: 'other', icon: '📍', iconComp: MapPin, label: 'Other' },
+                            ].map((item) => {
+                                const IconComp = item.iconComp;
+                                const isSelected = newPlaceType === item.type;
+                                return (
+                                    <button
+                                        key={item.type}
+                                        type="button"
+                                        onClick={() => {
+                                            setNewPlaceType(item.type as any);
+                                            setNewPlaceIcon(item.icon);
+                                        }}
+                                        className={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 group ${
+                                            isSelected
+                                                ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/30'
+                                                : theme === 'dark'
+                                                    ? 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/10'
+                                                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        <IconComp className={`w-6 h-6 shrink-0 transition-colors ${
+                                            isSelected ? 'text-white' : 'text-slate-500 group-hover:text-slate-400'
+                                        }`} />
+                                        <span className={`text-[11px] font-bold tracking-tight ${isSelected ? 'text-white' : 'text-slate-400'}`}>
+                                            {item.label}
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -1128,13 +1308,13 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             className="w-full h-1.5 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
                         />
                         <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-                            <span>15m (Driveway)</span>
+                            <span>15m (Tight)</span>
                             <span>1km</span>
                             <span>2km</span>
                         </div>
                     </div>
 
-                    <div className="flex gap-2 pt-1">
+                    <div className="flex gap-2 pt-2 border-t border-white/10 shrink-0 pb-[max(env(safe-area-inset-bottom,16px),16px)] sm:pb-2">
                         <button
                             onClick={() => {
                                 if (onAddPlace && newPlaceName.trim()) {
@@ -1143,19 +1323,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         icon: newPlaceIcon,
                                         location: place.location,
                                         radius: newPlaceRadius,
+                                        departureRadius: Math.round(newPlaceRadius * 1000),
                                         type: newPlaceType,
                                         description: place.description || place.name
                                     });
                                     setIsSavingPlace(false);
                                 }
                             }}
-                            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer"
                         >
                             Save Place
                         </button>
                         <button
                             onClick={() => setIsSavingPlace(false)}
-                            className={`px-4 py-3 rounded-xl border font-bold text-sm transition-all active:scale-95 cursor-pointer ${
+                            className={`px-5 py-3.5 rounded-xl border font-bold text-sm transition-all active:scale-95 cursor-pointer ${
                                 theme === 'dark' ? 'border-white/10 hover:bg-white/5 text-slate-300' : 'border-slate-200 hover:bg-slate-50 text-slate-600'
                             }`}
                         >
@@ -1174,11 +1355,11 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
                 showAddStopDrawer || waypoints.length > 0
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm ring-1 ring-amber-500/30'
-                    : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+                    : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 shadow-2xs'
             }`}
             title="Add Stop / Waypoint along route"
         >
-            <span>➕</span>
+            <Plus className="w-3 h-3 shrink-0" />
             <span>{waypoints.length > 0 ? `${waypoints.length} Stop${waypoints.length > 1 ? 's' : ''}` : 'Add Stop'}</span>
         </button>
     );
@@ -1187,12 +1368,13 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         if (waypoints.length === 0 && !showAddStopDrawer) return null;
 
         return (
-            <div className={`mt-2 mb-2 p-3 rounded-2xl border transition-all animate-in fade-in duration-200 ${
-                theme === 'dark' ? 'bg-black/40 border-white/10' : 'bg-slate-50 border-slate-200'
+            <div className={`mx-2.5 mb-2 p-3 rounded-2xl border transition-all animate-in fade-in duration-200 ${
+                theme === 'dark' ? 'bg-black/40 border-white/10' : 'bg-white border-slate-200 shadow-2xs'
             }`}>
                 <div className="flex items-center justify-between mb-2.5">
                     <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
-                        <span>📍</span> Trip Stops ({waypoints.length + 1})
+                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>Trip Stops ({waypoints.length + 1})</span>
                     </span>
                     <div className="flex items-center gap-2">
                         {waypoints.length > 0 && (
@@ -1204,7 +1386,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 }}
                                 className="text-[9px] font-bold text-red-400 hover:text-red-300 hover:bg-red-500/20 px-2 py-0.5 rounded-full border border-red-500/30 transition-all cursor-pointer flex items-center gap-1"
                             >
-                                <span>🗑️</span> Clear All
+                                <Trash2 className="w-3 h-3 text-red-400 shrink-0" />
+                                <span>Clear All</span>
                             </button>
                         )}
                         <button
@@ -1212,7 +1395,17 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             onClick={() => setShowAddStopDrawer(prev => !prev)}
                             className="text-[10px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer px-2 py-0.5 rounded-full border border-sky-500/30 hover:bg-sky-500/20 transition-all"
                         >
-                            {showAddStopDrawer ? '▲ Close' : '➕ Add Stop'}
+                            {showAddStopDrawer ? (
+                                <>
+                                    <X className="w-3 h-3 shrink-0" />
+                                    <span>Close</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Plus className="w-3 h-3 shrink-0" />
+                                    <span>Add Stop</span>
+                                </>
+                            )}
                         </button>
                     </div>
                 </div>
@@ -1251,7 +1444,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     }`}>
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <span className="w-6 h-6 rounded-lg bg-sky-400 text-black font-black text-[11px] flex items-center justify-center shrink-0 shadow-md">
-                                🏁
+                                <Flag className="w-3.5 h-3.5 text-black shrink-0" />
                             </span>
                             <span className={`text-xs font-bold truncate ${
                                 theme === 'dark' ? 'text-sky-200' : 'text-sky-700'
@@ -1268,25 +1461,28 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         {/* Quick Ambient POI Chips */}
                         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
                             {[
-                                { icon: '⛽', label: 'Gas', query: 'gas station' },
-                                { icon: '☕', label: 'Coffee', query: 'coffee' },
-                                { icon: '🍔', label: 'Food', query: 'fast food restaurant' },
-                                { icon: '💊', label: 'Pharmacy', query: 'pharmacy' },
-                                { icon: '🏧', label: 'ATM', query: 'atm' }
-                            ].map(chip => (
-                                <button
-                                    key={chip.query}
-                                    type="button"
-                                    onClick={() => handleQuickPoiSearch(chip.query)}
-                                    className="px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/10 hover:bg-amber-500/20 text-slate-200 shrink-0 border border-white/10 hover:border-amber-500/30 transition-colors cursor-pointer flex items-center gap-1"
-                                    title={chip.label}
-                                >
-                                    <span>{chip.icon}</span>
-                                    <span className={isStopSearchFocused ? 'hidden min-[420px]:inline' : 'hidden min-[376px]:inline'}>
-                                        {chip.label}
-                                    </span>
-                                </button>
-                            ))}
+                                { iconComp: Fuel, label: 'Gas', query: 'gas station' },
+                                { iconComp: Coffee, label: 'Coffee', query: 'coffee' },
+                                { iconComp: Utensils, label: 'Food', query: 'fast food restaurant' },
+                                { iconComp: Pill, label: 'Pharmacy', query: 'pharmacy' },
+                                { iconComp: DollarSign, label: 'ATM', query: 'atm' }
+                            ].map(chip => {
+                                const ChipIcon = chip.iconComp;
+                                return (
+                                    <button
+                                        key={chip.query}
+                                        type="button"
+                                        onClick={() => handleQuickPoiSearch(chip.query)}
+                                        className="px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/10 hover:bg-amber-500/20 text-slate-200 shrink-0 border border-white/10 hover:border-amber-500/30 transition-colors cursor-pointer flex items-center gap-1"
+                                        title={chip.label}
+                                    >
+                                        <ChipIcon className="w-3 h-3 text-amber-400 shrink-0" />
+                                        <span className={isStopSearchFocused ? 'hidden min-[420px]:inline' : 'hidden min-[376px]:inline'}>
+                                            {chip.label}
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
 
                         {/* Search Input Box */}
@@ -1308,7 +1504,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 }`}
                             />
                             {isSearchingStops && (
-                                <span className="absolute right-3 top-2.5 text-xs animate-spin text-amber-400">🔄</span>
+                                <RefreshCw className="absolute right-3 top-2.5 w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
                             )}
                         </div>
 
@@ -1345,7 +1541,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                     </span>
                                                 )}
                                             </div>
-                                            <span className="text-[10px] text-amber-400 font-extrabold shrink-0 ml-2 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30">➕ Add</span>
+                                            <span className="text-[10px] text-amber-400 font-extrabold shrink-0 ml-2 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center gap-1">
+                                                <Plus className="w-2.5 h-2.5 shrink-0" />
+                                                <span>Add</span>
+                                            </span>
                                         </button>
                                     );
                                 })}
@@ -1358,97 +1557,143 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     };
 
     // ──────────────────────────────────────────
+    // PARKED VEHICLE CARD (MOBILE & DESKTOP)
+    // ──────────────────────────────────────────
+    const isParkedVehicle = place?.type === 'parked_vehicle' || place?.id === 'temp-parked-vehicle';
+    if (isParkedVehicle) {
+        return (
+            <ParkedVehicleCard
+                place={place as any}
+                onClose={onClose}
+                onNavigate={() => onNavigate(routeOptions[0])}
+                theme={theme}
+                userLocation={userLocation}
+                isMobile={isMobile}
+            />
+        );
+    }
+
+    // ──────────────────────────────────────────
     // MOBILE BOTTOM SHEET LAYOUT
     // ──────────────────────────────────────────
     if (isMobile) {
+        if (isSavedLocation) {
+            return (
+                <SavedPlaceHubCard
+                    place={place}
+                    onClose={onClose}
+                    onNavigate={onNavigate}
+                    theme={theme}
+                    userLocation={userLocation}
+                    isMobile={true}
+                    onEditPlace={onEditPlace}
+                    members={members}
+                    currentUserId={currentUserId}
+                    routeOptions={routeOptions}
+                    selectedRouteIdx={selectedRouteIdx}
+                    onSelectRoutePreview={onSelectRoutePreview}
+                    isLoadingRoutes={isLoadingRoutes}
+                    userPlaces={userPlaces}
+                />
+            );
+        }
+
         const sheetBg = theme === 'dark'
-            ? 'bg-[#0f172a]/98 border-white/10'
-            : 'bg-white/98 border-slate-200';
+            ? 'bg-[#0f172a]/98 border-white/10 text-white'
+            : 'bg-[#fdfbf7]/98 border-slate-200/80 shadow-2xl text-slate-900';
 
         return (
             <div
-                className={`w-full max-h-[min(60vh,420px)] overflow-y-auto overscroll-contain no-scrollbar rounded-t-[2rem] shadow-[0_-10px_50px_rgba(0,0,0,0.5)] border-t backdrop-blur-2xl animate-in slide-in-from-bottom duration-300 pb-safe ${sheetBg}`}
-                style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 16px), 16px)' }}
-                onScroll={() => (document.activeElement as HTMLElement)?.blur()}
-                onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
+                className={`w-full max-h-[85vh] sm:max-h-[90vh] landscape:top-16 landscape:bottom-4 landscape:max-h-[calc(100dvh-5.5rem)] landscape:sm:max-h-[calc(100dvh-5.5rem)] landscape:my-auto flex flex-col overflow-hidden rounded-t-[2.5rem] landscape:rounded-[2rem] shadow-[0_-10px_50px_rgba(0,0,0,0.5)] border-t landscape:border backdrop-blur-2xl animate-in slide-in-from-bottom landscape:slide-in-from-left duration-300 pb-[max(env(safe-area-inset-bottom,10px),10px)] landscape:pb-0 opacity-100 pointer-events-auto ${sheetBg}`}
             >
                 {/* Drag Handle Pill */}
                 <div 
-                    className="pt-3 pb-1 cursor-grab active:cursor-grabbing"
+                    className="pt-2.5 pb-1 landscape:pt-1.5 landscape:pb-0.5 cursor-grab active:cursor-grabbing flex justify-center shrink-0"
+                    onClick={onClose}
                     onTouchStart={() => (document.activeElement as HTMLElement)?.blur()}
                     onMouseDown={() => (document.activeElement as HTMLElement)?.blur()}
                 >
-                    <div className={`w-12 h-1 rounded-full mx-auto ${theme === 'dark' ? 'bg-white/20' : 'bg-slate-300'}`} />
+                    <div className={`w-12 h-1.5 landscape:w-8 landscape:h-1 rounded-full mx-auto transition-colors ${theme === 'dark' ? 'bg-white/20 hover:bg-white/30' : 'bg-slate-300 hover:bg-slate-400'}`} />
                 </div>
 
-                {/* Content */}
-                <div className="px-4 pb-4 pt-1">
+                {/* Content - Scrollable */}
+                <div 
+                    className="flex-1 overflow-y-auto overscroll-contain no-scrollbar px-4 pb-4 pt-1 landscape:px-3 landscape:pb-2.5 landscape:pt-0.5 flex flex-col"
+                    onScroll={() => (document.activeElement as HTMLElement)?.blur()}
+                    onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
+                >
                     {/* Top Row: Icon + Info + Close */}
-                    <div className="flex items-start gap-4">
+                    <div className="flex items-start gap-3.5 landscape:gap-2.5">
                         {/* Place Icon */}
-                        <BrandIcon placeName={place.name} defaultIcon={place.icon} size="xl" className="shadow-lg" />
+                        <div className="shrink-0 scale-100 landscape:scale-90 origin-top-left">
+                            <BrandIcon placeName={place.name} defaultIcon={place.icon} size="xl" className="shadow-lg" />
+                        </div>
 
                         {/* Place Info */}
                         <div className="flex-1 min-w-0">
-                            <h3 className={`text-lg font-black leading-tight truncate ${textColor}`}>{place.name}</h3>
+                            <h3 className={`text-lg landscape:text-base font-black leading-tight truncate ${textColor}`}>{place.name}</h3>
 
                             {addressSubtitle && (
-                                <p className={`text-xs leading-snug mt-0.5 flex items-start gap-1 ${subTextColor}`}>
-                                    <svg className="w-3 h-3 mt-0.5 shrink-0 opacity-60" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
-                                    <span className="line-clamp-2">{addressSubtitle}</span>
-                                </p>
+                                <div className="flex flex-wrap items-center gap-1.5 mt-0.5 landscape:mt-0">
+                                    <p className={`text-xs landscape:text-[11px] leading-snug flex items-start gap-1 ${subTextColor}`}>
+                                        <svg className="w-3 h-3 mt-0.5 shrink-0 opacity-60" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
+                                        <span className="line-clamp-2 landscape:line-clamp-1">{addressSubtitle}</span>
+                                    </p>
+                                    {place.isCommunityVerified && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] landscape:text-[8px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shrink-0">
+                                            <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                                            <span>📍 Community Verified</span>
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+
+                            {!addressSubtitle && place.isCommunityVerified && (
+                                <div className="mt-1 landscape:mt-0.5">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] landscape:text-[8px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shrink-0">
+                                        <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                                        <span>📍 Community Verified</span>
+                                    </span>
+                                </div>
                             )}
 
                             {/* Tags Row */}
-                            <div className="flex flex-row flex-wrap items-center gap-2 mt-1.5">
+                            <div className="flex flex-row flex-wrap items-center gap-1.5 sm:gap-2 mt-1.5 landscape:mt-1">
+                                {place.isCommunityVerified && (
+                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+                                        <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                                        <span>Community Verified Pin</span>
+                                    </span>
+                                )}
                                 {typeLabel && (
-                                    <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${tagColor}`}>
+                                    <span className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full ${tagColor}`}>
                                         {typeLabel}
                                     </span>
                                 )}
                                 {distance && (
-                                    <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
-                                        📏 {distance}
+                                    <span className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                                        <Navigation className="w-2.5 h-2.5 shrink-0" />
+                                        <span>{distance}</span>
                                     </span>
                                 )}
                                 {hasPrecisionPin && (
-                                    <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                                        <span>🎯</span> Precision Routing Pin
+                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                                        <Crosshair className="w-3 h-3 text-amber-400 shrink-0" />
+                                        <span>Precision Routing Pin</span>
                                     </span>
                                 )}
                                 {!isPrivatePlace && isVerified && (
-                                    <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
-                                        <span>⭐</span> Trust: {trustScore}
-                                    </span>
-                                )}
-                                {place.entranceType && (
-                                    <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border flex items-center gap-1 ${
-                                        place.entranceType === 'drive_thru'
-                                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                                            : place.entranceType === 'parking'
-                                            ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-                                            : place.entranceType === 'curbside'
-                                            ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                                            : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                    }`}>
-                                        <span>
-                                            {place.entranceType === 'drive_thru' ? '🚗' :
-                                             place.entranceType === 'parking' ? '🅿️' :
-                                             place.entranceType === 'curbside' ? '📦' : '🚪'}
-                                        </span>
-                                        <span>
-                                            {place.entranceType === 'drive_thru' ? 'Drive-Thru' :
-                                             place.entranceType === 'parking' ? 'Parking' :
-                                             place.entranceType === 'curbside' ? 'Curbside' : 'Main Door'}
-                                        </span>
+                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-widest px-2.5 landscape:px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
+                                        <ShieldCheck className="w-3 h-3 text-amber-400 shrink-0" />
+                                        <span>Trust: {trustScore}</span>
                                     </span>
                                 )}
                             </div>
 
                             {/* Entrance Notes (if present and not redundant default precision pin note) */}
                             {place.entranceNotes && !isPrecisionNotes && (
-                                <p className="text-[10px] text-amber-300/90 font-bold mt-1 px-2 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1">
-                                    <span>🚗</span>
+                                <p className="text-[10px] landscape:text-[9px] text-amber-300/90 font-bold mt-1 px-2 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
+                                    <Car className="w-3 h-3 shrink-0 text-amber-400" />
                                     <span className="truncate">{place.entranceNotes}</span>
                                 </p>
                             )}
@@ -1466,7 +1711,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                 className="w-4 h-4 rounded-full object-cover border border-amber-400/60 shrink-0"
                                             />
                                         ) : (
-                                            <span className="text-xs shrink-0">🌐</span>
+                                            <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                                         )}
                                         <span className={`font-bold truncate ${textColor}`}>
                                             Reported by <span className="text-amber-400 font-black">{isCommunityReport ? 'MyWay Community' : submitterDisplayName}</span>
@@ -1492,7 +1737,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                             }`}
                                             title="Confirm location is accurate and helpful"
                                         >
-                                            <span>👍</span>
+                                            <ThumbsUp className="w-3 h-3 shrink-0" />
                                             <span>Helpful</span>
                                             {trustScore > 0 && (
                                                 <span className="text-[8px] font-mono font-black opacity-90">
@@ -1514,7 +1759,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                             }`}
                                             title="Report location is incorrect or not there"
                                         >
-                                            <span>👎</span>
+                                            <ThumbsDown className="w-3 h-3 shrink-0" />
                                             <span>Not there</span>
                                         </button>
                                     </div>
@@ -1530,52 +1775,75 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <button
                                 type="button"
                                 onClick={() => onEditPlace(place)}
-                                className={`p-2 rounded-full shrink-0 transition-all text-base flex items-center justify-center cursor-pointer ${
+                                className={`p-2 landscape:p-1.5 rounded-full shrink-0 transition-all flex items-center justify-center cursor-pointer ${
                                     theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                 }`}
                                 title="Edit Place & Geofence"
                             >
-                                ✏️
+                                <Edit3 className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0" />
                             </button>
                         )}
 
-                        {/* Save / Unsave Star Button */}
                         <button
                             onClick={() => {
                                 if (isSaved) {
-                                    if (onDeletePlace) onDeletePlace(place.id);
+                                    const savedMatch = userPlaces?.find(p => p.id === place.id || (
+                                        p.location && place.location &&
+                                        Math.abs(p.location.lat - place.location.lat) < 0.001 &&
+                                        Math.abs(p.location.lng - place.location.lng) < 0.001
+                                    ));
+                                    const idToDelete = savedMatch?.id || place.id;
+                                    if (onDeletePlace) onDeletePlace(idToDelete);
                                 } else {
                                     setIsSavingPlace(true);
                                 }
                             }}
-                            className={`p-2 rounded-full shrink-0 transition-all text-base flex items-center justify-center ${
-                                theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                            className={`p-2 landscape:p-1.5 rounded-full shrink-0 transition-all flex items-center justify-center cursor-pointer ${
+                                isSaved
+                                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-sm'
+                                    : theme === 'dark'
+                                    ? 'bg-white/10 hover:bg-white/20 text-white'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                             }`}
                             title={isSaved ? "Remove from Saved Places" : "Save Place"}
                         >
-                            {isSaved ? '⭐' : '☆'}
+                            <Star className={`w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0 ${isSaved ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
                         </button>
 
                         {/* Close Button */}
                         <button
+                            type="button"
                             onClick={onClose}
-                            className={`p-2 rounded-full shrink-0 transition-all ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+                            className={`w-9 h-9 landscape:w-7 landscape:h-7 rounded-full shrink-0 transition-all flex items-center justify-center cursor-pointer ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+                            title="Close"
+                            aria-label="Close"
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+                            <X className="w-5 h-5 landscape:w-4 landscape:h-4 shrink-0" />
                         </button>
                     </div>
 
-                    {/* Route Options Selection Header */}
-                    <div className="mt-3 mb-2">
-                        <div className="flex items-center justify-between mb-1.5 px-0.5">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className={`text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>
+                    {/* Single Contiguous Trip-Planning & Route Choices Container (Mobile) */}
+                    <div className={`mt-2.5 landscape:mt-1.5 mb-2 landscape:mb-1 rounded-2xl sm:rounded-3xl border transition-all overflow-hidden ${
+                        theme === 'dark'
+                            ? 'bg-slate-900/90 border-white/10 shadow-inner'
+                            : 'bg-slate-50 border-slate-200 shadow-xs'
+                    }`}>
+                        {/* Route Choices Header & Filter Toolbar */}
+                        <div className="p-2.5 pb-2 landscape:p-2 landscape:pb-1 flex items-center justify-between gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                                <span className={`text-[10px] landscape:text-[9px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>
                                     Route Choices {routeOptions.length > 1 ? `(${routeOptions.length})` : ''}
                                 </span>
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${
-                                    theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
+                                {isLoadingRoutes && routeOptions.length > 0 && (
+                                    <RefreshCw className="w-2.5 h-2.5 text-indigo-400 animate-spin shrink-0" title="Updating routes in background" />
+                                )}
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`text-[9px] landscape:text-[8px] font-bold px-2 landscape:px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
+                                    theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-white border-slate-200 text-slate-700 shadow-2xs'
                                 }`} title={`Calculated with ${activeVehicle.name} (${activeVehicle.mpg} MPG)`}>
-                                    🚗 {activeVehicle.mpg} MPG
+                                    <Fuel className="w-3 h-3 text-amber-400 shrink-0" />
+                                    <span>{activeVehicle.mpg} MPG</span>
                                 </span>
                                 <button
                                     type="button"
@@ -1584,13 +1852,14 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         setAvoidTolls(next);
                                         localStorage.setItem('myway_avoid_tolls', String(next));
                                     }}
-                                    className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 ${
+                                    className={`px-2 landscape:px-1.5 py-0.5 rounded-full text-[9px] landscape:text-[8px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
                                         avoidTolls
                                             ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm ring-1 ring-emerald-500/30'
-                                            : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+                                            : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 shadow-2xs'
                                     }`}
+                                    title="Toggle Avoid Tolls"
                                 >
-                                    <span>{avoidTolls ? '🟢' : '💳'}</span>
+                                    <CreditCard className={`w-3 h-3 shrink-0 ${avoidTolls ? 'text-emerald-400' : 'text-slate-400'}`} />
                                     <span>{avoidTolls ? 'Avoiding Tolls' : 'Avoid Tolls'}</span>
                                 </button>
                                 {renderAddStopButton()}
@@ -1600,159 +1869,142 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         {/* Multi-Stop Waypoints Drawer */}
                         {renderWaypointManager()}
 
-                        {isLoadingRoutes ? (
-                            <div className={`p-3 rounded-2xl border animate-pulse flex items-center justify-center gap-2 ${theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
-                                <span className="text-sm">🔄</span>
-                                <span className="text-xs font-bold">Calculating toll & gas route options...</span>
-                            </div>
-                        ) : routeOptions.length > 0 ? (
-                            <div className="space-y-1.5 max-h-52 overflow-y-auto no-scrollbar">
-                                {routeOptions.map((route, idx) => {
-                                    const isSelected = selectedRouteIdx === idx;
-                                    return (
-                                        <button
-                                            key={route.id || idx}
-                                            type="button"
-                                            onClick={() => {
-                                                setSelectedRouteIdx(idx);
-                                                if (onSelectRoutePreview) onSelectRoutePreview(route);
-                                            }}
-                                            className={`w-full p-2.5 rounded-2xl border transition-all text-left flex items-center justify-between gap-2.5
-                                                ${isSelected
-                                                    ? 'bg-indigo-600/20 border-indigo-500 shadow-md ring-1 ring-indigo-500/50'
-                                                    : theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
-                                        >
-                                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm shrink-0 font-bold ${
-                                                    route.routeType === 'fastest' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
-                                                    route.routeType === 'toll_free' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
-                                                    route.routeType === 'eco' ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30' :
-                                                    route.routeType === 'scenic' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
-                                                    'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                                                }`}>
-                                                    {route.routeType === 'fastest' ? '⚡' : route.routeType === 'toll_free' ? '🟢' : route.routeType === 'eco' ? '🌿' : route.routeType === 'scenic' ? '🌲' : '🛣️'}
-                                                </div>
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                        <span className={`text-xs font-black truncate ${textColor}`}>
-                                                            {route.routeLabel || 'Route'}
-                                                        </span>
-                                                        {route.savingsLabel && (
-                                                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                                                                route.routeType === 'fastest' ? 'bg-amber-500/15 text-amber-400' :
-                                                                route.routeType === 'toll_free' ? 'bg-emerald-500/15 text-emerald-400' :
-                                                                route.routeType === 'eco' ? 'bg-teal-500/15 text-teal-400' :
-                                                                'bg-indigo-500/15 text-indigo-400'
-                                                            }`}>
-                                                                {route.savingsLabel}
-                                                            </span>
-                                                        )}
-                                                        {route.hasTolls && (
-                                                            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20 shrink-0">
-                                                                💳 {route.tollCostEstimate}
-                                                            </span>
-                                                        )}
+                        {/* Route Options List */}
+                        <div className="px-2.5 pb-2.5 pt-0 landscape:px-2 landscape:pb-1.5">
+                            {isLoadingRoutes && routeOptions.length === 0 ? (
+                                <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
+                                        <span className="text-xs font-bold truncate">Finding routes & toll costs...</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleRetryRoutes}
+                                        className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-[10px] font-black border border-indigo-400/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer shrink-0"
+                                        title="Retry route calculation"
+                                    >
+                                        <RefreshCw className="w-3 h-3" />
+                                        <span>Retry</span>
+                                    </button>
+                                </div>
+                            ) : routeOptions.length > 0 ? (
+                                <div className="space-y-1.5 landscape:space-y-1 max-h-52 landscape:max-h-24 overflow-y-auto no-scrollbar">
+                                    {routeOptions.map((route, idx) => {
+                                        const isSelected = selectedRouteIdx === idx;
+                                        return (
+                                            <button
+                                                key={route.id || idx}
+                                                type="button"
+                                                onClick={() => {
+                                                    setSelectedRouteIdx(idx);
+                                                    if (onSelectRoutePreview) onSelectRoutePreview(route);
+                                                }}
+                                                className={`w-full p-2.5 landscape:p-1.5 rounded-xl landscape:rounded-lg border transition-all text-left flex items-center justify-between gap-2.5 landscape:gap-1.5 cursor-pointer ${
+                                                    isSelected
+                                                        ? (theme === 'dark'
+                                                            ? 'bg-indigo-600/25 border-indigo-500/80 shadow-md ring-1 ring-indigo-500/40'
+                                                            : 'bg-white border-indigo-300 shadow-xs ring-1 ring-indigo-500/30')
+                                                        : (theme === 'dark'
+                                                            ? 'bg-white/[0.03] border-white/5 hover:bg-white/[0.07] hover:border-white/10'
+                                                            : 'bg-white/70 border-slate-200/80 hover:bg-white hover:border-slate-300')
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-2 landscape:gap-1.5 min-w-0 flex-1">
+                                                    <div className={`w-8 h-8 landscape:w-6 landscape:h-6 rounded-xl landscape:rounded-md flex items-center justify-center text-sm landscape:text-xs shrink-0 font-bold ${
+                                                        route.routeType === 'fastest' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                                                        route.routeType === 'toll_free' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                                                        route.routeType === 'eco' ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30' :
+                                                        route.routeType === 'scenic' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
+                                                        'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                                                    }`}>
+                                                        {route.routeType === 'fastest' ? <Zap className="w-4 h-4 landscape:w-3 landscape:h-3 shrink-0" /> :
+                                                         route.routeType === 'toll_free' ? <CheckCircle2 className="w-4 h-4 landscape:w-3 landscape:h-3 shrink-0" /> :
+                                                         route.routeType === 'eco' ? <Leaf className="w-4 h-4 landscape:w-3 landscape:h-3 shrink-0" /> :
+                                                         route.routeType === 'scenic' ? <TreePine className="w-4 h-4 landscape:w-3 landscape:h-3 shrink-0" /> :
+                                                         <Route className="w-4 h-4 landscape:w-3 landscape:h-3 shrink-0" />}
                                                     </div>
-                                                    <div className="flex items-center gap-1.5 text-[9px] text-slate-400 mt-0.5 truncate">
-                                                        <span className="font-semibold">{route.summary}</span>
-                                                        {route.fuelCostEstimate && (
-                                                            <>
-                                                                <span>•</span>
-                                                                <span className="text-slate-300">⛽ {route.fuelCostEstimate}</span>
-                                                            </>
-                                                        )}
-                                                        {route.hasTolls && route.totalEstimatedTripCost && (
-                                                            <>
-                                                                <span>•</span>
-                                                                <span className="text-indigo-400 font-bold">Total ~{route.totalEstimatedTripCost}</span>
-                                                            </>
-                                                        )}
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <span className={`text-xs landscape:text-[11px] font-black truncate ${textColor}`}>
+                                                                {route.routeLabel || 'Route'}
+                                                            </span>
+                                                            {route.savingsLabel && (
+                                                                <span className={`text-[8px] landscape:text-[7px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                                                    route.routeType === 'fastest' ? 'bg-amber-500/15 text-amber-400' :
+                                                                    route.routeType === 'toll_free' ? 'bg-emerald-500/15 text-emerald-400' :
+                                                                    route.routeType === 'eco' ? 'bg-teal-500/15 text-teal-400' :
+                                                                    'bg-indigo-500/15 text-indigo-400'
+                                                                }`}>
+                                                                    {route.savingsLabel}
+                                                                </span>
+                                                            )}
+                                                            {route.hasTolls && (
+                                                                <span className="text-[8px] landscape:text-[7px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20 shrink-0 flex items-center gap-1">
+                                                                    <CreditCard className="w-2.5 h-2.5 shrink-0" />
+                                                                    <span>{route.tollCostEstimate}</span>
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5 text-[9px] landscape:text-[8px] text-slate-400 mt-0.5 truncate">
+                                                            <span className="font-semibold">{route.summary}</span>
+                                                            {route.fuelCostEstimate && (
+                                                                <>
+                                                                    <span>•</span>
+                                                                    <span className="text-slate-300 flex items-center gap-0.5">
+                                                                        <Fuel className="w-2.5 h-2.5 shrink-0 text-amber-400" />
+                                                                        <span>{route.fuelCostEstimate}</span>
+                                                                    </span>
+                                                                </>
+                                                            )}
+                                                            {route.hasTolls && route.totalEstimatedTripCost && (
+                                                                <>
+                                                                    <span>•</span>
+                                                                    <span className="text-indigo-400 font-bold">Total ~{route.totalEstimatedTripCost}</span>
+                                                                </>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
 
-                                            <div className="text-right shrink-0">
-                                                <p className={`text-xs font-black ${isSelected ? 'text-indigo-400' : textColor}`}>
-                                                    {route.totalTime}
-                                                </p>
-                                                <p className="text-[9px] text-slate-400">
-                                                    {route.totalDistance}
-                                                </p>
-                                            </div>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        ) : null}
+                                                <div className="text-right shrink-0">
+                                                    <p className={`text-xs landscape:text-[11px] font-black ${isSelected ? 'text-indigo-400' : textColor}`}>
+                                                        {route.totalTime}
+                                                    </p>
+                                                    <p className="text-[9px] landscape:text-[8px] text-slate-400">
+                                                        {route.totalDistance}
+                                                    </p>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : !isLoadingRoutes && routeOptions.length === 0 ? (
+                                <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                                        <span className="text-xs font-medium truncate">No direct route found</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleRetryRoutes}
+                                        className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-[10px] font-black border border-indigo-400/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer shrink-0"
+                                        title="Retry route calculation"
+                                    >
+                                        <RefreshCw className="w-3 h-3" />
+                                        <span>Retry</span>
+                                    </button>
+                                </div>
+                            ) : null}
+                        </div>
                     </div>
 
-                    {/* Geofence Radius Slider (Only for Saved Circle Places) */}
-                    {isSaved && onUpdateRadius && (
-                        <div className={`mt-2 mb-1 p-2.5 rounded-2xl border ${
-                            theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-                        }`}>
-                            <div className="flex items-center justify-between mb-1">
-                                <span className={`text-[10px] font-black uppercase tracking-wider ${
-                                    theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'
-                                }`}>
-                                    Geofence Zone
-                                </span>
-                                <span className={`text-xs font-bold ${textColor}`}>
-                                    {Math.round((place.radius && place.radius > 5 ? place.radius : (place.radius || 0.05) * 1000))}m
-                                </span>
-                            </div>
-
-                            {/* Quick-Preset Radius Chips */}
-                            <div className="flex flex-row overflow-x-auto gap-2 mb-2.5 pb-0.5 scrollbar-none">
-                                {GEOFENCE_PRESETS.map((preset) => {
-                                    const currentKm = place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05);
-                                    const isActive = Math.round(currentKm * 1000) === Math.round(preset.value * 1000);
-                                    return (
-                                        <button
-                                            key={preset.label}
-                                            type="button"
-                                            onClick={() => onUpdateRadius(place.id, preset.value)}
-                                            className={`px-2.5 py-1 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer shrink-0 border ${
-                                                isActive
-                                                    ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
-                                                    : theme === 'dark'
-                                                        ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
-                                                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900 shadow-2xs'
-                                            }`}
-                                        >
-                                            <span>{preset.label}</span>
-                                            <span className={`text-[9px] ${isActive ? 'text-indigo-200' : 'text-slate-400'}`}>
-                                                ({preset.meters})
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-
-                            <input
-                                type="range"
-                                min="0.015"
-                                max="2.0"
-                                step="0.005"
-                                value={place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05)}
-                                onChange={(e) => onUpdateRadius(place.id, parseFloat(e.target.value))}
-                                className="w-full h-1 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
-                            />
-                            <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-                                <span>15m (Driveway)</span>
-                                <span>1km</span>
-                                <span>2km</span>
-                            </div>
-                        </div>
-                    )}
-
                     {/* Action Buttons */}
-                    <div className="flex items-center gap-1.5 mt-2.5">
+                    <div className="flex items-center gap-1.5 mt-2 landscape:mt-1 shrink-0 sticky bottom-0 pt-1.5 pb-0.5 backdrop-blur-md bg-inherit/95">
                         <button
                             onClick={() => onNavigate(routeOptions[selectedRouteIdx] || undefined)}
-                            className="flex-[1.5] min-w-fit h-10 px-3.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl font-black text-xs sm:text-sm shadow-md shadow-indigo-600/30 transition-all active:scale-95 flex flex-row items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
+                            className="flex-[1.5] min-w-fit h-10 landscape:h-8.5 px-3.5 landscape:px-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl landscape:rounded-lg font-black text-xs sm:text-sm landscape:text-xs shadow-md shadow-indigo-600/30 transition-all active:scale-95 flex flex-row items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
                         >
-                            <span className="text-base shrink-0">🚀</span>
+                            <Navigation className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0 fill-current" />
                             <span className="whitespace-nowrap">{routeOptions[selectedRouteIdx] ? `Go (${routeOptions[selectedRouteIdx].totalTime})` : 'Go'}</span>
                         </button>
                         <button
@@ -1766,34 +2018,34 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 );
                                 onNavigate(routeOptions[selectedRouteIdx] || undefined);
                             }}
-                            className="h-10 px-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs shadow-md shadow-purple-600/20 transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap"
+                            className="h-10 landscape:h-8.5 px-2.5 landscape:px-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl landscape:rounded-lg font-bold text-xs landscape:text-[11px] shadow-md shadow-purple-600/20 transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap"
                             title="Start Caravan / Convoy with Circle Members"
                         >
-                            <span className="text-sm shrink-0">🚗🚗</span>
+                            <Car className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0" />
                             <span className="whitespace-nowrap">Convoy</span>
                         </button>
                         {onCorrectLocation && (
                             <button
                                 type="button"
                                 onClick={() => onCorrectLocation(place)}
-                                className={`h-10 px-2.5 rounded-xl font-bold text-xs border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
+                                className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl landscape:rounded-lg font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
                                     theme === 'dark' ? 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300' : 'border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700'
                                 }`}
-                                title="Suggest an edit, correct location, or report issue"
+                                title="Update place details, entrance, or building photo"
                             >
-                                <span className="text-sm shrink-0">✏️</span>
-                                <span className="whitespace-nowrap">Suggest Edit</span>
+                                <Edit3 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
+                                <span className="whitespace-nowrap">Update Place Details</span>
                             </button>
                         )}
                         <button
                             type="button"
                             onClick={handleShare}
-                            className={`h-10 px-2.5 rounded-xl font-bold text-xs border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
+                            className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl landscape:rounded-lg font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
                                 theme === 'dark' ? 'border-white/10 hover:bg-white/5 text-slate-300' : 'border-slate-200 hover:bg-slate-50 text-slate-600'
                             }`}
                             title="Share place details"
                         >
-                            <span className="text-sm shrink-0">↗️</span>
+                            <Share2 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
                             <span className="whitespace-nowrap">Share</span>
                         </button>
                     </div>
@@ -1806,18 +2058,55 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     // DESKTOP FLOATING CARD LAYOUT
     // ──────────────────────────────────────────
 
+    if (isSavedLocation) {
+        return (
+            <SavedPlaceHubCard
+                place={place}
+                onClose={onClose}
+                onNavigate={onNavigate}
+                theme={theme}
+                userLocation={userLocation}
+                isMobile={false}
+                onEditPlace={onEditPlace}
+                members={members}
+                currentUserId={currentUserId}
+                routeOptions={routeOptions}
+                selectedRouteIdx={selectedRouteIdx}
+                onSelectRoutePreview={onSelectRoutePreview}
+                isLoadingRoutes={isLoadingRoutes}
+                userPlaces={userPlaces}
+            />
+        );
+    }
+
     return (
-        <div className={`w-full max-w-full backdrop-blur-2xl rounded-[1.75rem] sm:rounded-[2rem] shadow-[0_25px_60px_rgba(0,0,0,0.4)] border overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300 ${bgColor}`}>
-            <div className="p-3.5 sm:p-5 landscape:p-3">
+        <div className={`w-full max-w-full landscape:top-16 landscape:bottom-4 landscape:max-h-[calc(100dvh-5.5rem)] landscape:sm:max-h-[calc(100dvh-5.5rem)] landscape:my-auto flex flex-col backdrop-blur-2xl rounded-[1.75rem] sm:rounded-[2rem] shadow-[0_25px_60px_rgba(0,0,0,0.4)] border overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300 opacity-100 pointer-events-auto ${bgColor}`}>
+            <div className="p-3.5 sm:p-5 landscape:p-3 flex-1 overflow-y-auto overscroll-contain no-scrollbar flex flex-col">
                 {/* Header Row: Place Title & Action Icons (Save & Close) */}
                 <div className="flex items-start justify-between gap-3 mb-1.5 landscape:mb-1">
                     <div className="min-w-0 flex-1">
                         <h3 className={`text-lg sm:text-xl font-black leading-tight mb-0.5 sm:mb-1 truncate ${textColor}`}>{place.name}</h3>
                         {addressSubtitle && (
-                            <p className={`text-xs leading-snug flex items-start gap-1.5 ${subTextColor}`}>
-                                <svg className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-60" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
-                                <span className="line-clamp-2">{addressSubtitle}</span>
-                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <p className={`text-xs leading-snug flex items-start gap-1.5 ${subTextColor}`}>
+                                    <svg className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-60" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
+                                    <span className="line-clamp-2">{addressSubtitle}</span>
+                                </p>
+                                {place.isCommunityVerified && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shrink-0">
+                                        <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                                        <span>📍 Community Verified</span>
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                        {!addressSubtitle && place.isCommunityVerified && (
+                            <div className="mt-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shrink-0">
+                                    <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                                    <span>📍 Community Verified</span>
+                                </span>
+                            </div>
                         )}
                     </div>
 
@@ -1832,7 +2121,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 }`}
                                 title="Edit Place & Geofence"
                             >
-                                ✏️
+                                <Edit3 className="w-4 h-4 shrink-0" />
                             </button>
                         )}
 
@@ -1841,7 +2130,13 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             type="button"
                             onClick={() => {
                                 if (isSaved) {
-                                    if (onDeletePlace) onDeletePlace(place.id);
+                                    const savedMatch = userPlaces?.find(p => p.id === place.id || (
+                                        p.location && place.location &&
+                                        Math.abs(p.location.lat - place.location.lat) < 0.001 &&
+                                        Math.abs(p.location.lng - place.location.lng) < 0.001
+                                    ));
+                                    const idToDelete = savedMatch?.id || place.id;
+                                    if (onDeletePlace) onDeletePlace(idToDelete);
                                 } else {
                                     setIsSavingPlace(true);
                                 }
@@ -1855,65 +2150,53 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             }`}
                             title={isSaved ? "Saved to Circle (Click to remove)" : "Save Place to Circle"}
                         >
-                            {isSaved ? '⭐' : '☆'}
+                            <Star className={`w-4 h-4 shrink-0 ${isSaved ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
                         </button>
 
                         {/* Close Button */}
                         <button
                             type="button"
                             onClick={onClose}
-                            className={`p-2 rounded-full transition-all cursor-pointer ${
+                            className={`w-9 h-9 rounded-full transition-all flex items-center justify-center cursor-pointer ${
                                 theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                             }`}
                             title="Close"
+                            aria-label="Close"
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+                            <X className="w-5 h-5 shrink-0" />
                         </button>
                     </div>
                 </div>
 
                 {/* Type Tag + Distance Badge + Consolidated Badges Row */}
                 <div className="flex flex-row flex-wrap items-center gap-2 mb-3">
+                    {place.isCommunityVerified && (
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            <span>Community Verified Pin</span>
+                        </span>
+                    )}
                     {typeLabel && (
                         <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full ${tagColor}`}>
                             {typeLabel}
                         </span>
                     )}
                     {distance && (
-                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
-                            📏 {distance}
+                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                            <Navigation className="w-2.5 h-2.5 shrink-0" />
+                            <span>{distance}</span>
                         </span>
                     )}
                     {hasPrecisionPin && (
                         <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                            <span>🎯</span> Precision Routing Pin
+                            <Crosshair className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>Precision Routing Pin</span>
                         </span>
                     )}
                     {!isPrivatePlace && isVerified && (
                         <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
-                            <span>⭐</span> Trust: {trustScore}
-                        </span>
-                    )}
-                    {place.entranceType && (
-                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border flex items-center gap-1 ${
-                            place.entranceType === 'drive_thru'
-                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                                : place.entranceType === 'parking'
-                                ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-                                : place.entranceType === 'curbside'
-                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                        }`}>
-                            <span>
-                                {place.entranceType === 'drive_thru' ? '🚗' :
-                                 place.entranceType === 'parking' ? '🅿️' :
-                                 place.entranceType === 'curbside' ? '📦' : '🚪'}
-                            </span>
-                            <span>
-                                {place.entranceType === 'drive_thru' ? 'Drive-Thru Lane' :
-                                 place.entranceType === 'parking' ? 'Parking Lot' :
-                                 place.entranceType === 'curbside' ? 'Curbside' : 'Main Door'}
-                            </span>
+                            <ShieldCheck className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>Trust: {trustScore}</span>
                         </span>
                     )}
                 </div>
@@ -1921,7 +2204,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 {/* Entrance Guidance (Desktop - if not redundant default precision pin note) */}
                 {place.entranceNotes && !isPrecisionNotes && (
                     <p className="text-xs text-amber-300/90 font-bold mb-2.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
-                        <span>🚗</span>
+                        <Car className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                         <span>{place.entranceNotes}</span>
                     </p>
                 )}
@@ -1939,7 +2222,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     className="w-5 h-5 rounded-full object-cover border border-amber-400/60 shadow-sm shrink-0"
                                 />
                             ) : (
-                                <span className="text-sm shrink-0">🌐</span>
+                                <Globe className="w-4 h-4 text-slate-400 shrink-0" />
                             )}
                             <span className={`font-bold truncate ${textColor}`}>
                                 Reported by <span className="text-amber-400 font-black">{isCommunityReport ? 'MyWay Community' : submitterDisplayName}</span>
@@ -1965,7 +2248,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 }`}
                                 title="Confirm location is accurate and helpful"
                             >
-                                <span>👍</span>
+                                <ThumbsUp className="w-3.5 h-3.5 shrink-0" />
                                 <span>Helpful</span>
                                 {trustScore > 0 && (
                                     <span className="text-[10px] font-mono font-black opacity-90">
@@ -1987,7 +2270,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 }`}
                                 title="Report location is incorrect or not there"
                             >
-                                <span>👎</span>
+                                <ThumbsDown className="w-3.5 h-3.5 shrink-0" />
                                 <span>Not there</span>
                             </button>
                         </div>
@@ -1997,17 +2280,28 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 {/* Location Photo Contributions & Gallery (Desktop) */}
                 {renderPhotoSection(false)}
 
-                {/* Route Options Selection (Desktop) */}
-                <div className="mb-3 sm:mb-4 landscape:mb-2">
-                    <div className="flex items-center justify-between mb-1.5 px-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Single Contiguous Trip-Planning & Route Choices Container (Desktop) */}
+                <div className={`mb-3 sm:mb-4 landscape:mb-2 rounded-2xl sm:rounded-3xl border transition-all overflow-hidden ${
+                    theme === 'dark'
+                        ? 'bg-slate-900/90 border-white/10 shadow-inner'
+                        : 'bg-slate-50 border-slate-200 shadow-xs'
+                }`}>
+                    {/* Route Choices Header & Filter Toolbar */}
+                    <div className="p-3 pb-2 flex items-center justify-between gap-1.5 flex-wrap">
+                        <div className="flex items-center gap-1.5">
                             <span className={`text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>
                                 Route Choices {routeOptions.length > 1 ? `(${routeOptions.length})` : ''}
                             </span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${
-                                theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
+                            {isLoadingRoutes && routeOptions.length > 0 && (
+                                <RefreshCw className="w-2.5 h-2.5 text-indigo-400 animate-spin shrink-0" title="Updating routes in background" />
+                            )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                                theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-white border-slate-200 text-slate-700 shadow-2xs'
                             }`} title={`Calculated with ${activeVehicle.name} (${activeVehicle.mpg} MPG)`}>
-                                🚗 {activeVehicle.mpg} MPG
+                                <Fuel className="w-3 h-3 text-amber-400 shrink-0" />
+                                <span>{activeVehicle.mpg} MPG</span>
                             </span>
                             <button
                                 type="button"
@@ -2016,14 +2310,14 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     setAvoidTolls(next);
                                     localStorage.setItem('myway_avoid_tolls', String(next));
                                 }}
-                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 ${
+                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
                                     avoidTolls
                                         ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm ring-1 ring-emerald-500/30'
-                                        : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+                                        : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 shadow-2xs'
                                 }`}
                                 title="Toggle Avoid Tolls"
                             >
-                                <span>{avoidTolls ? '🟢' : '💳'}</span>
+                                <CreditCard className={`w-3 h-3 shrink-0 ${avoidTolls ? 'text-emerald-400' : 'text-slate-400'}`} />
                                 <span>{avoidTolls ? 'Avoiding Tolls' : 'Avoid Tolls'}</span>
                             </button>
                             {renderAddStopButton()}
@@ -2033,191 +2327,174 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     {/* Multi-Stop Waypoints Drawer (Desktop) */}
                     {renderWaypointManager()}
 
-                    {isLoadingRoutes ? (
-                        <div className={`p-3 rounded-2xl border animate-pulse flex items-center justify-center gap-2 ${theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
-                            <span className="text-sm">🔄</span>
-                            <span className="text-xs font-bold">Finding routes & toll costs...</span>
-                        </div>
-                    ) : routeOptions.length > 0 ? (
-                        <div className="space-y-1 sm:space-y-1.5 max-h-36 sm:max-h-48 landscape:max-h-24 overflow-y-auto no-scrollbar">
-                            {routeOptions.map((route, idx) => {
-                                const isSelected = selectedRouteIdx === idx;
-                                return (
-                                    <button
-                                        key={route.id || idx}
-                                        type="button"
-                                        onClick={() => {
-                                            setSelectedRouteIdx(idx);
-                                            if (onSelectRoutePreview) onSelectRoutePreview(route);
-                                        }}
-                                        className={`w-full p-2 sm:p-2.5 rounded-xl sm:rounded-2xl border transition-all text-left flex items-center justify-between gap-2.5
-                                            ${isSelected
-                                                ? 'bg-indigo-600/20 border-indigo-500 shadow-md ring-1 ring-indigo-500/50'
-                                                : theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
-                                    >
-                                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                                            <div className={`w-7 h-7 rounded-xl flex items-center justify-center text-xs shrink-0 font-bold ${
-                                                route.routeType === 'fastest' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
-                                                route.routeType === 'toll_free' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
-                                                route.routeType === 'eco' ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30' :
-                                                route.routeType === 'scenic' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
-                                                'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                                            }`}>
-                                                {route.routeType === 'fastest' ? '⚡' : route.routeType === 'toll_free' ? '🟢' : route.routeType === 'eco' ? '🌿' : route.routeType === 'scenic' ? '🌲' : '🛣️'}
-                                            </div>
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-1.5 flex-wrap">
-                                                    <span className={`text-xs font-black truncate ${textColor}`}>
-                                                        {route.routeLabel || 'Route'}
-                                                    </span>
-                                                    {route.savingsLabel && (
-                                                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                                                            route.routeType === 'fastest' ? 'bg-amber-500/15 text-amber-400' :
-                                                            route.routeType === 'toll_free' ? 'bg-emerald-500/15 text-emerald-400' :
-                                                            route.routeType === 'eco' ? 'bg-teal-500/15 text-teal-400' :
-                                                            'bg-indigo-500/15 text-indigo-400'
-                                                        }`}>
-                                                            {route.savingsLabel}
-                                                        </span>
-                                                    )}
-                                                    {route.hasTolls && (
-                                                        <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20 shrink-0">
-                                                            💳 {route.tollCostEstimate}
-                                                        </span>
-                                                    )}
+                    {/* Route Options List */}
+                    <div className="px-2.5 pb-2.5 pt-0">
+                        {isLoadingRoutes && routeOptions.length === 0 ? (
+                            <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
+                                    <span className="text-xs font-bold truncate">Finding routes & toll costs...</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleRetryRoutes}
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-[10px] font-black border border-indigo-400/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer shrink-0"
+                                    title="Retry route calculation"
+                                >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span>Retry</span>
+                                </button>
+                            </div>
+                        ) : routeOptions.length > 0 ? (
+                            <div className="space-y-1 sm:space-y-1.5 max-h-36 sm:max-h-48 landscape:max-h-24 overflow-y-auto no-scrollbar">
+                                {routeOptions.map((route, idx) => {
+                                    const isSelected = selectedRouteIdx === idx;
+                                    return (
+                                        <button
+                                            key={route.id || idx}
+                                            type="button"
+                                            onClick={() => {
+                                                setSelectedRouteIdx(idx);
+                                                if (onSelectRoutePreview) onSelectRoutePreview(route);
+                                            }}
+                                            className={`w-full p-2 sm:p-2.5 rounded-xl border transition-all text-left flex items-center justify-between gap-2.5 cursor-pointer ${
+                                                isSelected
+                                                    ? (theme === 'dark'
+                                                        ? 'bg-indigo-600/25 border-indigo-500/80 shadow-md ring-1 ring-indigo-500/40'
+                                                        : 'bg-white border-indigo-300 shadow-xs ring-1 ring-indigo-500/30')
+                                                    : (theme === 'dark'
+                                                        ? 'bg-white/[0.03] border-white/5 hover:bg-white/[0.07] hover:border-white/10'
+                                                        : 'bg-white/70 border-slate-200/80 hover:bg-white hover:border-slate-300')
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                <div className={`w-7 h-7 rounded-xl flex items-center justify-center text-xs shrink-0 font-bold ${
+                                                    route.routeType === 'fastest' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                                                    route.routeType === 'toll_free' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                                                    route.routeType === 'eco' ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30' :
+                                                    route.routeType === 'scenic' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
+                                                    'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                                                }`}>
+                                                    {route.routeType === 'fastest' ? <Zap className="w-3.5 h-3.5 shrink-0" /> :
+                                                     route.routeType === 'toll_free' ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> :
+                                                     route.routeType === 'eco' ? <Leaf className="w-3.5 h-3.5 shrink-0" /> :
+                                                     route.routeType === 'scenic' ? <TreePine className="w-3.5 h-3.5 shrink-0" /> :
+                                                     <Route className="w-3.5 h-3.5 shrink-0" />}
                                                 </div>
-                                                <div className="flex items-center gap-1.5 text-[9px] text-slate-400 mt-0.5 truncate">
-                                                    <span>{route.summary}</span>
-                                                    {route.fuelCostEstimate && (
-                                                        <>
-                                                            <span>•</span>
-                                                            <span className="text-slate-300">⛽ {route.fuelCostEstimate}</span>
-                                                        </>
-                                                    )}
-                                                    {route.hasTolls && route.totalEstimatedTripCost && (
-                                                        <>
-                                                            <span>•</span>
-                                                            <span className="text-indigo-400 font-bold">Total ~{route.totalEstimatedTripCost}</span>
-                                                        </>
-                                                    )}
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <span className={`text-xs font-black truncate ${textColor}`}>
+                                                            {route.routeLabel || 'Route'}
+                                                        </span>
+                                                        {route.savingsLabel && (
+                                                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                                                route.routeType === 'fastest' ? 'bg-amber-500/15 text-amber-400' :
+                                                                route.routeType === 'toll_free' ? 'bg-emerald-500/15 text-emerald-400' :
+                                                                route.routeType === 'eco' ? 'bg-teal-500/15 text-teal-400' :
+                                                                'bg-indigo-500/15 text-indigo-400'
+                                                            }`}>
+                                                                {route.savingsLabel}
+                                                            </span>
+                                                        )}
+                                                        {route.hasTolls && (
+                                                            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20 shrink-0 flex items-center gap-1">
+                                                                <CreditCard className="w-2.5 h-2.5 shrink-0" />
+                                                                <span>{route.tollCostEstimate}</span>
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 text-[9px] text-slate-400 mt-0.5 truncate">
+                                                        <span>{route.summary}</span>
+                                                        {route.fuelCostEstimate && (
+                                                            <>
+                                                                <span>•</span>
+                                                                <span className="text-slate-300 flex items-center gap-0.5">
+                                                                    <Fuel className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                                                                    <span>{route.fuelCostEstimate}</span>
+                                                                </span>
+                                                            </>
+                                                        )}
+                                                        {route.hasTolls && route.totalEstimatedTripCost && (
+                                                            <>
+                                                                <span>•</span>
+                                                                <span className="text-indigo-400 font-bold">Total ~{route.totalEstimatedTripCost}</span>
+                                                            </>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                        <div className="text-right shrink-0">
-                                            <p className={`text-xs font-black ${isSelected ? 'text-indigo-400' : textColor}`}>
-                                                {route.totalTime}
-                                            </p>
-                                            <p className="text-[9px] text-slate-400">
-                                                {route.totalDistance}
-                                            </p>
-                                        </div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    ) : null}
+                                            <div className="text-right shrink-0">
+                                                <p className={`text-xs font-black ${isSelected ? 'text-indigo-400' : textColor}`}>
+                                                    {route.totalTime}
+                                                </p>
+                                                <p className="text-[9px] text-slate-400">
+                                                    {route.totalDistance}
+                                                </p>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        ) : !isLoadingRoutes && routeOptions.length === 0 ? (
+                            <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                                    <span className="text-xs font-medium truncate">No direct route found</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleRetryRoutes}
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-[10px] font-black border border-indigo-400/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer shrink-0"
+                                    title="Retry route calculation"
+                                >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span>Retry</span>
+                                </button>
+                            </div>
+                        ) : null}
+                    </div>
                 </div>
 
-                {/* Geofence Radius Slider (Only for Saved Circle Places) */}
-                {isSaved && onUpdateRadius && (
-                    <div className={`mb-3 sm:mb-4 p-2.5 sm:p-3 rounded-2xl border landscape:mb-2 ${
-                        theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-                    }`}>
-                        <div className="flex items-center justify-between mb-1">
-                            <span className={`text-[10px] font-black uppercase tracking-wider ${
-                                theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'
-                            }`}>
-                                Geofence Zone
-                            </span>
-                            <span className={`text-xs font-bold ${textColor}`}>
-                                {Math.round((place.radius && place.radius > 5 ? place.radius : (place.radius || 0.05) * 1000))}m
-                            </span>
-                        </div>
-
-                        {/* Quick-Preset Radius Chips */}
-                        <div className="flex flex-row overflow-x-auto gap-2 mb-3 pb-0.5 scrollbar-none">
-                            {GEOFENCE_PRESETS.map((preset) => {
-                                const currentKm = place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05);
-                                const isActive = Math.round(currentKm * 1000) === Math.round(preset.value * 1000);
-                                return (
-                                    <button
-                                        key={preset.label}
-                                        type="button"
-                                        onClick={() => onUpdateRadius(place.id, preset.value)}
-                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer shrink-0 border ${
-                                            isActive
-                                                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/40'
-                                                : theme === 'dark'
-                                                    ? 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
-                                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900 shadow-2xs'
-                                        }`}
-                                    >
-                                        <span>{preset.label}</span>
-                                        <span className={`text-[9px] ${isActive ? 'text-indigo-200' : 'text-slate-400'}`}>
-                                            ({preset.meters})
-                                        </span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        <input
-                            type="range"
-                            min="0.015"
-                            max="2.0"
-                            step="0.005"
-                            value={place.radius && place.radius > 5 ? place.radius / 1000 : (place.radius || 0.05)}
-                            onChange={(e) => onUpdateRadius(place.id, parseFloat(e.target.value))}
-                            className="w-full h-1 bg-indigo-500/30 rounded-lg appearance-none cursor-pointer accent-indigo-600 outline-none"
-                        />
-                        <div className="flex justify-between text-[8px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-                            <span>15m (Driveway)</span>
-                            <span>1km</span>
-                            <span>2km</span>
-                        </div>
-                    </div>
-                )}
-
                 {/* Action Buttons */}
-                <div className="flex items-center gap-1.5 mt-2 sm:mt-2.5">
+                <div className="flex items-center gap-1.5 mt-2 sm:mt-2.5 landscape:mt-1.5 shrink-0 sticky bottom-0 pt-1.5 pb-0.5 bg-inherit/95 backdrop-blur-md">
                     <button
                         onClick={() => onNavigate(routeOptions[selectedRouteIdx] || undefined)}
-                        className="flex-[1.5] min-w-fit h-10 px-3.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl font-black text-xs sm:text-sm shadow-md shadow-indigo-600/30 transition-all active:scale-95 flex flex-row items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
+                        className="flex-[1.5] min-w-fit h-10 landscape:h-8.5 px-3.5 landscape:px-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-xl font-black text-xs sm:text-sm landscape:text-xs shadow-md shadow-indigo-600/30 transition-all active:scale-95 flex flex-row items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
                     >
-                        <span className="text-base shrink-0">🚀</span>
+                        <Navigation className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0 fill-current" />
                         <span className="whitespace-nowrap">{routeOptions[selectedRouteIdx] ? `Go (${routeOptions[selectedRouteIdx].totalTime})` : 'Go'}</span>
                     </button>
                     <button
                         type="button"
                         onClick={() => setIsConvoySetupOpen(true)}
-                        className="h-10 px-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs shadow-md shadow-purple-600/20 transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap"
+                        className="h-10 landscape:h-8.5 px-2.5 landscape:px-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs landscape:text-[11px] shadow-md shadow-purple-600/20 transition-all active:scale-95 flex flex-row items-center justify-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
                         title="Plan Caravan / Convoy with Circle Members"
                     >
-                        <span className="text-sm shrink-0">🚗🚗</span>
+                        <Car className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0" />
                         <span className="whitespace-nowrap">Convoy</span>
                     </button>
                     {onCorrectLocation && (
                         <button
                             type="button"
                             onClick={() => onCorrectLocation(place)}
-                            className={`h-10 px-2.5 rounded-xl font-bold text-xs border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
+                            className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap ${
                                 theme === 'dark' ? 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300' : 'border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700'
                             }`}
-                            title="Suggest an edit, correct location, or report issue"
+                            title="Update place details, entrance, or building photo"
                         >
-                            <span className="text-sm shrink-0">✏️</span>
-                            <span className="whitespace-nowrap">Suggest Edit</span>
+                            <Edit3 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
+                            <span className="whitespace-nowrap">Update Place Details</span>
                         </button>
                     )}
                     <button
                         type="button"
                         onClick={handleShare}
-                        className={`h-10 px-2.5 rounded-xl font-bold text-xs border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
+                        className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap ${
                             theme === 'dark' ? 'border-white/10 hover:bg-white/5 text-slate-300' : 'border-slate-200 hover:bg-slate-50 text-slate-600'
                         }`}
                         title="Share place details"
                     >
-                        <span className="text-sm shrink-0">↗️</span>
+                        <Share2 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
                         <span className="whitespace-nowrap">Share</span>
                     </button>
                 </div>
@@ -2230,7 +2507,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         }`}>
                             <div className="flex items-center justify-between border-b pb-3 border-white/10">
                                 <div className="flex items-center gap-2">
-                                    <span className="text-2xl animate-pulse">🚗🚗</span>
+                                    <div className="w-10 h-10 rounded-2xl bg-purple-500/20 flex items-center justify-center shrink-0 border border-purple-500/30">
+                                        <Car className="w-5 h-5 text-purple-400" />
+                                    </div>
                                     <div>
                                         <h3 className="text-base font-black">Plan Caravan Trip</h3>
                                         <p className="text-xs text-purple-400">Select Circle Members</p>
@@ -2239,9 +2518,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 <button
                                     type="button"
                                     onClick={() => setIsConvoySetupOpen(false)}
-                                    className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-slate-400 hover:text-white"
+                                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
                                 >
-                                    ✕
+                                    <X className="w-4 h-4 shrink-0" />
                                 </button>
                             </div>
 
@@ -2309,8 +2588,13 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                         />
                                                         <div className="min-w-0 flex-1">
                                                             <p className="text-xs font-bold truncate">{member.name}</p>
-                                                            <p className="text-[10px] text-slate-400 truncate">
-                                                                {member.status} • 🔋 {member.battery}%
+                                                            <p className="text-[10px] text-slate-400 truncate flex items-center gap-1">
+                                                                <span>{member.status}</span>
+                                                                <span>•</span>
+                                                                <span className="flex items-center gap-0.5">
+                                                                    <Battery className="w-3 h-3 text-emerald-400 shrink-0" />
+                                                                    <span>{member.battery}%</span>
+                                                                </span>
                                                             </p>
                                                         </div>
                                                     </div>
@@ -2318,7 +2602,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                     <div className={`w-5 h-5 rounded-md flex items-center justify-center font-bold text-xs ${
                                                         isChecked ? 'bg-purple-600 text-white' : 'border border-white/20'
                                                     }`}>
-                                                        {isChecked ? '✓' : ''}
+                                                        {isChecked ? <Check className="w-3.5 h-3.5 text-white" /> : null}
                                                     </div>
                                                 </div>
                                             );
@@ -2351,7 +2635,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     }}
                                     className="flex-[2] py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-black shadow-lg shadow-purple-600/30 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                                 >
-                                    <span>🚀</span> Launch Caravan ({selectedMemberIds.length})
+                                    <Navigation className="w-4 h-4 shrink-0 fill-current" />
+                                    <span>Launch Caravan ({selectedMemberIds.length})</span>
                                 </button>
                             </div>
                         </div>
@@ -2436,7 +2721,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         </p>
                                     ) : (
                                         <p className="text-xs text-slate-400 mt-0.5">
-                                            {photos[activePhotoIndex]?.userName ? `Contributed by ${photos[activePhotoIndex].userName}` : 'Storefront & Entrance Photo'}
+                                            {photos[activePhotoIndex]?.userName ? `Contributed by ${photos[activePhotoIndex].userName}` : 'Building & Access Photo'}
                                         </p>
                                     )}
                                 </div>
@@ -2445,9 +2730,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         type="button"
                                         onClick={handleTriggerCamera}
                                         disabled={isUploadingPhoto}
-                                        className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                                     >
-                                        📷 Snap Photo
+                                        <Camera className="w-3.5 h-3.5 shrink-0" />
+                                        <span>Snap Photo</span>
                                     </button>
                                     <button
                                         type="button"
@@ -2480,7 +2766,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             }`}>
                                 <div>
                                     <h3 className="text-sm font-black flex items-center gap-2">
-                                        <span>📸</span> My Photo Contributions
+                                        <Camera className="w-4 h-4 text-indigo-400 shrink-0" />
+                                        <span>My Photo Contributions</span>
                                     </h3>
                                     <p className="text-[11px] text-slate-400 font-medium truncate max-w-xs">
                                         {place.name}
@@ -2493,7 +2780,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
                                     }`}
                                 >
-                                    ✕
+                                    <X className="w-4 h-4" />
                                 </button>
                             </div>
 
@@ -2501,8 +2788,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <div className="p-4 overflow-y-auto space-y-3 flex-1">
                                 {myContributions.length === 0 ? (
                                     <div className="text-center py-8">
-                                        <span className="text-3xl">📷</span>
-                                        <p className="text-xs font-bold text-slate-400 mt-2">No photo contributions yet for this place.</p>
+                                        <div className="w-12 h-12 rounded-2xl bg-slate-800/40 border border-white/5 flex items-center justify-center mx-auto mb-2 text-slate-500">
+                                            <Camera className="w-6 h-6" />
+                                        </div>
+                                        <p className="text-xs font-bold text-slate-400">No photo contributions yet for this place.</p>
                                     </div>
                                 ) : (
                                     myContributions.map((photo) => (
@@ -2532,7 +2821,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                                 className="p-1.5 rounded-lg hover:bg-white/10 text-cyan-400 transition-colors cursor-pointer"
                                                                 title="Edit Caption"
                                                             >
-                                                                ✏️
+                                                                <Edit3 className="w-3.5 h-3.5" />
                                                             </button>
                                                             {/* Delete Button */}
                                                             <button
@@ -2542,7 +2831,11 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                                 className="p-1.5 rounded-lg hover:bg-red-500/20 text-rose-400 transition-colors cursor-pointer disabled:opacity-50"
                                                                 title="Delete Photo"
                                                             >
-                                                                {deletingPhotoId === photo.id ? '⏳' : '🗑️'}
+                                                                {deletingPhotoId === photo.id ? (
+                                                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
+                                                                ) : (
+                                                                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                                                )}
                                                             </button>
                                                         </div>
                                                     </div>
@@ -2563,16 +2856,16 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleSaveCaption(photo)}
-                                                                className="px-2.5 py-1 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-black font-black text-xs cursor-pointer"
+                                                                className="px-2.5 py-1 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-black font-black text-xs cursor-pointer flex items-center justify-center"
                                                             >
-                                                                ✓
+                                                                <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
                                                             </button>
                                                             <button
                                                                 type="button"
                                                                 onClick={() => setEditingCaptionId(null)}
-                                                                className="px-2 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs cursor-pointer"
+                                                                className="px-2 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs cursor-pointer flex items-center justify-center"
                                                             >
-                                                                ✕
+                                                                <X className="w-3.5 h-3.5" />
                                                             </button>
                                                         </div>
                                                     ) : (
@@ -2597,7 +2890,11 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     disabled={isUploadingPhoto}
                                     className="px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer disabled:opacity-50"
                                 >
-                                    <span>{isUploadingPhoto ? '⏳' : '📷'}</span>
+                                    {isUploadingPhoto ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                                    ) : (
+                                        <Camera className="w-3.5 h-3.5 shrink-0" />
+                                    )}
                                     <span>{isUploadingPhoto ? 'Uploading...' : 'Snap Another Photo'}</span>
                                 </button>
                                 <button

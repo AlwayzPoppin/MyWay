@@ -4,6 +4,26 @@ import { searchHistoryService, RecentSearchItem } from '../services/searchHistor
 import { searchPlacesText } from '../services/placesService';
 import { predictiveRoutingService, PredictedDestination } from '../services/predictiveRoutingService';
 import BrandIcon from './BrandIcon';
+import { 
+  History, 
+  Search, 
+  X, 
+  Navigation, 
+  Navigation2,
+  LocateFixed,
+  Star, 
+  Sparkles, 
+  Zap, 
+  Building2, 
+  Flame, 
+  Compass, 
+  Fuel, 
+  Coffee, 
+  Utensils, 
+  ShoppingCart,
+  MapPin,
+  Check
+} from 'lucide-react';
 
 interface SearchBoxProps {
   onSearch: (query: string) => void;
@@ -21,6 +41,9 @@ interface SearchBoxProps {
   userLocation?: { lat: number; lng: number } | null;
   selectedPlace?: Place | null;
   onClearSelectedPlace?: () => void;
+  searchText?: string;
+  onSearchTextChange?: (text: string) => void;
+  mapCenter?: [number, number] | { lat: number; lng: number } | null;
 }
 
 function formatRelativeTime(ts: number): string {
@@ -150,19 +173,43 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   onSelectPlace,
   userLocation,
   selectedPlace,
-  onClearSelectedPlace
+  onClearSelectedPlace,
+  searchText,
+  onSearchTextChange,
+  mapCenter
 }) => {
-  const [query, setQuery] = useState(selectedPlace?.name || '');
+  const [query, setQuery] = useState(searchText !== undefined ? searchText : (selectedPlace?.name || ''));
   const [isFocused, setIsFocused] = useState(false);
   const [showDrawer, setShowDrawer] = useState(false);
+  const prevSelectedPlaceRef = useRef<Place | null | undefined>(selectedPlace);
 
+  // Synchronize with selectedPlace changes
   useEffect(() => {
-    if (selectedPlace) {
+    if (selectedPlace && !isFocused) {
       setQuery(selectedPlace.name || '');
       setShowDrawer(false);
-      setIsFocused(false);
+    } else if (!selectedPlace && prevSelectedPlaceRef.current) {
+      // User or panel closed the selected place -> reset search box text and suggestions
+      setQuery('');
+      setSuggestions([]);
+      setShowDrawer(false);
+      onSearchResultsChange?.([]);
+      onSearchTextChange?.('');
     }
-  }, [selectedPlace]);
+    prevSelectedPlaceRef.current = selectedPlace;
+  }, [selectedPlace, isFocused, onSearchResultsChange, onSearchTextChange]);
+
+  // Synchronize when parent explicitly updates searchText (e.g. setSearchText('') on panel close)
+  useEffect(() => {
+    if (searchText !== undefined && searchText !== query) {
+      setQuery(searchText);
+      if (!searchText) {
+        setSuggestions([]);
+        setShowDrawer(false);
+        onSearchResultsChange?.([]);
+      }
+    }
+  }, [searchText]);
   const [activeTab, setActiveTab] = useState<'suggestions' | 'recent' | 'categories' | 'saved'>('recent');
   const [history, setHistory] = useState<RecentSearchItem[]>([]);
   const [suggestions, setSuggestions] = useState<Place[]>([]);
@@ -171,7 +218,18 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRequestIdRef = useRef(0);
 
-  // Predictive Routing Destinations based on time, day, trips & saved places
+  const userLocationRef = useRef(userLocation);
+  useEffect(() => {
+    userLocationRef.current = userLocation;
+  }, [userLocation]);
+
+  const userPlacesRef = useRef(userPlaces);
+  useEffect(() => {
+    userPlacesRef.current = userPlaces;
+  }, [userPlaces]);
+
+  // Stable coarse coordinates key for userLocation (~100m resolution) so micro GPS jitter doesn't re-run predictions
+  const stableUserLocKey = userLocation ? `${userLocation.lat.toFixed(3)},${userLocation.lng.toFixed(3)}` : '';
   const predictions = useMemo(() => {
     try {
       return predictiveRoutingService.getPredictions(userLocation || null, userPlaces || []);
@@ -179,7 +237,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       console.warn('[SearchBox] Predictive routing error:', err);
       return [];
     }
-  }, [userLocation, userPlaces, showDrawer, history]);
+  }, [stableUserLocKey, userPlaces, showDrawer, history]);
 
   useEffect(() => {
     const unsub = searchHistoryService.subscribe((items) => {
@@ -211,9 +269,6 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       setSuggestions([]);
       onSearchResultsChange?.([]);
       setIsLoadingSuggestions(false);
-      if (onClearSelectedPlace) {
-        onClearSelectedPlace();
-      }
       if (activeTab === 'suggestions') setActiveTab('recent');
       return;
     }
@@ -227,7 +282,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     const isSchoolQuery = trimmed === 'school' || trimmed === 'schools' || trimmed === 'class' || trimmed === 'college' || trimmed === 'campus';
     const isGymQuery = trimmed === 'gym' || trimmed === 'fitness' || trimmed === 'workout';
 
-    const matchingSaved = userPlaces.filter(p => {
+    const currentUserPlaces = userPlacesRef.current || [];
+    const matchingSaved = currentUserPlaces.filter(p => {
       const nameLower = (p.name || '').toLowerCase();
       const typeLower = (p.type || '').toLowerCase();
 
@@ -241,9 +297,27 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       return false;
     });
 
+    const hasExactSavedMatch = matchingSaved.some(p => {
+      const nameLower = (p.name || '').toLowerCase();
+      const typeLower = (p.type || '').toLowerCase();
+      return nameLower === trimmed ||
+        (isHomeQuery && (typeLower === 'home' || nameLower.includes('home'))) ||
+        (isWorkQuery && (typeLower === 'work' || nameLower.includes('work') || nameLower.includes('office'))) ||
+        (isSchoolQuery && (typeLower === 'school' || nameLower.includes('school'))) ||
+        (isGymQuery && (typeLower === 'gym' || nameLower.includes('gym')));
+    });
+
     if (matchingSaved.length > 0) {
       setSuggestions(matchingSaved);
       setActiveTab('suggestions');
+    }
+
+    // If query has an exact saved place match (e.g. "home", "work", or exact saved place name),
+    // immediately display the saved place(s) and skip external commercial API calls so other places don't clutter the map!
+    if (hasExactSavedMatch) {
+      setIsLoadingSuggestions(false);
+      onSearchResultsChange?.(matchingSaved);
+      return;
     }
 
     if (trimmed.length < 2) {
@@ -254,12 +328,26 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
     const currentRequestId = ++searchRequestIdRef.current;
     setIsLoadingSuggestions(true);
+    const LIVE_PREVIEW_DEBOUNCE_MS = 850; // Increased to 850ms to prevent mid-keystroke camera whiplash
     searchDebounceRef.current = setTimeout(async () => {
       try {
-        // Ensure live GPS coordinates from useNavigation / geolocation state are strictly verified and passed
-        let loc = (userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && userLocation.lat !== 0 && userLocation.lng !== 0 && !isNaN(userLocation.lat) && !isNaN(userLocation.lng)) 
+        // Spatial focus location from mapCenter (current viewport center) or user's GPS location
+        let focusLoc: { lat: number; lng: number } | undefined = undefined;
+        if (mapCenter) {
+          if (Array.isArray(mapCenter) && typeof mapCenter[0] === 'number' && typeof mapCenter[1] === 'number') {
+            focusLoc = { lat: mapCenter[0], lng: mapCenter[1] };
+          } else if (typeof (mapCenter as any).lat === 'number' && typeof (mapCenter as any).lng === 'number') {
+            focusLoc = mapCenter as { lat: number; lng: number };
+          }
+        }
+        if (!focusLoc && userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && userLocation.lat !== 0 && userLocation.lng !== 0) {
+          focusLoc = userLocation;
+        }
+
+        // Ensure live coordinates are passed to geocoder
+        let loc = focusLoc || ((userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && userLocation.lat !== 0 && userLocation.lng !== 0 && !isNaN(userLocation.lat) && !isNaN(userLocation.lng)) 
           ? userLocation 
-          : undefined;
+          : undefined);
         if (!loc && typeof window !== 'undefined' && window.localStorage) {
           try {
             const saved = localStorage.getItem('myway_last_known_location');
@@ -278,19 +366,24 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           return;
         }
 
-        // Merge matching saved places with API results, deduplicating by name/location
+        // Merge matching saved places with API results, strictly deduplicating by exact name/ID
+        // NEVER drop neighboring addresses just because their coordinates are close to a saved place!
         const combined = [
           ...matchingSaved,
           ...results.filter(r => !matchingSaved.some(s => 
-            s.name.toLowerCase() === r.name.toLowerCase() ||
-            (s.location && r.location && Math.abs(s.location.lat - r.location.lat) < 0.0005 && Math.abs(s.location.lng - r.location.lng) < 0.0005)
+            s.id === r.id ||
+            s.name.trim().toLowerCase() === r.name.trim().toLowerCase() ||
+            (s.address && r.address && s.address.trim().toLowerCase() === r.address.trim().toLowerCase())
           ))
         ];
 
         // Check for specific house number in query (e.g. "417", "5610")
         const queryHouseNum = trimmed.match(/^(\d+[a-zA-Z]?)\b/)?.[1];
 
-        // Sort by relevance: specific house numbers first, then proximity
+        // Sort by relevance:
+        // 1. Specific house numbers first
+        // 2. Spatial bounding: Strongly prioritize matches within local city/viewport radius (~35 miles)
+        // 3. Proximity to focus location
         combined.sort((a, b) => {
           if (queryHouseNum) {
             const aHasNum = (a.name + ' ' + (a.description || a.address || '')).toLowerCase().includes(queryHouseNum);
@@ -301,6 +394,13 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           if (loc && a.location && b.location) {
             const distA = getNumericMiles(loc, a.location);
             const distB = getNumericMiles(loc, b.location);
+
+            // Prioritize local results within 35 miles of viewport ahead of results across the state
+            const aIsLocal = distA <= 35;
+            const bIsLocal = distB <= 35;
+            if (aIsLocal && !bIsLocal) return -1;
+            if (!aIsLocal && bIsLocal) return 1;
+
             return distA - distB;
           }
           return 0;
@@ -311,17 +411,45 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         if (combined.length > 0) {
           setActiveTab('suggestions');
         }
+
+        // Reactive Search Pin (Live Preview):
+        // If the user modified an active search query (e.g. changing 5606 Carson Dr to 5608 Carson Dr)
+        // and a high-confidence match is found, automatically update the active map pin and Place Detail Panel
+        const isAddressQuery = /^\d+[a-zA-Z]?\s+[a-zA-Z]{2,}/.test(trimmed);
+        if (isAddressQuery && combined.length > 0) {
+          const topMatch = combined[0];
+          const topHn = topMatch.houseNumber || (topMatch.name + ' ' + (topMatch.description || topMatch.address || '')).match(/\b(\d+[a-zA-Z]?)\b/)?.[1];
+          const hasHouseMatch = Boolean(topHn && queryHouseNum && topHn.toLowerCase() === queryHouseNum.toLowerCase());
+
+          // Spatial Bounding Check:
+          // Unless the user explicitly typed a comma/city/state (e.g. "5608 Carson Dr, Dallas"),
+          // require the reactive preview candidate to be within local city/viewport range (<= 45 miles),
+          // preventing camera whiplash flying across the state mid-keystroke.
+          const hasExplicitCityOrState = /,\s*[a-zA-Z]{2,}/.test(trimmed);
+          const distToMatch = (loc && topMatch.location) ? getNumericMiles(loc, topMatch.location) : 0;
+          const isWithinSpatialBound = hasExplicitCityOrState || distToMatch <= 45 || !loc;
+
+          if (hasHouseMatch && isWithinSpatialBound && topMatch.location && typeof topMatch.location.lat === 'number' && typeof topMatch.location.lng === 'number') {
+            const isDifferent = !selectedPlace || 
+              selectedPlace.id !== topMatch.id ||
+              (selectedPlace.location && (Math.abs(selectedPlace.location.lat - topMatch.location.lat) > 0.00005 || Math.abs(selectedPlace.location.lng - topMatch.location.lng) > 0.00005));
+
+            if (isDifferent && onSelectPlace) {
+              onSelectPlace(topMatch);
+            }
+          }
+        }
       } catch (err) {
         console.warn('[SearchBox] Live suggestions failed:', err);
       } finally {
         setIsLoadingSuggestions(false);
       }
-    }, 250);
+    }, LIVE_PREVIEW_DEBOUNCE_MS);
 
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
-  }, [query, userLocation, userPlaces]);
+  }, [query, mapCenter]);
 
   const filteredHistory = useMemo(() => {
     if (!query.trim()) return history.slice(0, 8);
@@ -353,7 +481,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       type: place.type,
       icon: place.icon
     });
-    onSearchResultsChange?.([place]);
+    onSearchResultsChange?.([]);
     if (onSelectPlace) {
       onSelectPlace(place);
     } else {
@@ -387,6 +515,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     const textToSearch = item.name || item.query;
     setQuery(textToSearch);
     searchHistoryService.addItem(item);
+    onSearchResultsChange?.([]);
     if (item.location && onSelectPlace) {
       onSelectPlace({
         id: item.id,
@@ -426,18 +555,37 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     searchHistoryService.clearHistory();
   };
 
-  const categories: { label: string; icon: string; query: string; type: 'gas' | 'coffee' | 'food' | 'grocery'; gradient: string }[] = [
-    { label: 'Gas', icon: '⛽', query: 'Gas Station', type: 'gas', gradient: 'from-orange-500 to-red-500' },
-    { label: 'Coffee', icon: '☕', query: 'Coffee Shop', type: 'coffee', gradient: 'from-green-500 to-emerald-600' },
-    { label: 'Food', icon: '🍔', query: "Restaurant", type: 'food', gradient: 'from-yellow-500 to-orange-500' },
-    { label: 'Grocery', icon: '🛒', query: 'Grocery Store', type: 'grocery', gradient: 'from-red-500 to-pink-500' },
+  const categories: { label: string; icon: React.ComponentType<{ className?: string }>; query: string; type: 'gas' | 'coffee' | 'food' | 'grocery'; gradient: string; color: string }[] = [
+    { label: 'Gas', icon: Fuel, query: 'Gas Station', type: 'gas', gradient: 'from-orange-500 to-red-500', color: 'text-orange-400' },
+    { label: 'Coffee', icon: Coffee, query: 'Coffee Shop', type: 'coffee', gradient: 'from-green-500 to-emerald-600', color: 'text-emerald-400' },
+    { label: 'Food', icon: Utensils, query: "Restaurant", type: 'food', gradient: 'from-yellow-500 to-orange-500', color: 'text-amber-400' },
+    { label: 'Grocery', icon: ShoppingCart, query: 'Grocery Store', type: 'grocery', gradient: 'from-red-500 to-pink-500', color: 'text-pink-400' },
   ];
 
   const hasQuery = query.trim().length > 0;
   const isDropdownOpen = (showDrawer || isFocused) && !selectedPlace;
 
+  const isPlaceSaved = useMemo(() => {
+    if (selectedPlace) {
+      return (userPlaces || []).some(up => 
+        (up.id && selectedPlace.id && up.id === selectedPlace.id) ||
+        (selectedPlace.location && up.location && 
+         Math.abs(up.location.lat - selectedPlace.location.lat) < 0.0001 &&
+         Math.abs(up.location.lng - selectedPlace.location.lng) < 0.0001) ||
+        (up.name && selectedPlace.name && up.name.toLowerCase().trim() === selectedPlace.name.toLowerCase().trim())
+      );
+    }
+    if (query.trim()) {
+      return (userPlaces || []).some(up => 
+        up.name.toLowerCase().trim() === query.toLowerCase().trim() ||
+        (up.address && up.address.toLowerCase().includes(query.toLowerCase().trim()))
+      );
+    }
+    return false;
+  }, [selectedPlace, query, userPlaces]);
+
   return (
-    <div ref={containerRef} className="w-full relative group">
+    <div ref={containerRef} className="w-full relative group pointer-events-auto">
       {/* Animated glow background */}
       <div
         className={`absolute -inset-1 rounded-[2.5rem] transition-all duration-500 blur-xl
@@ -460,16 +608,16 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               return next;
             });
           }}
-          className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ml-1 border
+          className={`w-11 h-11 rounded-2xl flex items-center justify-center p-2.5 sm:p-3 transition-all ml-0.5 border cursor-pointer active:scale-95 hover:scale-105 group
             ${showDrawer
               ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-inner'
-              : theme === 'dark' ? 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
+              : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10 active:bg-white/15' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200 active:bg-slate-300'}`}
           title="Recent Searches & Suggested Places"
         >
-          <span className="text-lg">🕒</span>
+          <History className="w-5 h-5 shrink-0 transition-transform group-hover:scale-110" />
         </button>
 
-        <div className="w-px h-8 bg-white/10 mx-1" />
+        <div className={`w-px h-8 ${theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'} mx-1`} />
 
         {/* Search Input */}
         <form onSubmit={handleSubmit} className="flex-1 flex items-center relative min-w-0">
@@ -478,6 +626,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
+              onSearchTextChange?.(e.target.value);
               setShowDrawer(true);
             }}
             onFocus={() => {
@@ -501,6 +650,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               type="button"
               onClick={() => {
                 setQuery('');
+                onSearchTextChange?.('');
                 setSuggestions([]);
                 onSearchResultsChange?.([]);
                 setActiveTab('recent');
@@ -513,42 +663,56 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-slate-400 hover:text-white flex items-center justify-center text-xs mr-2 transition-all shrink-0 cursor-pointer"
               title="Clear destination"
             >
-              ✕
+              <X className="w-3.5 h-3.5 shrink-0" />
             </button>
           )}
 
+          {/* "Go" Button */}
           <button
             type="submit"
-            className="w-10 h-10 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shadow-lg hover:scale-105 transition-all active:scale-90"
-            title="Search"
+            className="w-11 h-11 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white flex items-center justify-center p-2.5 sm:p-3 shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:scale-105 active:scale-95 transition-all cursor-pointer group"
+            title={selectedPlace || query ? "Start Navigation" : "Search Destination"}
           >
-            <span className="text-xl">🚀</span>
+            <Navigation2 className="w-5 h-5 shrink-0 fill-current transition-transform group-hover:scale-110 group-hover:translate-x-0.5" />
           </button>
         </form>
 
-        <div className="w-px h-8 bg-white/10 mx-1" />
+        <div className={`w-px h-8 ${theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'} mx-1`} />
 
+        {/* Action Buttons: Current Location & Save / Favorites */}
         <div className="flex items-center gap-1.5 pr-1">
           {onLocate && (
             <button
               type="button"
               onClick={onLocate}
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all border border-white/5
-                ${theme === 'dark' ? 'bg-white/5 text-slate-300 hover:bg-white/10 active:scale-90' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-90'}`}
+              className={`w-11 h-11 rounded-2xl flex items-center justify-center p-2.5 sm:p-3 transition-all border cursor-pointer active:scale-95 hover:scale-105 group
+                ${theme === 'dark' 
+                  ? 'bg-white/5 border-white/10 text-slate-300 hover:text-purple-400 hover:bg-purple-500/10 hover:border-purple-500/30 active:bg-purple-500/20 active:text-purple-300 shadow-sm' 
+                  : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-purple-600 hover:bg-purple-50 hover:border-purple-200 active:bg-slate-200 active:text-purple-700 shadow-sm'}`}
               title="Current Location"
             >
-              <span className="text-xl">🎯</span>
+              <LocateFixed className="w-5 h-5 shrink-0 transition-transform group-hover:scale-110" />
             </button>
           )}
           {onQuickStop && (
             <button
               type="button"
               onClick={onQuickStop}
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all border
-                ${theme === 'dark' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500 hover:bg-amber-500/20 active:scale-90' : 'bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100 active:scale-90'}`}
-              title="Saved Places & Favorites"
+              className={`w-11 h-11 rounded-2xl flex items-center justify-center p-2.5 sm:p-3 transition-all border cursor-pointer active:scale-95 hover:scale-105 group
+                ${isPlaceSaved
+                  ? (theme === 'dark'
+                      ? 'bg-amber-500/15 border-amber-500/30 text-yellow-500 hover:bg-amber-500/25 active:bg-amber-500/30 shadow-sm shadow-amber-500/10'
+                      : 'bg-amber-50 border-amber-300 text-yellow-500 hover:bg-amber-100 active:bg-amber-200 shadow-sm')
+                  : (theme === 'dark'
+                      ? 'bg-white/5 border-white/10 text-slate-400 hover:text-yellow-500 hover:bg-amber-500/10 hover:border-amber-500/20 active:bg-white/10 shadow-sm'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 hover:text-yellow-500 hover:bg-amber-50 hover:border-amber-200 active:bg-slate-200 shadow-sm')}`}
+              title={isPlaceSaved ? "Saved Place (in Favorites)" : "Save Place & Favorites"}
             >
-              <span className="text-lg">⭐</span>
+              <Star 
+                className={`w-5 h-5 shrink-0 transition-transform group-hover:scale-110 ${
+                  isPlaceSaved ? 'fill-current text-yellow-500 drop-shadow-sm' : 'text-slate-400 fill-none'
+                }`} 
+              />
             </button>
           )}
         </div>
@@ -558,14 +722,14 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       {isDropdownOpen && (
         <div className="absolute left-0 right-0 bottom-full mb-2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
           <div className={`rounded-3xl shadow-2xl overflow-hidden border backdrop-blur-3xl p-1 flex flex-col max-h-[min(45vh,350px)] sm:max-h-[min(60vh,460px)]
-            ${theme === 'dark' ? 'bg-slate-900/98 border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.8)]' : 'bg-white/98 border-slate-200 shadow-[0_30px_60px_rgba(0,0,0,0.2)]'}`}
+            ${theme === 'dark' ? 'bg-slate-900/98 border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.8)] text-white' : 'bg-[#fdfbf7]/98 border-slate-200/80 shadow-[0_30px_60px_rgba(0,0,0,0.12)] text-slate-900'}`}
           >
             {/* Predictive Smart Suggestion Banner (shown when search is empty) */}
             {!hasQuery && predictions.length > 0 && (
               <div className="mb-3 p-3 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/40 to-blue-900/40 border border-purple-500/30 shadow-lg shrink-0">
                 <div className="flex items-center justify-between mb-1.5 px-0.5">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs">🔮</span>
+                    <Sparkles className="w-3.5 h-3.5 text-purple-300 shrink-0" />
                     <span className="text-[10px] font-black uppercase tracking-wider text-purple-300">
                       Smart Route Prediction
                     </span>
@@ -595,8 +759,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                           {predictions[0].name}
                         </h4>
                         {predictions[0].distanceMiles && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-300 shrink-0">
-                            ⚡ {predictions[0].distanceMiles}
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-300 shrink-0 flex items-center gap-1">
+                            <Zap className="w-2.5 h-2.5 shrink-0" /> {predictions[0].distanceMiles}
                           </span>
                         )}
                       </div>
@@ -617,10 +781,10 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                       radius: 100,
                       description: predictions[0].description
                     })}
-                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-[11px] font-black flex items-center gap-1 shadow-md transition-all active:scale-95 shrink-0"
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-[11px] font-black flex items-center gap-1.5 shadow-md transition-all active:scale-95 shrink-0"
                     title="Start Navigation"
                   >
-                    <span>🚀</span>
+                    <Navigation className="w-3 h-3 shrink-0 fill-current" />
                     <span>GO</span>
                   </button>
                 </div>
@@ -640,10 +804,10 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                     setIsFocused(false);
                     (document.activeElement as HTMLElement)?.blur();
                   }}
-                  className="px-2.5 py-1 rounded-xl text-[10px] font-bold bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 shrink-0 flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+                  className="px-2.5 py-1 rounded-xl text-[10px] font-bold bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 shrink-0 flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                   title={cat.label}
                 >
-                  <span className="text-xs">{cat.icon}</span>
+                  <cat.icon className={`w-3.5 h-3.5 shrink-0 ${cat.color}`} />
                   <span className={isFocused ? 'hidden min-[420px]:inline' : 'hidden min-[376px]:inline'}>
                     {cat.label}
                   </span>
@@ -676,7 +840,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                       ? 'bg-indigo-600 text-white shadow-md'
                       : theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
                 >
-                  <span>🕒</span>
+                  <History className="w-3.5 h-3.5 shrink-0" />
                   <span>Recent ({filteredHistory.length})</span>
                 </button>
 
@@ -688,7 +852,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                       ? 'bg-indigo-600 text-white shadow-md'
                       : theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
                 >
-                  <span>⚡</span>
+                  <Zap className="w-3.5 h-3.5 shrink-0 text-amber-400" />
                   <span>Nearby</span>
                 </button>
 
@@ -701,7 +865,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                         ? 'bg-indigo-600 text-white shadow-md'
                         : theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
                   >
-                    <span>⭐</span>
+                    <Star className="w-3.5 h-3.5 shrink-0 fill-amber-400 text-amber-400" />
                     <span>Saved ({userPlaces.length})</span>
                   </button>
                 )}
@@ -725,7 +889,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                 onScroll={() => (document.activeElement as HTMLElement)?.blur()}
                 onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
               >
-                {isLoadingSuggestions ? (
+                {isLoadingSuggestions && suggestions.length === 0 ? (
                   <div className="py-6 text-center space-y-2">
                     <div className="w-7 h-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
                     <p className="text-xs font-bold text-slate-400">Searching matching local addresses...</p>
@@ -750,6 +914,12 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                               <h4 className={`text-xs sm:text-sm font-black truncate ${isSavedPlace ? (theme === 'dark' ? 'text-amber-200' : 'text-amber-950') : (theme === 'dark' ? 'text-white' : 'text-slate-900')}`}>
                                 {place.name}
                               </h4>
+                              {place.isCommunityVerified && (
+                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  <Check className="w-2.5 h-2.5 text-emerald-400" />
+                                  <span>Community Verified</span>
+                                </span>
+                              )}
                               {isSavedPlace && (
                                 <span className={`text-[9px] font-black px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1 ${
                                   theme === 'dark'
@@ -773,7 +943,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                                       : 'bg-emerald-50 text-emerald-800 border-emerald-200')
                               }`} title={branchInfo.compactBadge}>
                                 <span className={branchInfo.isMultiBranch ? 'text-amber-400' : 'text-emerald-400'}>
-                                  {branchInfo.isMultiBranch ? '🏢' : '⚡'}
+                                  {branchInfo.isMultiBranch ? <Building2 className="w-3 h-3 shrink-0" /> : <Zap className="w-3 h-3 shrink-0" />}
                                 </span>
                                 <span className="truncate">{branchInfo.compactBadge}</span>
                               </span>
@@ -784,15 +954,27 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                           {branchInfo.isMultiBranch ? (
                             <div className="flex items-center gap-1.5 mt-0.5 text-[11px] font-semibold text-slate-300 truncate">
                               <span className="text-[9px] uppercase font-black tracking-wider text-amber-400 shrink-0 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">Branch</span>
+                              {place.isCommunityVerified && (
+                                <span className="text-[9px] font-black px-1.5 py-0.2 rounded shrink-0 flex items-center gap-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  <span>📍 Community Verified</span>
+                                </span>
+                              )}
                               <span className="text-white font-bold truncate">{branchInfo.street || place.description}</span>
                               {branchInfo.crossStreetOrCity && (
                                 <span className="text-slate-400 shrink-0">• {branchInfo.crossStreetOrCity}</span>
                               )}
                             </div>
                           ) : place.description ? (
-                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {place.description}
-                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {place.isCommunityVerified && (
+                                <span className="text-[9px] font-black px-1.5 py-0.2 rounded shrink-0 flex items-center gap-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  <span>📍 Community Verified</span>
+                                </span>
+                              )}
+                              <p className="text-[10px] text-slate-400 truncate">
+                                {place.description}
+                              </p>
+                            </div>
                           ) : null}
                         </div>
 
@@ -800,14 +982,14 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                         <button
                           type="button"
                           onClick={(e) => handleQuickNavigateSuggestion(e, place)}
-                          className={`px-2.5 py-1.5 rounded-xl text-white text-[10px] sm:text-xs font-black flex items-center gap-1 shadow-md transition-all active:scale-95 shrink-0 ${
+                          className={`px-2.5 py-1.5 rounded-xl text-white text-[10px] sm:text-xs font-black flex items-center gap-1.5 shadow-md transition-all active:scale-95 shrink-0 ${
                             isSavedPlace
                               ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-500/20'
                               : 'bg-indigo-600 hover:bg-indigo-500'
                           }`}
                           title="Navigate to this address"
                         >
-                          <span>🚀</span>
+                          <Navigation className="w-3 h-3 shrink-0 fill-current" />
                           <span className="hidden sm:inline">GO</span>
                         </button>
                       </div>
@@ -815,12 +997,12 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                   })
                 ) : (
                   <div className="text-center py-6">
-                    <p className="text-2xl mb-1">🔍</p>
+                    <Search className="w-6 h-6 mx-auto mb-1 text-slate-400" />
                     <p className={`text-xs font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
                       No local addresses match "{query}"
                     </p>
                     <p className="text-[10px] text-slate-400 mt-1 max-w-xs mx-auto">
-                      Hit Enter or 🚀 to run an expanded nationwide search.
+                      Hit Enter or navigation button to run an expanded nationwide search.
                     </p>
                   </div>
                 )}
@@ -855,8 +1037,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                                   {item.name || item.query}
                                 </h4>
                                 {item.frequencyCount && item.frequencyCount > 1 && (
-                                  <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0">
-                                    🔥 {item.frequencyCount}x
+                                  <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0 flex items-center gap-1">
+                                    <Flame className="w-2.5 h-2.5 shrink-0 text-amber-400" /> {item.frequencyCount}x
                                   </span>
                                 )}
                                 <span className="text-[10px] text-slate-400 font-semibold shrink-0">
@@ -870,7 +1052,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                                     ? (theme === 'dark' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-amber-50 text-amber-900 border-amber-300')
                                     : (theme === 'dark' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-emerald-50 text-emerald-800 border-emerald-200')
                                 }`}>
-                                  <span>{branchInfo.isMultiBranch ? '🏢' : '⚡'}</span>
+                                  <span>{branchInfo.isMultiBranch ? <Building2 className="w-2.5 h-2.5 shrink-0 text-amber-400" /> : <Zap className="w-2.5 h-2.5 shrink-0 text-emerald-400" />}</span>
                                   <span className="truncate max-w-[150px]">{branchInfo.compactBadge}</span>
                                 </span>
                               )}
@@ -893,10 +1075,10 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                         <button
                           type="button"
                           onClick={(e) => handleQuickNavigate(e, item)}
-                          className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] sm:text-xs font-black flex items-center gap-1 shadow-md transition-all active:scale-95"
+                          className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] sm:text-xs font-black flex items-center gap-1.5 shadow-md transition-all active:scale-95"
                           title="Start Navigation"
                         >
-                          <span>🚀</span>
+                          <Navigation className="w-3 h-3 shrink-0 fill-current" />
                           <span className="hidden sm:inline">GO</span>
                         </button>
                         <button
@@ -905,7 +1087,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                           className="w-7 h-7 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center text-xs transition-all"
                           title="Remove from history"
                         >
-                          ✕
+                          <X className="w-3.5 h-3.5 shrink-0" />
                         </button>
                       </div>
                     </div>
@@ -913,7 +1095,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                   })
                 ) : (
                   <div className="text-center py-6">
-                    <p className="text-2xl mb-1">🧭</p>
+                    <Compass className="w-6 h-6 mx-auto mb-1 text-slate-400" />
                     <p className={`text-xs font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
                       {query.trim() ? `No recent searches match "${query}"` : 'No recent searches yet'}
                     </p>
@@ -941,7 +1123,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                     className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl transition-all hover:scale-105 active:scale-95 border
                       ${theme === 'dark' ? 'bg-white/5 hover:bg-white/10 border-white/5' : 'bg-slate-100 hover:bg-slate-200 border-slate-200'}`}
                   >
-                    <span className="text-2xl">{cat.icon}</span>
+                    <cat.icon className={`w-6 h-6 shrink-0 ${cat.color}`} />
                     <span className={`text-[10px] font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
                       {cat.label}
                     </span>
@@ -970,7 +1152,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                       ${theme === 'dark' ? 'bg-white/5 hover:bg-white/10 border-white/5' : 'bg-slate-100 hover:bg-slate-200 border-slate-200'}`}
                   >
                     <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/20 text-amber-400 flex items-center justify-center text-base shrink-0">
-                      {place.icon}
+                      {!place.icon || place.icon === '📍' ? <MapPin className="w-4 h-4 text-amber-400" /> : place.icon}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xs font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>

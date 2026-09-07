@@ -1,7 +1,7 @@
 {
   "name": "myway",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.12",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,8 +19,11 @@
     "@capacitor/geolocation": "^8.0.0",
     "@capacitor/ios": "^8.0.1",
     "@capacitor/local-notifications": "^8.0.0",
+    "@capgo/capacitor-social-login": "^8.5.5",
     "@google/genai": "^1.35.0",
     "firebase": "^12.8.0",
+    "html5-qrcode": "^2.3.8",
+    "lucide-react": "^1.41.0",
     "maplibre-gl": "^5.16.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.3",

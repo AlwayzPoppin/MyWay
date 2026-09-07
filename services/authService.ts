@@ -13,8 +13,9 @@ import {
     ActionCodeSettings
 } from 'firebase/auth';
 import { ref, set, get, onValue, off, push, update } from 'firebase/database';
+import { doc, setDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, googleProvider, database, storage } from './firebase';
+import { auth, googleProvider, database, storage, db } from './firebase';
 import { Geofence } from './geofenceService';
 import { batteryService } from './batteryService';
 import { bufferSosAlert, setupSosAutoFlush, BufferedSosAlert } from './offlineSosBuffer';
@@ -54,6 +55,7 @@ export interface UserProfile {
         lng: number;
         address?: string;
         label?: string;
+        houseNumber?: string;
     };
 }
 
@@ -103,8 +105,64 @@ export interface FamilyCircle {
     color?: string;
 }
 
+const GOOGLE_WEB_CLIENT_ID = (import.meta as any).env.VITE_GOOGLE_WEB_CLIENT_ID || '740093147434-mdtorbehce0b5c1ia8cbhadapn4fna54.apps.googleusercontent.com';
+
+let isSocialLoginInitialized = false;
+export const ensureSocialLoginInitialized = async (): Promise<void> => {
+    if (isSocialLoginInitialized) return;
+    try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (!Capacitor.isNativePlatform()) return;
+
+        const { SocialLogin } = await import('@capgo/capacitor-social-login');
+        await SocialLogin.initialize({
+            google: {
+                webClientId: GOOGLE_WEB_CLIENT_ID,
+                mode: 'online'
+            }
+        });
+        isSocialLoginInitialized = true;
+        console.log('✅ SocialLogin initialized with Web Client ID');
+    } catch (initErr) {
+        console.warn('⚠️ SocialLogin.initialize notice:', initErr);
+    }
+};
+
 // Auth Functions
 export const signInWithGoogle = async (): Promise<User> => {
+    const { Capacitor } = await import('@capacitor/core');
+    if (Capacitor.isNativePlatform()) {
+        console.log('📱 Using Native Google Sign-In via Credential Manager');
+        await ensureSocialLoginInitialized();
+        const { SocialLogin } = await import('@capgo/capacitor-social-login');
+        try {
+            const loginRes = await SocialLogin.login({
+                provider: 'google',
+                options: {
+                    scopes: ['email', 'profile']
+                }
+            });
+
+            const idToken = loginRes.result?.idToken;
+            if (!idToken) {
+                throw new Error('Google Sign-In did not return an identity token.');
+            }
+
+            const { GoogleAuthProvider, signInWithCredential } = await import('firebase/auth');
+            const credential = GoogleAuthProvider.credential(idToken);
+            const userCredential = await signInWithCredential(auth, credential);
+            await createUserProfileIfNotExists(userCredential.user);
+            return userCredential.user;
+        } catch (nativeErr: any) {
+            console.warn('Native Google Sign-In error:', nativeErr);
+            if (nativeErr.code === 'USER_CANCELLED' || nativeErr.message?.toLowerCase().includes('cancel')) {
+                throw new Error('Google Sign-In was cancelled.');
+            }
+            throw nativeErr;
+        }
+    }
+
+    // Web / desktop browser fallback
     const result = await signInWithPopup(auth, googleProvider);
     await createUserProfileIfNotExists(result.user);
     return result.user;
@@ -162,6 +220,15 @@ export const completeEmailLinkSignIn = async (email?: string): Promise<User> => 
 };
 
 export const signOut = async (): Promise<void> => {
+    try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (Capacitor.isNativePlatform()) {
+            const { SocialLogin } = await import('@capgo/capacitor-social-login');
+            await SocialLogin.logout({ provider: 'google' });
+        }
+    } catch (logoutErr) {
+        // Non-critical if user was not logged in via native Google
+    }
     await firebaseSignOut(auth);
 };
 
@@ -230,18 +297,60 @@ export const subscribeToUserProfile = (uid: string, callback: (profile: UserProf
     return () => off(userRef);
 };
  
+/**
+ * Recursively cleans any undefined values from an object or array to prevent
+ * Firebase Realtime Database "set failed: value argument contains undefined" errors.
+ */
+function sanitizeForFirebase<T>(data: T): T {
+    if (data === undefined) return null as any;
+    if (data === null || typeof data !== 'object') return data;
+    if (Array.isArray(data)) {
+        return data.filter(x => x !== undefined).map(sanitizeForFirebase) as any;
+    }
+    const clean: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined) {
+            clean[key] = sanitizeForFirebase(value);
+        }
+    }
+    return clean as T;
+}
+
 export const updateUserProfile = async (uid: string, updates: Partial<UserProfile>): Promise<void> => {
     const userRef = ref(database, `users/${uid}`);
-    const snapshot = await get(userRef);
-    const existing = snapshot.exists() ? snapshot.val() : {};
+    let existing = {};
+    try {
+        const snapshot = await get(userRef);
+        if (snapshot.exists()) {
+            existing = snapshot.val();
+        }
+    } catch (readErr) {
+        console.warn('[AuthService] Could not read existing profile before update:', readErr);
+    }
     
-    await set(userRef, { 
+    const mergedProfile: Record<string, any> = { 
         uid,
         createdAt: Date.now(), // Fallback for new record
         ...existing, 
         ...updates, 
         lastSeen: Date.now() 
-    });
+    };
+
+    // Deep clean any undefined values recursively to prevent Firebase validation errors
+    const cleaned = sanitizeForFirebase(mergedProfile);
+    
+    // 1. Write to Realtime Database
+    await set(userRef, cleaned);
+
+    // 2. Mirror to Firestore users document
+    if (db) {
+        try {
+            await setDoc(doc(db, 'users', uid), cleaned, { merge: true });
+            console.log(`👤 [AuthService] Updated Firestore user profile: users/${uid}`);
+        } catch (fsErr: any) {
+            console.debug('[AuthService] Firestore user profile sync skipped (RTDB is primary):', fsErr?.message || fsErr);
+        }
+    }
 };
  
 /**
@@ -478,16 +587,101 @@ export const transferOwnership = async (circleId: string, currentOwnerId: string
     await set(ref(database, `circles/${circleId}`), { ...circle, ownerId: newOwnerId });
 };
 
+export const resetPassword = async (email: string): Promise<void> => {
+    const { sendPasswordResetEmail } = await import('firebase/auth');
+    await sendPasswordResetEmail(auth, email);
+};
+
 /**
  * AUDIT FIX: Delete user account and all associated data.
  * Required for Apple App Store and GDPR compliance.
  */
-export const deleteAccount = async (userId?: string, circleId?: string): Promise<void> => {
+export const deleteAccount = async (userId?: string, circleId?: string, password?: string): Promise<void> => {
     const user = auth.currentUser;
     const targetUid = user?.uid || userId;
     if (!targetUid) throw new Error('No active user session found to delete.');
 
-    // 1. Leave circle (auto-transfers ownership or deletes empty circle)
+    // 1. Firebase Auth user deletion MUST happen first.
+    // This prevents "zombie accounts" where DB data is wiped but the email remains trapped in Auth.
+    if (user) {
+        // If password is provided, re-authenticate before deletion
+        if (password && user.email) {
+            try {
+                const { EmailAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
+                const cred = EmailAuthProvider.credential(user.email, password);
+                await reauthenticateWithCredential(user, cred);
+                console.log('🔑 Re-authenticated successfully with password');
+            } catch (authErr: any) {
+                if (authErr.code === 'auth/wrong-password' || authErr.code === 'auth/invalid-credential') {
+                    throw new Error('Incorrect password. Please enter your valid password to confirm deletion.');
+                }
+                throw authErr;
+            }
+        }
+
+        try {
+            await user.delete();
+            console.log('🗑️ Firebase Auth account deleted successfully');
+        } catch (deleteErr: any) {
+            console.warn('Initial user.delete() status:', deleteErr.code || deleteErr.message);
+
+            const isRecentLoginReq =
+                deleteErr.code === 'auth/requires-recent-login' ||
+                deleteErr.message?.includes('CREDENTIAL_TOO_OLD') ||
+                deleteErr.message?.includes('requires-recent-login') ||
+                deleteErr.code === 'auth/user-token-expired';
+
+            if (isRecentLoginReq) {
+                const providers = user.providerData?.map(p => p.providerId) || [];
+
+                if (providers.includes('google.com')) {
+                    try {
+                        const { Capacitor } = await import('@capacitor/core');
+                        if (Capacitor.isNativePlatform()) {
+                            await ensureSocialLoginInitialized();
+                            const { SocialLogin } = await import('@capgo/capacitor-social-login');
+                            const loginRes = await SocialLogin.login({
+                                provider: 'google',
+                                options: { scopes: ['email', 'profile'] }
+                            });
+                            const idToken = loginRes.result?.idToken;
+                            if (!idToken) throw new Error('Google re-authentication was cancelled.');
+                            const { GoogleAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
+                            const cred = GoogleAuthProvider.credential(idToken);
+                            await reauthenticateWithCredential(user, cred);
+                        } else {
+                            const { reauthenticateWithPopup } = await import('firebase/auth');
+                            await reauthenticateWithPopup(user, googleProvider);
+                        }
+                        await user.delete();
+                        console.log('🗑️ Account deleted successfully after Google re-auth');
+                    } catch (gErr: any) {
+                        throw new Error('Google re-authentication failed. Please sign in again and retry.');
+                    }
+                } else if (password && user.email) {
+                    try {
+                        const { EmailAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
+                        const cred = EmailAuthProvider.credential(user.email, password);
+                        await reauthenticateWithCredential(user, cred);
+                        await user.delete();
+                        console.log('🗑️ Account deleted successfully after password re-auth');
+                    } catch (pErr: any) {
+                        if (pErr.code === 'auth/wrong-password' || pErr.code === 'auth/invalid-credential') {
+                            throw new Error('Incorrect password. Please enter your valid password to confirm deletion.');
+                        }
+                        throw pErr;
+                    }
+                } else {
+                    // Do NOT silently delete database data!
+                    throw new Error('Recent security verification required. Please confirm your password to delete your account.');
+                }
+            } else if (deleteErr.code !== 'auth/user-not-found') {
+                throw deleteErr;
+            }
+        }
+    }
+
+    // 2. NOW that Firebase Auth user is deleted, clean up all database and circle data
     let targetCircleId = circleId;
     if (!targetCircleId) {
         try {
@@ -506,7 +700,7 @@ export const deleteAccount = async (userId?: string, circleId?: string): Promise
         }
     }
 
-    // 2. Delete user data from Firebase RTDB
+    // 3. Delete user data from Firebase RTDB
     try {
         await set(ref(database, `users/${targetUid}`), null);
         await set(ref(database, `keys/${targetUid}`), null);
@@ -516,59 +710,31 @@ export const deleteAccount = async (userId?: string, circleId?: string): Promise
         console.warn('RTDB user cleanup warning:', rtdbErr);
     }
 
-    // 3. Clear all local storage
+    // 4. Delete user document from Firestore (mirror cleanup)
+    try {
+        if (db) {
+            const { deleteDoc, doc: fsDoc } = await import('firebase/firestore');
+            await deleteDoc(fsDoc(db, 'users', targetUid));
+        }
+    } catch (fsErr) {
+        console.debug('Firestore user cleanup warning:', fsErr);
+    }
+
+    // 5. Clear all local storage
     try {
         const keysToRemove = Object.keys(localStorage).filter(k => k.startsWith('myway_'));
         keysToRemove.forEach(k => localStorage.removeItem(k));
     } catch { /* best effort */ }
 
-    // 4. Clear IndexedDB secure storage
+    // 6. Clear IndexedDB secure storage
     try {
         const dbReq = indexedDB.deleteDatabase('myway_secure_keys');
         dbReq.onsuccess = () => console.log('🗑️ Secure key storage cleared');
     } catch { /* best effort */ }
 
-    // 5. Delete Firebase Auth account with re-authentication handling
-    if (user) {
-        try {
-            await user.delete();
-            console.log('🗑️ Firebase Auth account deleted successfully');
-        } catch (deleteErr: any) {
-            console.warn('Initial user.delete() failed:', deleteErr.code, deleteErr.message);
-
-            const isRecentLoginReq =
-                deleteErr.code === 'auth/requires-recent-login' ||
-                deleteErr.message?.includes('CREDENTIAL_TOO_OLD') ||
-                deleteErr.message?.includes('requires-recent-login') ||
-                deleteErr.code === 'auth/user-token-expired';
-
-            if (isRecentLoginReq) {
-                const providerId = user.providerData?.[0]?.providerId;
-                if (providerId === 'google.com') {
-                    const { reauthenticateWithPopup } = await import('firebase/auth');
-                    await reauthenticateWithPopup(user, googleProvider);
-                    await user.delete();
-                    console.log('🗑️ Account deleted successfully after Google re-auth');
-                } else if (providerId === 'password') {
-                    const pwd = prompt('Security Check: Please enter your password to confirm account deletion:');
-                    if (!pwd) throw new Error('Password is required to delete your account.');
-                    const { EmailAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
-                    const cred = EmailAuthProvider.credential(user.email || '', pwd);
-                    await reauthenticateWithCredential(user, cred);
-                    await user.delete();
-                    console.log('🗑️ Account deleted successfully after password re-auth');
-                } else {
-                    // Sign out to clear session if auth delete is blocked
-                    await firebaseSignOut(auth);
-                    throw new Error('For security, deleting your account requires a recent login. Please sign in again and retry.');
-                }
-            } else if (deleteErr.code === 'auth/user-not-found') {
-                console.log('Auth user already removed');
-            } else {
-                throw deleteErr;
-            }
-        }
-    }
+    try {
+        await firebaseSignOut(auth);
+    } catch { /* best effort */ }
 };
 
 // --- KEY DISTRIBUTION ENGINE ---
@@ -603,6 +769,7 @@ export interface MemberLocation {
     accuracy: number;
     timestamp: number;
     battery: number;
+    isCharging?: boolean;
     signalQuality?: string;
     encryptedData?: string;
     status?: string;
@@ -628,6 +795,7 @@ export const updateMemberLocation = async (
         heading: location.heading ?? 0,
         accuracy: location.accuracy || 10,
         battery: location.battery ?? batteryService.getBatteryLevel(),
+        isCharging: location.isCharging !== undefined ? location.isCharging : batteryService.getBatteryInfo().isCharging,
         signalQuality: location.signalQuality || 'medium',
         timestamp: location.timestamp || Date.now(),
         status: location.status || 'Moving',
@@ -683,6 +851,28 @@ export const updateMemberLocation = async (
             encryptedData: location.encryptedData ?? null
         });
     }
+};
+
+/**
+ * Update member's live status in Firebase Realtime Database and Firestore
+ */
+export const updateUserStatusInFirestore = async (
+    circleId: string,
+    userId: string,
+    status: string
+): Promise<void> => {
+    if (!circleId || !userId) return;
+    try {
+        await update(ref(database, `locations/${circleId}/${userId}`), {
+            status,
+            timestamp: Date.now()
+        });
+    } catch (err) {
+        console.warn('[authService] Failed to update member status in RTDB:', err);
+    }
+    try {
+        await setDoc(doc(db, 'users', userId), { liveStatus: status, lastStatusUpdate: Date.now() }, { merge: true });
+    } catch (e) {}
 };
 
 export const updateMemberTrip = async (

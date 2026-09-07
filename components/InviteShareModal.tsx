@@ -42,14 +42,20 @@ const InviteShareModal: React.FC<InviteShareModalProps> = ({
     }, [inviteCode, showNotification]);
 
     const handleShare = useCallback(async () => {
+        const inviteUrl = shareUrl;
+        const text = `Join my circle on My Way! Use my code: ${inviteCode} or tap the link to join:`;
         if (navigator.share) {
             try {
                 await navigator.share({
-                    title: `Join ${circleName} on MyWay GPS`,
-                    text: `Join my family circle on MyWay! Use code: ${inviteCode}`,
-                    url: shareUrl
+                    title: `Join ${circleName || 'Circle'} on My Way`,
+                    text,
+                    url: inviteUrl
                 });
-            } catch { /* user cancelled */ }
+            } catch (err: any) {
+                if (err?.name !== 'AbortError') {
+                    handleCopyLink();
+                }
+            }
         } else {
             handleCopyLink();
         }

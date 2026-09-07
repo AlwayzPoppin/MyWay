@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Trip, CrashImpactMetadata } from './types';
+import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Trip, CrashImpactMetadata, ParkedVehiclePlace } from './types';
+import { parkingService } from './services/parkingService';
 // Sidebar removed - replaced by BentoSidebar
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -23,11 +24,10 @@ import MessagingPanel from './components/MessagingPanel';
 import SettingsPanel from './components/SettingsPanel';
 import { MapSkinId } from './services/mapSkinService';
 import BentoSidebar from './components/BentoSidebar';
-import HoldToActivate from './components/HoldToActivate';
 import EmergencySOSModal from './components/EmergencySOSModal';
 import EditPlaceModal from './components/EditPlaceModal';
 import CorrectLocationModal from './components/CorrectLocationModal';
-import ArrivalPromptModal from './components/ArrivalPromptModal';
+import TripCompletedCard, { ArrivalPromptModal } from './components/TripCompletedCard';
 import CircleSettingsModal from './components/CircleSettingsModal';
 import IncidentDetailModal from './components/IncidentDetailModal';
 import { incidentService } from './services/incidentService';
@@ -40,6 +40,20 @@ import { useAuth } from './contexts/AuthContext';
 import { useUI } from './contexts/UIContext';
 import OverlayManager, { OverlayStackProvider } from './components/OverlayManager';
 import LegalConsentScreen, { hasLegalConsent } from './components/LegalConsentScreen';
+import {
+  EyeOff,
+  Car,
+  Navigation,
+  MessageSquare,
+  Phone,
+  Hand,
+  CheckCircle2,
+  X,
+  Battery,
+  Radio,
+  AlertTriangle,
+  Shield
+} from 'lucide-react';
 import {
   getFamilyInsights,
   searchPlacesOnMap
@@ -68,6 +82,8 @@ import {
 import { createCheckoutSession, goToBillingPortal } from './services/stripeService';
 import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from './utils/avatar';
+import { setKnownPlaces } from './services/locationService';
+import { formatMemberStatus } from './utils/memberStatus';
 // Audit #3: rewardsService removed
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText } from './services/placesService';
 import { subscribeToUserPlaces, subscribeToUserPlacesMulti, UserPlace, addUserPlace, deleteUserPlace, updateUserPlace, broadcastPlaceGeofenceUpdate } from './services/userPlacesService';
@@ -107,6 +123,8 @@ import BatteryOptimizationPrompt, { shouldShowBatteryPrompt } from './components
 import ErrorBoundary from './components/ErrorBoundary';
 import PermissionGuard from './components/PermissionGuard';
 import { convoyService, ConvoyInvite } from './services/convoyService';
+import { communityBuildingService } from './services/communityBuildingService';
+import { extractHouseNumber } from './utils/addressUtils';
 
 // Lazy-loaded modal panels for optimal tree-shaking & main-thread responsiveness
 const OfflineMapManager = React.lazy(() => import('./components/OfflineMapManager'));
@@ -156,12 +174,35 @@ const App: React.FC = () => {
     updateCircleColor,
     deleteCircle,
     deleteUserAccount,
+    sendPasswordReset,
     refreshCircles,
     logout
   } = useAuth();
 
+  // Instant local profile overrides (e.g. from SetupWizard address verification) before remote Firebase sync settles
+  const [localProfileOverride, setLocalProfileOverride] = useState<any>(null);
+  const activeUserProfile = useMemo(() => (profile ? { ...profile, ...(localProfileOverride || {}) } : null), [profile, localProfileOverride]);
+
+  // Auto-sync existing verified home address to community-sourced building layer on profile load
+  useEffect(() => {
+    if (!activeUserProfile?.preciseHomeLocation?.lat || !activeUserProfile?.preciseHomeLocation?.lng) return;
+    const phl = activeUserProfile.preciseHomeLocation;
+    const hn = (phl as any).houseNumber || extractHouseNumber(phl.address);
+    if (hn || phl.address) {
+      communityBuildingService.publishVerifiedBuilding({
+        address: phl.address || 'Home',
+        houseNumber: hn || undefined,
+        coordinates: { lat: phl.lat, lng: phl.lng },
+        userId: user?.uid,
+        source: 'user_profile'
+      }).catch(() => {}); // Fire-and-forget; non-critical
+    }
+  }, [activeUserProfile?.preciseHomeLocation?.lat, activeUserProfile?.preciseHomeLocation?.lng, activeUserProfile?.preciseHomeLocation?.address, user?.uid]);
+
   const {
     theme, setTheme,
+    mapSkin, setMapSkin,
+    effectiveSkin, isDefaultSkin,
     isMobile,
     isDriveMode, setDriveMode,
     is3DMode, set3DMode,
@@ -169,27 +210,67 @@ const App: React.FC = () => {
     notification, showNotification
   } = useUI();
 
+  // Dynamically resolve activeTheme to 'light' whenever the Default map skin is active
+  const activeTheme: 'light' | 'dark' = isDefaultSkin || theme === 'light' ? 'light' : 'dark';
+
   const [activeModal, setActiveModal] = useState<ActiveModal | null>(null);
   const [circleSettingsTab, setCircleSettingsTab] = useState<'circles' | 'invite' | 'manage'>('circles');
   const [activeFilterCircleId, setActiveFilterCircleId] = useState<string | 'all'>('all');
 
   const [isSearching, startSearchTransition] = React.useTransition();
-  const [showOnboarding, setShowOnboarding] = useState(() => {
-    return !localStorage.getItem('myway_onboarding_complete');
-  });
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // --- CORE STATE ---
   const [isMapReady, setIsMapReady] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
-  const [userPlaces, setUserPlaces] = useState<UserPlace[]>(() => {
+  const [userPlaces, setUserPlaces] = useState<UserPlace[]>([]);
+
+  // Async hydration of local storage data to prevent main thread blocking
+  useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        const saved = localStorage.getItem('myway_user_places');
-        if (saved) return JSON.parse(saved);
-      } catch (e) {}
+        const onboardingComplete = localStorage.getItem('myway_onboarding_complete');
+        if (!onboardingComplete) {
+          setShowOnboarding(true);
+        }
+        
+        const savedPlaces = localStorage.getItem('myway_user_places');
+        if (savedPlaces) {
+          setUserPlaces(JSON.parse(savedPlaces));
+        }
+      } catch (e) {
+        console.warn('Failed to hydrate from localStorage', e);
+      }
     }
-    return [];
-  });
+  }, []);
+
+  // Auto-register verified saved user places with rooftop house numbers into persistent community building cache and locationService
+  useEffect(() => {
+    setKnownPlaces(userPlaces || []);
+    if (userPlaces && userPlaces.length > 0) {
+      userPlaces.forEach(p => {
+        // STRICT PRECISION: Only register places verified with rooftop accuracy or user correction
+        if (!p.isRooftop && !p.isCorrected) return;
+        if (p.geocodePrecision === 'street' || p.geocodePrecision === 'intersection') return;
+        const hn = p.houseNumber || extractHouseNumber(p.address || p.description || p.name || '');
+        const lat = p.location?.lat ?? (p as any).latitude;
+        const lng = p.location?.lng ?? (p as any).longitude;
+        if (hn && typeof lat === 'number' && typeof lng === 'number') {
+          communityBuildingService.registerBuilding({
+            address: p.address || p.name || `${hn} Street`,
+            houseNumber: hn,
+            coordinates: { lat, lng },
+            userId: user?.uid,
+            source: 'place_correction',
+            isRooftop: true,
+            precision: 'rooftop'
+          });
+        }
+      });
+    }
+    // Purge any stray unverified intersection building labels
+    communityBuildingService.purgeStrayBuildings(userPlaces, activeUserProfile?.preciseHomeLocation);
+  }, [userPlaces, user?.uid, activeUserProfile?.preciseHomeLocation]);
   const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>([]);
   const [searchResultPlaces, setSearchResultPlaces] = useState<Place[]>([]);
   const [safetyScore, setSafetyScore] = useState(100);
@@ -200,12 +281,16 @@ const App: React.FC = () => {
   const [mapBounds, setMapBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
   const [mapZoom, setMapZoom] = useState(14);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const [avgGasPrice, setAvgGasPrice] = useState('$3.45');
   const [hasInitiallyCentered, setHasInitiallyCentered] = useState(false);
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [isMemberDetailOpen, setIsMemberDetailOpen] = useState<boolean>(false);
+  const lastMemberSelectedAtRef = useRef<number>(0);
   const [messagingRecipientId, setMessagingRecipientId] = useState<string | null>(null);
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+  const [isPlaceDetailOpen, setIsPlaceDetailOpen] = useState<boolean>(false);
+  const [parkedVehicle, setParkedVehicle] = useState<ParkedVehiclePlace | null>(() => parkingService.getParkedVehicle());
+  const [searchText, setSearchText] = useState('');
   const [previewRoute, setPreviewRoute] = useState<NavigationRoute | null>(null);
   const [incomingConvoyInvite, setIncomingConvoyInvite] = useState<ConvoyInvite | null>(null);
   const [reviewedTrip, setReviewedTrip] = useState<Trip | null>(null);
@@ -219,13 +304,35 @@ const App: React.FC = () => {
     speedAlerts: false,
     mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
     units: 'imperial' as 'imperial' | 'metric',
-    mapSkin: ((localStorage.getItem('myway_map_skin') as any) || 'default') as MapSkinId,
+    mapSkin: mapSkin,
     buildingScale: ((localStorage.getItem('myway_building_scale') as any) || 'enhanced') as 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental',
     landmarkGlow: localStorage.getItem('myway_landmark_glow') !== 'false',
     showTrafficControls: localStorage.getItem('myway_show_traffic_controls') !== 'false',
     avoidTolls: localStorage.getItem('myway_avoid_tolls') === 'true',
     avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
   });
+
+  // Dynamic Parking Service Subscription & Alert Handlers
+  useEffect(() => {
+    parkingService.setAlertHandlers({
+      showNotification,
+      logActivity: (type, title, message, icon, memberId) => {
+        if (logActivityRef.current) {
+          logActivityRef.current(type, title, message, icon, memberId);
+        }
+      }
+    });
+    return parkingService.subscribe(setParkedVehicle);
+  }, [showNotification]);
+
+  // Synchronize Member State: reliably ensure isMemberDetailOpen is true when selectedMemberId is set
+  useEffect(() => {
+    if (selectedMemberId) {
+      setIsMemberDetailOpen(true);
+    } else {
+      setIsMemberDetailOpen(false);
+    }
+  }, [selectedMemberId]);
 
   const [privacyZones] = useState<PrivacyZone[]>([]);
   const [incidents, setIncidents] = useState<IncidentReport[]>(() => incidentService.getActiveIncidents());
@@ -289,7 +396,10 @@ const App: React.FC = () => {
         name: p.name,
         lat: p.location.lat,
         lng: p.location.lng,
-        radius: Math.max(15, radiusMeters)
+        radius: Math.max(15, radiusMeters),
+        entranceType: p.entranceType,
+        entranceLocation: p.entranceLocation,
+        entrancePrecision: p.entrancePrecision
       };
     });
   }, [userPlaces]);
@@ -321,12 +431,40 @@ const App: React.FC = () => {
     activeFilterCircleId
   );
 
+  const members = liveMembers;
+
   // Keep ambient POIs updated around user's live position or current map view
   useEffect(() => {
     if (userLocation && userLocation.lat !== 0 && userLocation.lng !== 0) {
       ambientPoiService.updateAmbientPois(userLocation, mapBounds);
     }
   }, [userLocation?.lat, userLocation?.lng]);
+
+  // Live Dynamic Parking Detection & Geofence Evaluation Loop
+  useEffect(() => {
+    if (!userLocation || userLocation.lat === 0 || userLocation.lng === 0) return;
+    const selfMember = members.find(m => m.id === user?.uid);
+    const speedMph = selfMember?.speed || 0;
+    const rawStatus = selfMember?.status || 'Stationary';
+    const status: 'Driving' | 'Walking' | 'Stationary' =
+      rawStatus.toLowerCase().includes('driving') || speedMph > 5
+        ? 'Driving'
+        : rawStatus.toLowerCase().includes('walking') || speedMph > 0.6
+          ? 'Walking'
+          : 'Stationary';
+
+    parkingService.processTelemetry({
+      userLocation,
+      speedMph,
+      status,
+      places: userPlaces,
+      user,
+      profile,
+      circleId: activeFilterCircleId !== 'all' ? activeFilterCircleId : (currentCircle?.id || profile?.familyCircleId),
+      showNotification,
+      logActivity: logActivityRef.current
+    }).catch(e => console.warn('[App] Parking telemetry error:', e));
+  }, [userLocation, members, userPlaces, user, profile, activeFilterCircleId, currentCircle?.id, showNotification]);
 
   useEffect(() => {
     if (!mapBounds) return;
@@ -335,8 +473,6 @@ const App: React.FC = () => {
     }, 600);
     return () => clearTimeout(timer);
   }, [mapBounds]);
-
-  const members = liveMembers;
 
   useGeofences(
     members,
@@ -348,6 +484,10 @@ const App: React.FC = () => {
   const { ecdhKeyPair } = useE2EE(user, profile, currentCircle, isOwner);
   const {
     activeRoute,
+    alternativeRoutes,
+    activeRouteIndex,
+    isRecalculatingRoutes,
+    handleRecalculateRoutes,
     isNavigating,
     navState,
     betterRouteSuggestion,
@@ -402,12 +542,22 @@ const App: React.FC = () => {
     return unsub;
   }, []);
 
-  // Whenever navigation starts, automatically lock chase camera
+  // Whenever navigation starts, automatically lock chase camera and clear selected place preview
   useEffect(() => {
     if (isNavigating || isDriveMode) {
       setIsCameraFree(false);
+      setSelectedPlace(null);
+      setIsPlaceDetailOpen(false);
+      setPreviewRoute(null);
     }
   }, [isNavigating, isDriveMode]);
+
+  // Ensure isPlaceDetailOpen is synchronized with selectedPlace: if selectedPlace is set, force isPlaceDetailOpen to true
+  useEffect(() => {
+    if (selectedPlace && !isPlaceDetailOpen && !correctingPlace) {
+      setIsPlaceDetailOpen(true);
+    }
+  }, [selectedPlace, isPlaceDetailOpen, correctingPlace]);
 
   // Listen for real-time Convoy & Caravan invites
   useEffect(() => {
@@ -485,7 +635,10 @@ const App: React.FC = () => {
         }
         // 2. Low Battery Alert
         if (currentBattery <= 20 && prev.battery > 20) {
-          logActivity('safety', 'Low Battery', `${member.name}'s battery is low (${currentBattery}%)`, '🪫', member.id);
+          const msg = isSelf
+            ? `Your phone battery is low (${currentBattery}%). Please plug in your charger.`
+            : `${member.name}'s battery is low (${currentBattery}%)`;
+          logActivity('safety', 'Low Battery', msg, '🪫', member.id);
         }
         // 3. Started Driving Trigger
         if (currentStatus === 'Driving' && prev.status !== 'Driving') {
@@ -534,11 +687,10 @@ const App: React.FC = () => {
   // Initial Map Centering
   useEffect(() => {
     if (userLocation && !hasInitiallyCentered) {
-      const targetId = user?.uid || 'demo-you';
-      setSelectedMemberId(targetId);
+      setMapCenter([userLocation.lat, userLocation.lng]);
       setHasInitiallyCentered(true);
     }
-  }, [userLocation, hasInitiallyCentered, user]);
+  }, [userLocation, hasInitiallyCentered]);
 
   // Lifecycle & Deep Links
   useEffect(() => {
@@ -609,22 +761,16 @@ const App: React.FC = () => {
     ].filter(Boolean)));
 
     const unsubscribe = subscribeToUserPlacesMulti(targetCircleIds, user.uid, (places) => {
-      if (places.length > 0) {
-        setUserPlaces(places);
-      } else if (targetCircleIds.length === 0) {
-        setUserPlaces([]);
-      }
+      setUserPlaces(places || []);
     });
     return () => unsubscribe();
   }, [user?.uid, profile?.familyCircleId, userCircles]);
 
   // Synchronize userPlaces with discoveredPlaces without blowing away search results
   useEffect(() => {
-    if (userPlaces && userPlaces.length > 0) {
-      try {
-        localStorage.setItem('myway_user_places', JSON.stringify(userPlaces));
-      } catch (e) {}
-    }
+    try {
+      localStorage.setItem('myway_user_places', JSON.stringify(userPlaces || []));
+    } catch (e) {}
     setDiscoveredPlaces(prev => {
       // Only keep search/discovered places — don't blindly re-inject all userPlaces.
       // The allDisplayPlaces memo already combines userPlaces + discoveredPlaces for map display.
@@ -634,46 +780,67 @@ const App: React.FC = () => {
   }, [userPlaces]);
 
   const allDisplayPlaces = useMemo(() => {
-    const list: Place[] = [...userPlaces];
+    const list: Place[] = userPlaces.map(p => ({ ...p, isSaved: true }));
     const seenIds = new Set(userPlaces.map(p => p.id));
 
-    // 1. Ensure selectedPlace ALWAYS has a pin rendered on the map
+    const isExactSavedPlace = (p?: Place | null) => {
+      if (!p) return false;
+      const pName = (p.name || '').trim().toLowerCase();
+      const pAddr = (p.address || p.description || '').trim().toLowerCase();
+      return userPlaces.some(up => 
+        up.id === p.id || 
+        (pName && (up.name || '').trim().toLowerCase() === pName) ||
+        (pAddr && (up.address || up.description || '').trim().toLowerCase() === pAddr)
+      );
+    };
+
+    // 1. Ensure selectedPlace ALWAYS has a pin rendered on the map unless it duplicates an existing user place
+    // Respect literal search: allow temporary search pins to render even if physically adjacent to a saved place (like Home)
     if (selectedPlace && selectedPlace.location && typeof selectedPlace.location.lat === 'number' && typeof selectedPlace.location.lng === 'number') {
-      if (!seenIds.has(selectedPlace.id)) {
+      if (!seenIds.has(selectedPlace.id) && !isExactSavedPlace(selectedPlace)) {
         seenIds.add(selectedPlace.id);
         list.push({
           ...selectedPlace,
           type: selectedPlace.type || 'search_result',
           icon: selectedPlace.icon || '📍',
-          brandColor: selectedPlace.brandColor || '#6366f1'
+          brandColor: selectedPlace.brandColor || '#6366f1',
+          isSaved: false
         });
       }
     }
 
     // 2. Add active live search result locations (from typing in SearchBox)
-    for (const sp of searchResultPlaces) {
-      if (sp && sp.location && typeof sp.location.lat === 'number' && typeof sp.location.lng === 'number' && !seenIds.has(sp.id)) {
-        seenIds.add(sp.id);
-        list.push({
-          ...sp,
-          type: sp.type || 'search_result',
-          icon: sp.icon || '📍',
-          brandColor: sp.brandColor || '#6366f1'
-        });
+    // ONLY display search result pins when NO place is currently selected.
+    // When a user selects a place (like "Home"), other search result pins must not clutter the map!
+    if (!selectedPlace) {
+      for (const sp of searchResultPlaces) {
+        if (sp && sp.location && typeof sp.location.lat === 'number' && typeof sp.location.lng === 'number' && !seenIds.has(sp.id) && !isExactSavedPlace(sp)) {
+          seenIds.add(sp.id);
+          list.push({
+            ...sp,
+            type: sp.type || 'search_result',
+            icon: sp.icon || '📍',
+            brandColor: sp.brandColor || '#6366f1',
+            isSaved: false
+          });
+        }
       }
-    }
 
-    // 3. Add discovered search places
-    for (const dp of discoveredPlaces || []) {
-      if (dp && dp.location && typeof dp.location.lat === 'number' && typeof dp.location.lng === 'number' && !seenIds.has(dp.id)) {
-        seenIds.add(dp.id);
-        list.push(dp);
+      // 3. Add discovered search places
+      for (const dp of discoveredPlaces || []) {
+        if (dp && dp.location && typeof dp.location.lat === 'number' && typeof dp.location.lng === 'number' && !seenIds.has(dp.id) && !isExactSavedPlace(dp)) {
+          seenIds.add(dp.id);
+          list.push({
+            ...dp,
+            isSaved: false
+          });
+        }
       }
     }
 
     // 4. Add ambient POIs
     for (const ap of ambientPlaces || []) {
-      if (ap && ap.location && !seenIds.has(ap.id)) {
+      if (ap && ap.location && !seenIds.has(ap.id) && !isExactSavedPlace(ap)) {
         const overlaps = list.some(p => Math.abs(p.location.lat - ap.location.lat) < 0.0005 && Math.abs(p.location.lng - ap.location.lng) < 0.0005);
         if (!overlaps) {
           seenIds.add(ap.id);
@@ -682,8 +849,14 @@ const App: React.FC = () => {
       }
     }
 
+    // 5. Add dynamic parked vehicle place if active
+    if (parkedVehicle && parkedVehicle.location && !seenIds.has(parkedVehicle.id)) {
+      seenIds.add(parkedVehicle.id);
+      list.push(parkedVehicle);
+    }
+
     return list;
-  }, [userPlaces, selectedPlace, searchResultPlaces, discoveredPlaces, ambientPlaces]);
+  }, [userPlaces, selectedPlace, searchResultPlaces, discoveredPlaces, ambientPlaces, parkedVehicle]);
 
 
   // Insights Loop
@@ -723,44 +896,283 @@ const App: React.FC = () => {
 
   const handleClearSelectedPlace = useCallback(() => {
     setSelectedPlace(null);
+    setIsPlaceDetailOpen(false);
     setPreviewRoute(null);
     setSearchResultPlaces([]);
     setDiscoveredPlaces([]);
+    setSearchText('');
+  }, []);
+
+  const handleSelectRoutePreview = useCallback((route: NavigationRoute | null) => {
+    setPreviewRoute(route);
   }, []);
 
   const handleSelectPlace = useCallback((place: Place) => {
+    // Guard: ignore if a circle member was just selected within 800ms (prevents map click race conditions)
+    if (Date.now() - lastMemberSelectedAtRef.current < 800) return;
+    console.log('Place clicked:', place);
+    // Dismiss bottom sheet expansion and modals so Place Details / Family Hub Card displays cleanly
+    setIsBottomSheetExpanded(false);
+    setActiveModal(null);
+    setCorrectingPlace(null);
     setSelectedMemberId(null);
-    setSelectedPlace(place);
-    setMapCenter([place.location.lat, place.location.lng]);
+    setIsMemberDetailOpen(false);
+    setSearchResultPlaces([]); // Purge all temporary search result pins from the map!
+    
+    // 0. Explicit check for Parked Vehicle
+    if (place.type === 'parked_vehicle' || place.id === 'temp-parked-vehicle') {
+      setSelectedPlace(place);
+      setIsPlaceDetailOpen(true);
+      setSearchText(place.name || 'Parked Vehicle');
+      setMapCenter([place.location.lat, place.location.lng]);
+      return;
+    }
 
-    // Keep active selected search place in discoveredPlaces so it has a pin on map
-    setDiscoveredPlaces([place]);
-  }, []);
+    // Respect Literal User Input:
+    // Strict exact ID, exact string, or coordinate proximity matching for saved places
+    const placeNameNorm = (place.name || '').trim().toLowerCase();
+    const placeAddrNorm = (place.address || place.description || '').trim().toLowerCase();
 
-  const handleAddPlace = useCallback((place: Omit<Place, 'id'>) => {
+    const existingSaved = userPlaces.find(p => {
+      // 1. Explicit ID match
+      if (p.id === place.id) return true;
+
+      // 2. Strict exact name match (e.g. user selected saved "Home" or "Work")
+      const pNameNorm = (p.name || '').trim().toLowerCase();
+      if (pNameNorm && pNameNorm === placeNameNorm) return true;
+
+      // 3. Strict exact address match
+      const pAddrNorm = (p.address || p.description || '').trim().toLowerCase();
+      if (pAddrNorm && placeAddrNorm && pAddrNorm === placeAddrNorm) return true;
+
+      // 4. Coordinates match within ~50 meters
+      if (p.location && place.location && Math.abs(p.location.lat - place.location.lat) < 0.0005 && Math.abs(p.location.lng - place.location.lng) < 0.0005) return true;
+
+      return false;
+    });
+
+    const resolvedPlace = existingSaved ? { ...existingSaved, isSaved: true } : place;
+    setSelectedPlace(resolvedPlace);
+    setIsPlaceDetailOpen(true);
+    setSearchText(resolvedPlace.name || resolvedPlace.address || '');
+    setMapCenter([resolvedPlace.location.lat, resolvedPlace.location.lng]);
+
+    // Keep literal search result in discoveredPlaces if it's not already a saved user place
+    if (!existingSaved) {
+      setDiscoveredPlaces([resolvedPlace]);
+    } else {
+      setDiscoveredPlaces([]);
+    }
+  }, [userPlaces]);
+
+  const handleAddPlace = useCallback(async (place: Omit<Place, 'id'>) => {
     const targetCircleId = currentCircle?.id || profile?.familyCircleId || (userCircles[0]?.id) || '';
+    let savedPlace: UserPlace;
     if (user) {
-      addUserPlace(targetCircleId, { ...place, createdBy: user.uid }, user.uid);
+      savedPlace = await addUserPlace(targetCircleId, { ...place, createdBy: user.uid }, user.uid);
+      setUserPlaces(prev => {
+        const filtered = prev.filter(p => p.id !== savedPlace.id && (p.name || '').trim().toLowerCase() !== (savedPlace.name || '').trim().toLowerCase());
+        return [...filtered, savedPlace];
+      });
       showNotification(`⭐ Saved "${place.name}" to Geofences!`, 3000);
     } else {
-      const newPlaceWithId: UserPlace = {
+      savedPlace = {
         ...place,
         id: `demo-place-${Date.now()}`,
         createdAt: Date.now(),
         createdBy: 'demo'
       };
-      setUserPlaces(prev => [...prev, newPlaceWithId]);
+      setUserPlaces(prev => [...prev, savedPlace]);
       showNotification(`⭐ Saved "${place.name}" to Geofences!`, 3000);
     }
+
+    // Immediately update selectedPlace to the saved place to prevent duplicate pins and reflect saved status
+    setSelectedPlace(savedPlace);
+    setIsPlaceDetailOpen(true);
+
+    // Purge the temporary search result from discoveredPlaces and searchResultPlaces
+    setDiscoveredPlaces(prev => prev.filter(p => p.id !== savedPlace.id && (p.name || '').trim().toLowerCase() !== (savedPlace.name || '').trim().toLowerCase()));
+    setSearchResultPlaces(prev => prev.filter(p => p.id !== savedPlace.id && (p.name || '').trim().toLowerCase() !== (savedPlace.name || '').trim().toLowerCase()));
   }, [user, profile, currentCircle, userCircles, showNotification]);
 
   const handleDeletePlace = useCallback((placeId: string) => {
-    const targetCircleId = currentCircle?.id || profile?.familyCircleId || '';
-    const allCircleIds = userCircles.map(c => c.id);
-    deleteUserPlace(targetCircleId, placeId, user?.uid, allCircleIds);
-    setUserPlaces(prev => prev.filter(p => p.id !== placeId));
-    showNotification(`Removed place`, 2500);
-  }, [profile, currentCircle, userCircles, user, showNotification]);
+    // 1. Collect all candidate coordinates from targets and nearby places (~100m / 0.001 deg)
+    const isNearby = (locA?: { lat: number; lng: number } | null, locB?: { lat: number; lng: number } | null, threshold = 0.001): boolean => {
+      if (!locA || !locB || typeof locA.lat !== 'number' || typeof locA.lng !== 'number' || typeof locB.lat !== 'number' || typeof locB.lng !== 'number') return false;
+      return Math.abs(locA.lat - locB.lat) < threshold && Math.abs(locA.lng - locB.lng) < threshold;
+    };
+
+    const targetPlace = userPlaces.find(p => p.id === placeId) ||
+      (selectedPlace && (selectedPlace.id === placeId || isNearby(selectedPlace.location, userPlaces.find(p => isNearby(p.location, selectedPlace.location))?.location))
+        ? userPlaces.find(p => isNearby(p.location, selectedPlace.location)) || (selectedPlace.id === placeId ? selectedPlace : undefined)
+        : undefined) ||
+      (editingPlace && editingPlace.id === placeId ? editingPlace : undefined) ||
+      (correctingPlace && correctingPlace.id === placeId ? correctingPlace : undefined);
+
+    // Collect all coordinates associated with the place (building centroid, driveway pin, entrance)
+    const targetCoordsList: { lat: number; lng: number }[] = [];
+    const addCoords = (loc?: { lat: number; lng: number } | null) => {
+      if (loc && typeof loc.lat === 'number' && typeof loc.lng === 'number' && !(loc.lat === 0 && loc.lng === 0)) {
+        targetCoordsList.push({ lat: loc.lat, lng: loc.lng });
+      }
+    };
+
+    addCoords(targetPlace?.location);
+    addCoords(targetPlace?.entrancePrecision?.location);
+    addCoords(targetPlace?.entrancePin);
+    addCoords(targetPlace?.entranceLocation);
+    if (selectedPlace && (selectedPlace.id === placeId || (targetPlace && isNearby(selectedPlace.location, targetPlace.location)))) {
+      addCoords(selectedPlace.location);
+      addCoords(selectedPlace.entrancePrecision?.location);
+      addCoords(selectedPlace.entrancePin);
+      addCoords(selectedPlace.entranceLocation);
+    }
+    if (editingPlace && (editingPlace.id === placeId || (targetPlace && isNearby(editingPlace.location, targetPlace.location)))) {
+      addCoords(editingPlace.location);
+    }
+
+    // Collect all associated place IDs (the passed placeId, targetPlace id, selectedPlace id, etc.)
+    const matchingIds = new Set<string>([placeId]);
+    if (targetPlace?.id) matchingIds.add(targetPlace.id);
+    if (selectedPlace && (selectedPlace.id === placeId || targetCoordsList.some(tc => isNearby(selectedPlace.location, tc)))) {
+      matchingIds.add(selectedPlace.id);
+    }
+    if (editingPlace && (editingPlace.id === placeId || targetCoordsList.some(tc => isNearby(editingPlace.location, tc)))) {
+      matchingIds.add(editingPlace.id);
+    }
+    if (correctingPlace && (correctingPlace.id === placeId || targetCoordsList.some(tc => isNearby(correctingPlace.location, tc)))) {
+      matchingIds.add(correctingPlace.id);
+    }
+
+    const matchesTarget = (p: Place | null | undefined): boolean => {
+      if (!p) return false;
+      if (matchingIds.has(p.id)) return true;
+      const pCoordsList = [p.location, p.entrancePrecision?.location, p.entrancePin, p.entranceLocation].filter(Boolean);
+      for (const pCoord of pCoordsList) {
+        if (targetCoordsList.some(tc => isNearby(pCoord, tc, 0.001))) {
+          return true;
+        }
+      }
+      if (targetPlace?.name && p.name && targetPlace.name.trim().toLowerCase() === p.name.trim().toLowerCase() && targetCoordsList.some(tc => isNearby(p.location, tc, 0.005))) {
+        return true;
+      }
+      return false;
+    };
+
+    // 2. Comprehensive check if the place is Home or Work
+    const isTargetNear = (refLoc?: { lat: number; lng: number } | null): boolean => {
+      if (!refLoc) return false;
+      return targetCoordsList.some(tc => isNearby(tc, refLoc, 0.001));
+    };
+
+    const isHome = (targetPlace && (
+      targetPlace.type === 'home' || 
+      (targetPlace as any).category === 'home' || 
+      targetPlace.name?.toLowerCase() === 'home' ||
+      targetPlace.icon === 'home' ||
+      targetPlace.tags?.includes('home')
+    )) ||
+      placeId === 'profile-home-place' || 
+      placeId === 'precise_home' ||
+      isTargetNear(activeUserProfile?.preciseHomeLocation) ||
+      isTargetNear(profile?.preciseHomeLocation) ||
+      (typeof localStorage !== 'undefined' && (() => {
+        try {
+          const raw = localStorage.getItem('myway_precise_home_location');
+          return raw ? isTargetNear(JSON.parse(raw)) : false;
+        } catch { return false; }
+      })());
+
+    const isWork = (targetPlace && (
+      targetPlace.type === 'work' || 
+      (targetPlace as any).category === 'work' || 
+      targetPlace.name?.toLowerCase() === 'work' ||
+      targetPlace.icon === 'work' ||
+      targetPlace.tags?.includes('work')
+    )) ||
+      placeId === 'profile-work-place' || 
+      placeId === 'precise_work' ||
+      isTargetNear((activeUserProfile as any)?.workLocation) ||
+      isTargetNear((profile as any)?.workLocation);
+
+    // 3. Clear persistent and profile storage for Home/Work to prevent synthetic geofence resurrection
+    if (isHome) {
+      try {
+        localStorage.removeItem('myway_precise_home_location');
+      } catch (e) {}
+      setLocalProfileOverride(prev => ({
+        ...(prev || {}),
+        preciseHomeLocation: null as any,
+        homeAddress: ''
+      }));
+      if (user?.uid) {
+        updateUserProfile(user.uid, { preciseHomeLocation: null as any, homeAddress: '' as any }).catch(err => {
+          console.warn('⚠️ Could not clear preciseHomeLocation in DB:', err);
+        });
+      }
+    }
+
+    if (isWork) {
+      try {
+        localStorage.removeItem('myway_work_location');
+      } catch (e) {}
+      setLocalProfileOverride(prev => ({
+        ...(prev || {}),
+        workLocation: null as any,
+        workAddress: ''
+      } as any));
+      if (user?.uid) {
+        updateUserProfile(user.uid, { workLocation: null as any, workAddress: '' } as any).catch(err => {
+          console.warn('⚠️ Could not clear workLocation in DB:', err);
+        });
+      }
+    }
+
+    // 4. Update userPlaces and immediately synchronize localStorage
+    const nextUserPlaces = userPlaces.filter(p => !matchesTarget(p));
+    setUserPlaces(nextUserPlaces);
+    try {
+      localStorage.setItem('myway_user_places', JSON.stringify(nextUserPlaces));
+    } catch (e) {}
+
+    // 5. Update locationService cache immediately
+    setKnownPlaces(nextUserPlaces);
+
+    // 6. Purge from discoveredPlaces & searchResultPlaces
+    setDiscoveredPlaces(prev => prev.filter(p => !matchesTarget(p)));
+    setSearchResultPlaces(prev => prev.filter(p => !matchesTarget(p)));
+
+    // 7. Clear active UI selection if it matches the deleted place
+    if (matchesTarget(selectedPlace) || matchingIds.has(selectedPlace?.id || '')) {
+      setSelectedPlace(null);
+      setIsPlaceDetailOpen(false);
+      setPreviewRoute(null);
+    }
+    if (matchesTarget(editingPlace) || matchingIds.has(editingPlace?.id || '')) {
+      setEditingPlace(null);
+    }
+    if (matchesTarget(correctingPlace) || matchingIds.has(correctingPlace?.id || '')) {
+      setCorrectingPlace(null);
+    }
+
+    // 8. Remote delete across circles and user personal store in Firebase RTDB & Firestore
+    const targetCircleId = targetPlace?.circleId || currentCircle?.id || profile?.familyCircleId || '';
+    const allCircleIds = Array.from(new Set([
+      targetCircleId,
+      'default',
+      ...(userCircles.map(c => c.id)),
+      ...(profile?.familyCircleId ? [profile.familyCircleId] : []),
+      ...(currentCircle?.id ? [currentCircle.id] : [])
+    ].filter(Boolean)));
+
+    for (const id of matchingIds) {
+      deleteUserPlace(targetCircleId, id, user?.uid, allCircleIds).catch(err => {
+        console.warn(`⚠️ Failed to delete place ${id} from database:`, err);
+      });
+    }
+
+    showNotification(targetPlace?.name ? `Removed "${targetPlace.name}"` : 'Removed place', 2500);
+  }, [userPlaces, selectedPlace, editingPlace, correctingPlace, profile, activeUserProfile, currentCircle, userCircles, user, showNotification]);
 
   const handleUpdatePlace = useCallback(async (placeId: string, updates: Partial<Place>) => {
     setUserPlaces(prev => {
@@ -788,23 +1200,66 @@ const App: React.FC = () => {
     }
   }, [profile, currentCircle, userCircles, userPlaces, user, showNotification]);
 
+  // Real-time live geofence radius & location update for parent map components (MapLibre3DView)
+  const handleLiveUpdatePlace = useCallback((placeId: string, updates: Partial<Place>) => {
+    setEditingPlace(prev => (prev && prev.id === placeId ? { ...prev, ...updates } : prev));
+    setUserPlaces(prev => prev.map(p => p.id === placeId ? { ...p, ...updates } : p));
+  }, []);
+
   const handleSelectMember = useCallback((id: string) => {
-    // Guard: prevent flying to Null Island (0, 0) for members without a valid location
     const member = members.find(m => m.id === id);
-    if (member && member.location && member.location.lat === 0 && member.location.lng === 0) {
-      showNotification(`📡 Waiting for ${member.name || 'member'}'s location…`, 3000);
+    const lat = member?.location ? ((member.location as any).latitude ?? member.location.lat) : undefined;
+    const lng = member?.location ? ((member.location as any).longitude ?? member.location.lng) : undefined;
+
+    // Handle Missing Locations:
+    // Guard clause: If the member's location is unavailable (e.g., offline or location paused),
+    // display a brief toast notification like "Location unavailable" instead of attempting to move the map to [0,0].
+    if (!member || typeof lat !== 'number' || typeof lng !== 'number' || (lat === 0 && lng === 0) || isNaN(lat) || isNaN(lng)) {
+      showNotification('Location unavailable', 3000);
       return;
     }
+
+    // Trigger Map Camera Animation:
+    // Access MapLibre instance and call map.flyTo({ center: [longitude, latitude], zoom: 15, essential: true })
+    const mapInstance = (window as any).mywayMap;
+    if (mapInstance && typeof mapInstance.flyTo === 'function') {
+      mapInstance.flyTo({
+        center: [lng, lat],
+        zoom: 15,
+        essential: true,
+        duration: 1500
+      });
+    }
+    setMapCenter([lat, lng]);
+
+    // Current User Check:
+    // If it's the current user, camera pans to their pin, but do NOT pop open the member detail card
+    const isCurrentUser = id === user?.uid || id === 'demo-you' || id === 'current_user' || id === 'local-user';
+    if (isCurrentUser) {
+      setSelectedMemberId(null);
+      setIsMemberDetailOpen(false);
+      return;
+    }
+
+    // Trigger Selection State:
+    // Along with moving the camera, select member so their detail card automatically pops open
+    lastMemberSelectedAtRef.current = Date.now();
     setSelectedMemberId(id);
-    setMapCenter(undefined);
-  }, [members, showNotification]);
+    setIsMemberDetailOpen(true);
+    // Dismiss conflicting place selection
+    setSelectedPlace(null);
+    setIsPlaceDetailOpen(false);
+  }, [user?.uid, members, showNotification]);
 
   const handleZoomChange = useCallback((zoom: number) => {
     setMapZoom(zoom);
   }, []);
 
   const handleMapInteraction = useCallback(() => {
+    // Guard: ignore if circle member was just selected within 800ms
+    if (Date.now() - lastMemberSelectedAtRef.current < 800) return;
     setSelectedMemberId(null);
+    setIsMemberDetailOpen(false);
     setMapCenter(undefined);
   }, []);
 
@@ -940,17 +1395,18 @@ const App: React.FC = () => {
  
   // --- AUTH GATES ---
   if (authLoading) {
-    return <LoadingScreen theme={theme as 'light' | 'dark'} />;
+    return <LoadingScreen theme={activeTheme} />;
   }
  
   if (!user) {
     return (
       <LoginScreen
-        theme={theme as 'light' | 'dark'}
+        theme={activeTheme}
         onSignInWithGoogle={signInWithGoogle}
         onSignInWithEmail={signInWithEmail}
         onSignUpWithEmail={signUpWithEmail}
         onSendMagicLink={sendMagicLink}
+        onSendPasswordReset={sendPasswordReset}
         magicLinkSent={emailLinkSent}
         loading={authLoading}
         error={authError}
@@ -960,17 +1416,21 @@ const App: React.FC = () => {
   }
  
   return (
-    <div className={`flex flex-col h-full w-full overflow-hidden transition-all duration-700 ${theme === 'dark' ? 'bg-black' : 'bg-[#f1f5f9]'}`}>
+    <div className={`fixed inset-0 flex flex-col h-full w-full overflow-hidden transition-colors duration-700 ${
+      isDefaultSkin || activeTheme === 'light' 
+        ? 'theme-default light-mode bg-[#f8f6f0] text-slate-900' 
+        : 'theme-dark bg-black text-white'
+    }`}>
       {!isDriveMode && null}
 
       <div className={`flex flex-1 relative overflow-hidden ${isMobile && !isDriveMode ? 'flex-col-reverse' : 'flex-row'}`}>
         {/* Desktop Sidebar - Bento Grid style */}
-        {!isDriveMode && !isMobile && (
+        {!isDriveMode && !isMobile && !arrivalTripData && (
           <BentoSidebar
             members={members}
             selectedId={selectedMemberId}
-            onSelect={setSelectedMemberId}
-            theme={theme}
+            onSelect={handleSelectMember}
+            theme={activeTheme}
             hasCircle={!!profile?.familyCircleId}
             circleName={currentCircle?.name}
             userCircles={userCircles}
@@ -983,7 +1443,6 @@ const App: React.FC = () => {
             inviteCode={currentCircle?.inviteCode}
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
-            avgGasPrice={avgGasPrice}
             showNotification={showNotification}
             onOpenSettings={() => setActiveModal('settings')}
             onOpenTripHistory={() => setActiveModal('trip_history')}
@@ -994,13 +1453,14 @@ const App: React.FC = () => {
               setActiveModal('circle_settings');
             }}
             onOpenMessages={(recipientId) => {
-              setMessagingRecipientId(recipientId || null);
+              setMessagingRecipientId(typeof recipientId === 'string' && recipientId.trim() ? recipientId : null);
               setActiveModal('messaging');
             }}
             onSOS={handleManualSOS}
             activities={activities}
             onResolveSOS={handleResolveSOS}
             userPlaces={userPlaces}
+            parkedVehicle={parkedVehicle}
             selectedPlaceId={selectedPlace?.id}
             onSelectPlace={handleSelectPlace}
             onAddPlace={handleAddPlace}
@@ -1013,13 +1473,13 @@ const App: React.FC = () => {
         )}
 
         {/* Mobile-only Profile/Settings FAB - Desktop has this in sidebar */}
-        {!isDriveMode && isMobile && !activeModal && !isBottomSheetExpanded && (
+        {!isDriveMode && isMobile && !activeModal && !isBottomSheetExpanded && !arrivalTripData && (
           <button
             onClick={() => setActiveModal('settings')}
             className="absolute top-14 left-4 z-[90] group flex items-center gap-3 transition-all duration-300 pointer-events-auto"
           >
             <div className={`relative w-11 h-11 rounded-full border-2 overflow-hidden shadow-2xl transition-all duration-300
-              ${theme === 'dark' ? 'bg-slate-800 border-white/20' : 'bg-white border-slate-200'}
+              ${activeTheme === 'dark' ? 'bg-slate-800 border-white/20' : 'bg-white border-slate-200 shadow-md'}
               ${members[0]?.membershipTier === 'gold' ? 'border-amber-500' : ''}`}
             >
               <img
@@ -1035,7 +1495,7 @@ const App: React.FC = () => {
         )}
 
         {/* Ghost Mode Active Banner - Audit UX Fix: prevents users from forgetting they're invisible */}
-        {!isDriveMode && !activeModal && !isBottomSheetExpanded && members.find(m => m.id === user?.uid)?.isGhostMode && (
+        {!isDriveMode && !activeModal && !isBottomSheetExpanded && !arrivalTripData && members.find(m => m.id === user?.uid)?.isGhostMode && (
           <div
             className="absolute top-4 left-1/2 -translate-x-1/2 z-[95] px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer shadow-lg backdrop-blur-md transition-all duration-300 animate-pulse"
             style={{
@@ -1044,7 +1504,7 @@ const App: React.FC = () => {
             }}
             onClick={() => setActiveModal('privacy')}
           >
-            <span className="text-lg">👻</span>
+            <EyeOff className="w-5 h-5 text-purple-200 shrink-0" />
             <span className="text-white text-sm font-semibold tracking-wide">Ghost Mode Active</span>
             <span className="text-white/60 text-xs">• Tap to manage</span>
           </div>
@@ -1059,8 +1519,8 @@ const App: React.FC = () => {
               members={members}
               userLocation={userLocation}
               currentUserId={user?.uid || ''}
-              userProfile={profile}
-              theme={theme}
+              userProfile={activeUserProfile}
+              theme={activeTheme}
               mapSkin={userSettings.mapSkin}
               buildingScale={userSettings.buildingScale}
               landmarkGlow={userSettings.landmarkGlow}
@@ -1073,7 +1533,10 @@ const App: React.FC = () => {
               onUserInteraction={handleMapInteraction}
               onMapReady={() => setIsMapReady(true)}
               activeRoute={activeRoute || previewRoute}
+              alternativeRoutes={isNavigating ? alternativeRoutes : []}
+              onSelectAlternativeRoute={(altRoute) => handleSwitchRoute(altRoute)}
               places={allDisplayPlaces}
+              savedPlaces={userPlaces}
               incidents={incidents}
               privacyZones={privacyZones}
               tasks={[]}
@@ -1093,13 +1556,14 @@ const App: React.FC = () => {
               isLowDataMode={isLowDataMode}
               onToggle3DMode={() => set3DMode(prev => !prev)}
               onSelectMapStyle={(style) => setUserSettings(prev => ({ ...prev, mapStyle: style }))}
+              onOpenAlerts={() => setActiveModal('incident')}
             />
           </div>
 
           {/* UI Overlays - z-10 and above to appear over the map */}
           {notification && (
-            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[110] animate-in slide-in-from-top">
-              <div className="bg-amber-500 text-black px-6 py-3 rounded-full shadow-2xl font-black text-xs border-2 border-white/20">
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[110] animate-in slide-in-from-top pointer-events-none">
+              <div className="bg-amber-500 text-black px-6 py-3 rounded-full shadow-2xl font-black text-xs border-2 border-white/20 pointer-events-auto">
                 {notification}
               </div>
             </div>
@@ -1109,8 +1573,8 @@ const App: React.FC = () => {
           {incomingConvoyInvite && (
             <div className="fixed top-4 inset-x-4 max-w-md mx-auto z-[250] bg-slate-900/98 border-2 border-purple-500 rounded-3xl p-4 shadow-[0_20px_50px_rgba(168,85,247,0.4)] backdrop-blur-2xl animate-in slide-in-from-top duration-300 text-white pointer-events-auto">
               <div className="flex items-start gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-purple-600/30 border border-purple-400/50 flex items-center justify-center text-2xl shrink-0 animate-bounce">
-                  🚗🚗
+                <div className="w-12 h-12 rounded-2xl bg-purple-600/30 border border-purple-400/50 flex items-center justify-center shrink-0 animate-bounce text-purple-300">
+                  <Car className="w-6 h-6 text-purple-300" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
@@ -1139,7 +1603,8 @@ const App: React.FC = () => {
                       }}
                       className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-black text-xs shadow-lg shadow-purple-600/30 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                     >
-                      <span>🚀</span> Join & Follow Route
+                      <Navigation className="w-4 h-4 fill-current shrink-0" />
+                      <span>Join & Follow Route</span>
                     </button>
                     <button
                       type="button"
@@ -1158,16 +1623,20 @@ const App: React.FC = () => {
           )}
 
           {/* Safety Alerts */}
-          {!isDriveMode && (
+          {!isDriveMode && !arrivalTripData && (
             <OverlayManager>
               <div className="absolute z-[70] top-18 right-4 pointer-events-auto flex flex-col items-end">
                 <SafetyAlerts
                   members={members}
+                  currentUserId={user?.uid}
+                  currentUserName={profile?.displayName}
                   onDismiss={(id) => console.log('Dismissed:', id)}
                   onSendReminder={(memberId, type) => {
-                    showNotification(`📱 Sent ${type === 'charge' ? 'charge reminder' : 'check-in request'}!`, 3000);
+                    const target = members.find(m => m.id === memberId);
+                    const name = target ? target.name : 'member';
+                    showNotification(`📱 Sent ${type === 'charge' ? 'charge reminder' : 'check-in request'} to ${name}!`, 3000);
                   }}
-                  theme={theme}
+                  theme={activeTheme}
                 />
               </div>
             </OverlayManager>
@@ -1179,12 +1648,15 @@ const App: React.FC = () => {
                 route={activeRoute}
                 onCancel={handleCancelNavigation}
                 speed={members.find(m => m.id === user?.uid)?.speed || 0}
-                theme={theme}
+                theme={activeTheme}
                 stepIndex={navState.currentStepIndex}
                 safetyScore={safetyScore}
                 sessionPoints={sessionPoints}
                 isMobile={isMobile}
                 betterRouteSuggestion={betterRouteSuggestion}
+                alternativeRoutes={alternativeRoutes}
+                onRecalculateRoutes={handleRecalculateRoutes}
+                isRecalculatingRoutes={isRecalculatingRoutes}
                 onSwitchRoute={handleSwitchRoute}
                 onDismissReroute={handleDismissReroute}
                 upcomingTollAlert={upcomingTollAlert}
@@ -1212,7 +1684,7 @@ const App: React.FC = () => {
                 <QuickStopGrid
                   onSearch={handleDiscovery}
                   onClose={() => setActiveModal(null)}
-                  theme={theme}
+                  theme={activeTheme}
                   userPlaces={userPlaces}
                   onSelectPlace={handleSelectPlace}
                   onNavigatePlace={(place: Place) => handleStartNavigation(place.name, place.location)}
@@ -1222,7 +1694,7 @@ const App: React.FC = () => {
                 />
               )}
 
-              {activeModal === 'upsell' && <PremiumUpsellModal onClose={() => setActiveModal(null)} onUpgrade={handleUpgrade} theme={theme} />}
+              {activeModal === 'upsell' && <PremiumUpsellModal onClose={() => setActiveModal(null)} onUpgrade={handleUpgrade} theme={activeTheme} />}
 
               {/* Audit #3: RewardsPanel removed */}
 
@@ -1235,32 +1707,40 @@ const App: React.FC = () => {
                       userCircles={userCircles}
                       activeCircleId={currentCircle?.id || profile?.familyCircleId}
                       onClose={() => setActiveModal(null)}
-                      theme={theme}
+                      theme={activeTheme}
                     />
                   </div>
                 </OverlayManager>
               )}
 
               {/* Member detail panel - desktop only, mobile uses BottomSheet */}
-              {selectedMemberId && activeModal !== 'privacy' && !isMobile && (() => {
+              {selectedMemberId && isMemberDetailOpen && activeModal !== 'privacy' && !isMobile && (() => {
                 const selectedMember = members.find(m => m.id === selectedMemberId);
                 return selectedMember ? (
-                  <OverlayManager>
-                    <div className="absolute z-[80] right-6 top-6 w-84 max-w-[360px] flex flex-col gap-4 pointer-events-auto animate-in slide-in-from-right-4 duration-300">
+                  <OverlayManager priority={8}>
+                    <div className="absolute z-[80] right-6 top-6 w-84 max-w-[360px] flex flex-col gap-4 opacity-100 pointer-events-auto animate-in slide-in-from-right-4 duration-300">
                       <MemberDetailPanel
                         member={selectedMember}
-                        onClose={() => setSelectedMemberId(null)}
+                        onClose={() => {
+                          setSelectedMemberId(null);
+                          setIsMemberDetailOpen(false);
+                        }}
                         onToggleGhost={selectedMemberId === user?.uid ? () => handleToggleGhost(user?.uid || '') : undefined}
-                        theme={theme}
+                        theme={activeTheme}
                       />
                       {/* Audit Round 5: Integrated QuickActions */}
                       <QuickActions
                         member={selectedMember}
                         isCurrentUser={selectedMemberId === user?.uid}
                         onMessage={() => {
-                          setMessagingRecipientId(selectedMember.id);
+                          if (selectedMember.id !== user?.uid) {
+                            setMessagingRecipientId(selectedMember.id);
+                          } else {
+                            setMessagingRecipientId(null);
+                          }
                           setActiveModal('messaging');
                           setSelectedMemberId(null);
+                          setIsMemberDetailOpen(false);
                         }}
                         onCheckIn={selectedMemberId === user?.uid
                           ? () => {
@@ -1274,9 +1754,13 @@ const App: React.FC = () => {
                         }
                         onSendEmoji={(emoji) => showNotification(`✨ Sent ${emoji} to ${selectedMember.name}`, 2000)}
                         onCall={() => showNotification(`📞 Calling ${selectedMember.name}...`, 3000)}
-                        onNavigateTo={() => handleStartNavigation(selectedMember.name, selectedMember.location)}
+                        onNavigateTo={() => {
+                          handleStartNavigation(selectedMember.name, selectedMember.location);
+                          setSelectedMemberId(null);
+                          setIsMemberDetailOpen(false);
+                        }}
                         onSOS={handleManualSOS}
-                        theme={theme}
+                        theme={activeTheme}
                       />
                     </div>
                   </OverlayManager>
@@ -1284,17 +1768,17 @@ const App: React.FC = () => {
               })()}
 
               {/* Mobile Member Detail — compact floating card when marker tapped */}
-              {selectedMemberId && !activeModal && !isBottomSheetExpanded && isMobile && (() => {
+              {selectedMemberId && isMemberDetailOpen && !activeModal && !isBottomSheetExpanded && isMobile && (() => {
                 const selectedMember = members.find(m => m.id === selectedMemberId);
                 if (!selectedMember) return null;
                 const isSelf = selectedMember.id === user?.uid || selectedMember.id === 'demo-you';
                 const isUnresolved = !selectedMember.location || (selectedMember.location.lat === 0 && selectedMember.location.lng === 0);
 
                 return (
-                  <OverlayManager>
-                    <div className="absolute z-[120] inset-x-0 bottom-40 px-3">
-                      <div className={`rounded-2xl shadow-2xl border backdrop-blur-xl p-3.5 ${
-                        theme === 'dark' ? 'bg-slate-900/98 border-white/10' : 'bg-white/98 border-slate-200'
+                  <OverlayManager priority={8}>
+                    <div className="absolute z-[120] inset-x-0 bottom-40 px-3 pointer-events-none">
+                      <div className={`rounded-2xl shadow-2xl border backdrop-blur-xl p-3.5 opacity-100 pointer-events-auto ${
+                        activeTheme === 'dark' ? 'bg-slate-900/98 border-white/10 text-white' : 'bg-[#fdfbf7]/98 border-slate-200/80 text-slate-900 shadow-xl'
                       }`}>
                         {/* Row 1: Avatar + Info + Close */}
                         <div className="flex items-center gap-3 mb-3">
@@ -1316,13 +1800,13 @@ const App: React.FC = () => {
                             )}
                             {isUnresolved && !isSelf && (
                               <span className="absolute -bottom-1 -right-1 text-[8px] font-black w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center border border-slate-900 animate-pulse">
-                                📡
+                                <Radio className="w-2.5 h-2.5 text-slate-950" />
                               </span>
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <div className={`font-bold text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                              <div className={`font-bold text-sm truncate ${activeTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                                 {selectedMember.name}
                               </div>
                               {isUnresolved && (
@@ -1332,8 +1816,9 @@ const App: React.FC = () => {
                                 </span>
                               )}
                               {selectedMember.privacyMode === 'blurred' && (
-                                <span className="text-[8px] font-black px-1 rounded bg-purple-500/20 text-purple-300">
-                                  👻 Blur
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 flex items-center gap-1">
+                                  <EyeOff className="w-2.5 h-2.5 shrink-0" />
+                                  <span>Blur</span>
                                 </span>
                               )}
                             </div>
@@ -1345,24 +1830,28 @@ const App: React.FC = () => {
                                 </span>
                               ) : (
                                 <span className="font-semibold text-slate-300">
-                                  {selectedMember.currentPlace
-                                    ? (selectedMember.status === 'Stationary' ? `At ${selectedMember.currentPlace}` : `${selectedMember.status} • ${selectedMember.currentPlace}`)
-                                    : (selectedMember.status === 'Driving' ? `Driving` :
-                                       selectedMember.status === 'Walking' || selectedMember.status === 'Moving' ? `Walking` :
-                                       'Stationary')}
+                                  {formatMemberStatus(selectedMember, undefined, userPlaces)}
                                 </span>
                               )}
                               <span>•</span>
-                              <span>🔋 {selectedMember.battery}%</span>
+                              <span className="flex items-center gap-1">
+                                <Battery className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                <span>{selectedMember.battery}%</span>
+                              </span>
                               {!isUnresolved && selectedMember.speed > 0 && <><span>•</span><span>{Math.round(selectedMember.speed)} mph</span></>}
                             </div>
                           </div>
                           <button
-                            onClick={() => setSelectedMemberId(null)}
+                            onClick={() => {
+                              setSelectedMemberId(null);
+                              setIsMemberDetailOpen(false);
+                            }}
                             className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                              theme === 'dark' ? 'bg-white/10 text-slate-400' : 'bg-slate-100 text-slate-500'
+                              activeTheme === 'dark' ? 'bg-white/10 text-slate-400 hover:bg-white/20' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                             }`}
-                          >✕</button>
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         </div>
 
                         {/* Row 2: Action buttons */}
@@ -1373,16 +1862,19 @@ const App: React.FC = () => {
                                 setMessagingRecipientId(selectedMember.id);
                                 setActiveModal('messaging');
                                 setSelectedMemberId(null);
+                                setIsMemberDetailOpen(false);
                               }}
-                              className="py-2.5 rounded-xl bg-purple-500/20 text-purple-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                              className="py-2.5 rounded-xl bg-purple-500/20 text-purple-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5"
                             >
-                              <span>💬</span> Message
+                              <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                              <span>Message</span>
                             </button>
                             <button
                               onClick={() => showNotification(`📞 Calling ${selectedMember.name}...`, 3000)}
-                              className="py-2.5 rounded-xl bg-blue-500/20 text-blue-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                              className="py-2.5 rounded-xl bg-blue-500/20 text-blue-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5"
                             >
-                              <span>📞</span> Call
+                              <Phone className="w-3.5 h-3.5 shrink-0" />
+                              <span>Call</span>
                             </button>
                             <button
                               onClick={() => {
@@ -1392,48 +1884,49 @@ const App: React.FC = () => {
                                 }
                                 handleStartNavigation(selectedMember.name, selectedMember.location);
                                 setSelectedMemberId(null);
+                                setIsMemberDetailOpen(false);
                               }}
-                              className={`py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1 ${
+                              className={`py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5 ${
                                 isUnresolved ? 'bg-slate-500/10 text-slate-500' : 'bg-indigo-500/20 text-indigo-400'
                               }`}
                               title={isUnresolved ? 'Location pending' : 'Start navigation'}
                             >
-                              <span>🧭</span> Nav
+                              <Navigation className="w-3.5 h-3.5 shrink-0" />
+                              <span>Nav</span>
                             </button>
                             <button
-                              onClick={() => showNotification(`✨ Sent 👋 to ${selectedMember.name}`, 2000)}
-                              className="py-2.5 rounded-xl bg-amber-500/20 text-amber-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                              onClick={() => {
+                                logActivity('safety', 'Check-In Request', `Sent check-in request to ${selectedMember.name}`, '📱', user?.uid);
+                                showNotification(`✅ Check-in request sent to ${selectedMember.name}`, 3000);
+                              }}
+                              className="py-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5"
                             >
-                              <span>👋</span> Wave
+                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Check In</span>
                             </button>
                           </div>
                         ) : (
-                          <div className="grid grid-cols-3 gap-2">
+                          <div className="grid grid-cols-2 gap-2">
                             <button
                               onClick={() => {
                                 logActivity('arrival', 'Check-In', `${selectedMember.name} checked in: I'm Safe`, '✨', selectedMember.id);
                                 showNotification(`✅ Checked in: I'm Safe`, 3000);
                               }}
-                              className="py-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1 shadow-sm"
+                              className="py-2.5 rounded-xl bg-purple-500/20 text-purple-300 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5"
                             >
-                              <span>✨</span> Check In
-                            </button>
-                            <button
-                              onClick={() => {
-                                handleToggleGhost(user?.uid || '');
-                              }}
-                              className="py-2.5 rounded-xl bg-purple-500/20 text-purple-300 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
-                            >
-                              <span>👻</span> Privacy
+                              <EyeOff className="w-3.5 h-3.5 shrink-0" />
+                              <span>Privacy</span>
                             </button>
                             <button
                               onClick={() => {
                                 setActiveModal('settings');
                                 setSelectedMemberId(null);
+                                setIsMemberDetailOpen(false);
                               }}
-                              className="py-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1"
+                              className="py-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5"
                             >
-                              <span>🚗</span> Garage
+                              <Car className="w-3.5 h-3.5 shrink-0" />
+                              <span>Garage</span>
                             </button>
                           </div>
                         )}
@@ -1446,49 +1939,57 @@ const App: React.FC = () => {
               {/* ────────────────────────────────────────────────────────── */}
               {/* UNIFIED INTERACTION CONTAINER (DESKTOP / LANDSCAPE: MAP ROUTING COLUMN) */}
               {/* ────────────────────────────────────────────────────────── */}
-              {!isMobile && !isDriveMode && !activeModal && !correctingPlace && (
-                <div className="absolute left-1/2 -translate-x-1/2 bottom-2.5 sm:bottom-6 md:bottom-8 w-full max-w-[min(620px,calc(100%-2rem))] landscape:max-w-[min(500px,calc(100%-5rem))] z-[120] flex flex-col-reverse gap-2 sm:gap-3 pointer-events-auto max-h-[calc(100%-1.25rem)] sm:max-h-[calc(100%-3rem)] justify-end transition-all duration-300">
+              {!isMobile && !isDriveMode && !activeModal && !correctingPlace && !arrivalTripData && (
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-6 md:bottom-8 lg:bottom-10 landscape:bottom-6 landscape:md:bottom-8 w-full max-w-[min(620px,calc(100%-2rem))] z-[120] flex flex-col-reverse gap-2 sm:gap-3 pointer-events-none max-h-[calc(100%-2rem)] md:max-h-[calc(100%-4rem)] landscape:max-h-[calc(100dvh-4rem)] justify-start transition-all duration-300">
                   {/* Search Input Bar (Anchors dropdown directly above) */}
-                  <SearchBox
-                    onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
-                    onSearchResultsChange={setSearchResultPlaces}
-                    onNavigate={handleStartNavigation}
-                    onCategorySearch={handleQuickSearch}
-                    onLocate={() => {
-                      const targetId = user?.uid || 'demo-you';
-                      setSelectedMemberId(targetId);
-                      setMapCenter(undefined); // Reset specific search center to follow user
-                      showNotification("📍 Centered on your location", 2000);
-                    }}
-                    onQuickStop={() => setActiveModal('quickstop')}
-                    onOpenMessages={() => {
-                      setMessagingRecipientId(null);
-                      setActiveModal('messaging');
-                    }}
-                    theme={theme}
-                    userPlaces={userPlaces}
-                    onSelectSavedPlace={handleSelectPlace}
-                    onSelectPlace={handleSelectPlace}
-                    userLocation={userLocation}
-                    selectedPlace={selectedPlace}
-                    onClearSelectedPlace={handleClearSelectedPlace}
-                  />
+                  <div className="w-full pointer-events-auto">
+                    <SearchBox
+                      onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
+                      onSearchResultsChange={setSearchResultPlaces}
+                      onNavigate={handleStartNavigation}
+                      onCategorySearch={handleQuickSearch}
+                      onLocate={() => {
+                        const targetId = user?.uid || 'demo-you';
+                        handleSelectMember(targetId);
+                        showNotification("📍 Centered on your location", 2000);
+                      }}
+                      onQuickStop={() => setActiveModal('quickstop')}
+                      onOpenMessages={() => {
+                        setMessagingRecipientId(null);
+                        setActiveModal('messaging');
+                      }}
+                      theme={activeTheme}
+                      userPlaces={userPlaces}
+                      onSelectSavedPlace={handleSelectPlace}
+                      onSelectPlace={handleSelectPlace}
+                      userLocation={userLocation}
+                      selectedPlace={selectedPlace}
+                      onClearSelectedPlace={handleClearSelectedPlace}
+                      searchText={searchText}
+                      onSearchTextChange={setSearchText}
+                      mapCenter={mapCenter}
+                    />
+                  </div>
 
                   {/* Place Detail Panel (Renders immediately below search in the exact same physical column) */}
-                  {selectedPlace && !correctingPlace && (
-                    <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(100vh-120px)] landscape:max-h-[calc(100vh-70px)] rounded-[1.75rem] sm:rounded-[2rem] animate-in fade-in slide-in-from-top-3 duration-300">
+                  {selectedPlace && isPlaceDetailOpen && !correctingPlace && (
+                    <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(100dvh-120px)] landscape:max-h-[calc(100dvh-5.5rem)] rounded-[1.75rem] sm:rounded-[2rem] opacity-100 pointer-events-auto animate-in fade-in slide-in-from-top-3 duration-300">
                       <PlaceDetailPanel
-                        place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
+                        place={userPlaces.find(p => p.id === selectedPlace.id || (p.location && selectedPlace.location && Math.abs(p.location.lat - selectedPlace.location.lat) < 0.00005 && Math.abs(p.location.lng - selectedPlace.location.lng) < 0.00005)) || selectedPlace}
                         onClose={handleClearSelectedPlace}
                         onNavigate={(selectedRoute) => {
                           handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
                           handleClearSelectedPlace();
                         }}
-                        onSelectRoutePreview={(route) => setPreviewRoute(route)}
-                        theme={theme}
+                        onSelectRoutePreview={handleSelectRoutePreview}
+                        theme={activeTheme}
                         userLocation={userLocation}
                         onUpdateRadius={handleUpdatePlaceRadius}
-                        isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
+                        isSaved={userPlaces.some(p => 
+                          p.id === selectedPlace.id || 
+                          ((p.name || '').trim().toLowerCase() === (selectedPlace.name || '').trim().toLowerCase()) ||
+                          (p.address && selectedPlace.address && (p.address || '').trim().toLowerCase() === (selectedPlace.address || '').trim().toLowerCase())
+                        )}
                         onAddPlace={handleAddPlace}
                         onDeletePlace={handleDeletePlace}
                         onEditPlace={(place) => setEditingPlace(place)}
@@ -1503,11 +2004,11 @@ const App: React.FC = () => {
               )}
 
               {/* Safety Insights - Repositioned to Top Center Drawer as per Audit */}
-              {!activeModal && !isBottomSheetExpanded && (
-                <div className={`absolute left-1/2 -translate-x-1/2 z-50 pointer-events-auto ${isMobile ? 'top-14 w-auto max-w-[90%]' : 'top-3 sm:top-6 w-auto max-w-[calc(100%-4rem)]'}`}>
+              {!activeModal && !isBottomSheetExpanded && !arrivalTripData && (
+                <div className={`absolute left-1/2 -translate-x-1/2 z-50 pointer-events-none ${isMobile ? 'top-14 w-auto max-w-[90%]' : 'top-3 sm:top-6 w-auto max-w-[calc(100%-4rem)]'}`}>
                   <InsightsBar
                     insights={insights}
-                    theme={theme}
+                    theme={activeTheme}
                     onReconnect={() => {
                       showNotification("🔄 Attempting to reconnect...", 3000);
                       setTimeout(() => setIsOffline(false), 1500);
@@ -1518,63 +2019,7 @@ const App: React.FC = () => {
             </>
           )}
 
-          {/* Action Hub — Unified vertical pill */}
-          {!activeModal && !isBottomSheetExpanded && (
-            <OverlayManager>
-              <div 
-                className={`absolute flex flex-col items-end z-[110] pointer-events-auto transition-all duration-300 ${
-                  isDriveMode 
-                    ? (isMobile ? 'right-3.5' : 'right-6')
-                    : (isMobile ? 'right-4' : 'bottom-72 right-6')
-                }`}
-                style={{
-                  top: isDriveMode
-                    ? (isMobile ? 'max(calc(env(safe-area-inset-top, 0px) + 295px), 310px)' : '280px')
-                    : (isMobile ? 'max(calc(env(safe-area-inset-top, 0px) + 72px), 80px)' : undefined)
-                }}
-              >
 
-                {/* Emergency SOS & Road Alert Action Hub */}
-                <div className="flex flex-col gap-2 p-1.5 bg-black/60 backdrop-blur-xl rounded-[1.5rem] border border-white/15 shadow-2xl relative">
-                  {/* 1-Tap Road Alert / Incident Reporter Button */}
-                  <button
-                    type="button"
-                    onClick={() => setActiveModal('incident')}
-                    title="Report Road Hazard, Police Trap, or Incident"
-                    className="w-11 h-11 rounded-2xl flex items-center justify-center transition-all select-none bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-400 active:scale-95 shadow-lg cursor-pointer"
-                  >
-                    <span className="text-xl leading-none">⚠️</span>
-                  </button>
-
-                  {/* Responsive Emergency SOS Button (Tap opens Safety Dispatch, Hold triggers instant SOS) */}
-                  <HoldToActivate
-                    onActivate={() => {
-                      handleTriggerSOS();
-                      setIsSOSModalOpen(true);
-                    }}
-                    duration={1800}
-                    className={`w-11 h-12 rounded-2xl flex flex-col items-center justify-center transition-all shadow-lg ring-2 relative select-none overflow-hidden cursor-pointer ${
-                      members.find(m => m.id === (user?.uid || 'demo-you'))?.sosActive
-                        ? 'bg-red-700 animate-pulse ring-red-400 shadow-[0_0_20px_rgba(239,68,68,0.7)]'
-                        : 'bg-red-600/90 hover:bg-red-700 active:scale-95 ring-red-500/50'
-                    }`}
-                  >
-                    <div 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsSOSModalOpen(true);
-                      }}
-                      className="w-full h-full flex flex-col items-center justify-center pointer-events-auto"
-                      title="Emergency SOS (Tap to Open • Hold to Dispatch)"
-                    >
-                      <span className="text-base leading-none">🛡️</span>
-                      <span className="text-[7.5px] font-black uppercase text-white tracking-wider mt-0.5">SOS</span>
-                    </div>
-                  </HoldToActivate>
-                </div>
-              </div>
-            </OverlayManager>
-          )}
 
           {/* Messaging Panel */}
           {activeModal === 'messaging' && (
@@ -1595,7 +2040,7 @@ const App: React.FC = () => {
                     setActiveModal(null);
                     setMessagingRecipientId(null);
                   }}
-                  theme={theme}
+                  theme={activeTheme}
                 />
               </div>
             </OverlayManager>
@@ -1605,7 +2050,7 @@ const App: React.FC = () => {
           {activeModal === 'incident' && (
             <OverlayManager>
               <IncidentReporter
-                theme={theme}
+                theme={activeTheme}
                 isMobile={isMobile}
                 activeIncidents={incidents}
                 currentUserId={user?.uid}
@@ -1637,7 +2082,7 @@ const App: React.FC = () => {
               currentUserId={user?.uid}
               currentUserName={profile?.displayName || user?.displayName}
               showNotification={showNotification}
-              theme={theme}
+              theme={activeTheme}
             />
           )}
 
@@ -1648,7 +2093,7 @@ const App: React.FC = () => {
             isSosActive={!!members.find(m => m.id === (user?.uid || 'demo-you'))?.sosActive}
             onTriggerSOS={() => handleTriggerSOS()}
             onCancelSOS={handleCancelSOS}
-            theme={theme}
+            theme={activeTheme}
             userLocation={userLocation}
           />
 
@@ -1658,9 +2103,11 @@ const App: React.FC = () => {
             isOpen={!!editingPlace}
             onClose={() => setEditingPlace(null)}
             onSave={handleUpdatePlace}
+            onUpdatePlace={handleLiveUpdatePlace}
             onDelete={handleDeletePlace}
             onCorrectLocation={(place) => setCorrectingPlace(place)}
-            theme={theme}
+            userLocation={userLocation}
+            theme={activeTheme}
           />
 
           {/* Precision Address & Pin Location Correction Modal */}
@@ -1669,7 +2116,7 @@ const App: React.FC = () => {
             isOpen={!!correctingPlace}
             onClose={() => setCorrectingPlace(null)}
             userLocation={userLocation}
-            theme={theme}
+            theme={activeTheme}
             userId={user?.uid}
             userName={profile?.name || user?.displayName || 'You'}
             userAvatar={profile?.avatar || user?.photoURL || undefined}
@@ -1677,14 +2124,17 @@ const App: React.FC = () => {
               // 1. Update selectedPlace if active so panel and route preview update
               if (selectedPlace && (selectedPlace.id === correctedPlace.id || selectedPlace.name === correctedPlace.name)) {
                 setSelectedPlace(correctedPlace);
+                setIsPlaceDetailOpen(true);
               }
               // 2. If it's a saved place in userPlaces, update it in Firebase / local state
               if (userPlaces.some(p => p.id === correctedPlace.id)) {
                 handleUpdatePlace(correctedPlace.id, {
+                  name: correctedPlace.name,
+                  description: correctedPlace.description,
+                  address: correctedPlace.address,
+                  type: correctedPlace.type,
                   location: correctedPlace.location,
                   imageUrl: correctedPlace.imageUrl,
-                  entranceType: correctedPlace.entranceType,
-                  entranceNotes: correctedPlace.entranceNotes,
                   submitterId: correctedPlace.submitterId,
                   submitterName: correctedPlace.submitterName,
                   submitterAvatar: correctedPlace.submitterAvatar,
@@ -1702,25 +2152,40 @@ const App: React.FC = () => {
             }}
           />
 
-          {/* Post-Drive Arrival & Rating Prompt Modal */}
-          <ArrivalPromptModal
+          {/* Post-Drive Arrival & Rating Prompt Modal / TripCompletedCard */}
+          <TripCompletedCard
             arrivalData={arrivalTripData}
             isOpen={!!arrivalTripData}
             onClose={() => setArrivalTripData(null)}
             onFixLocation={(destinationPlace) => {
               setCorrectingPlace(destinationPlace);
             }}
-            theme={theme}
+            theme={activeTheme}
+            userLocation={userLocation}
+            userId={user?.uid}
+            userName={profile?.displayName || user?.displayName || 'Driver'}
+            userAvatar={profile?.photoURL || user?.photoURL || ''}
           />
 
           {/* New User Onboarding Setup Wizard Modal */}
           <SetupWizardModal
-            isOpen={Boolean(user && profile && profile.hasCompletedSetup !== true && !authLoading)}
+            isOpen={Boolean(user && activeUserProfile && activeUserProfile.hasCompletedSetup !== true && !authLoading)}
             user={user}
-            profile={profile}
-            theme={theme as 'light' | 'dark'}
+            profile={activeUserProfile}
+            theme={activeTheme as 'light' | 'dark'}
             userLocation={userLocation}
-            onComplete={(_updatedProfile) => {
+            onComplete={(updatedProfile, createdPlace) => {
+              setLocalProfileOverride(prev => ({ ...(prev || {}), ...updatedProfile }));
+              if (createdPlace) {
+                setUserPlaces(prev => {
+                  const filtered = prev.filter(p => p.id !== createdPlace.id && p.name !== createdPlace.name);
+                  const updated = [createdPlace as UserPlace, ...filtered];
+                  try {
+                    localStorage.setItem('myway_user_places', JSON.stringify(updated));
+                  } catch (e) {}
+                  return updated;
+                });
+              }
               showNotification('🎉 Welcome to MyWay! Your profile and home base are set.', 4500);
             }}
           />
@@ -1763,14 +2228,14 @@ const App: React.FC = () => {
               setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
             }}
             showNotification={showNotification}
-            theme={theme}
+            theme={activeTheme}
             initialTab={circleSettingsTab}
           />
 
           {/* Settings Panel */}
           {activeModal === 'settings' && (
             <OverlayManager>
-              <div className={`absolute z-[150] flex flex-col pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 h-[calc(100vh-120px)]'}`}>
+              <div className={`absolute z-[150] flex flex-col pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 h-[calc(100dvh-120px)]'}`}>
                 <SettingsPanel
                   settings={userSettings}
                   onUpdateSettings={(newSettings) => {
@@ -1779,6 +2244,7 @@ const App: React.FC = () => {
                       setTheme(newSettings.theme);
                     }
                     if (newSettings.mapSkin) {
+                      setMapSkin(newSettings.mapSkin);
                       localStorage.setItem('myway_map_skin', newSettings.mapSkin);
                     }
                     if (newSettings.buildingScale) {
@@ -1794,7 +2260,7 @@ const App: React.FC = () => {
                   onClose={() => setActiveModal(null)}
                   onOpenOfflineMaps={() => setActiveModal('offline_maps')}
                   onOpenBatteryPrompt={() => setActiveModal('battery_prompt')}
-                  theme={theme}
+                  theme={activeTheme}
                   userName={profile?.displayName || user?.displayName || 'User'}
                   userId={user?.uid}
                   circleId={profile?.familyCircleId || undefined}
@@ -1852,7 +2318,7 @@ const App: React.FC = () => {
                   <OfflineMapManager
                     currentBounds={mapBounds}
                     userLocation={userLocation}
-                    theme={theme}
+                    theme={activeTheme}
                     onClose={() => setActiveModal(null)}
                   />
                 </React.Suspense>
@@ -1863,7 +2329,7 @@ const App: React.FC = () => {
           {/* Trip History Panel */}
           {activeModal === 'trip_history' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
                   <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Trip History...</div>}>
                     <TripHistoryPanel
@@ -1893,7 +2359,7 @@ const App: React.FC = () => {
           {/* Circle Admin Panel */}
           {activeModal === 'circle_admin' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
                   <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Circle Admin...</div>}>
                     <CircleAdminPanel
@@ -1914,7 +2380,7 @@ const App: React.FC = () => {
                         setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
                       }}
                       showNotification={showNotification}
-                      theme={theme}
+                      theme={activeTheme}
                     />
                   </React.Suspense>
                 </div>
@@ -1925,12 +2391,12 @@ const App: React.FC = () => {
           {/* Notification Center */}
           {activeModal === 'notifications' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[400px] max-h-[calc(100vh-120px)]'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[400px] max-h-[calc(100dvh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
                   <NotificationCenter
                     onClose={() => setActiveModal(null)}
                     onBack={() => setActiveModal('settings')}
-                    theme={theme}
+                    theme={activeTheme}
                   />
                 </div>
               </div>
@@ -1940,8 +2406,8 @@ const App: React.FC = () => {
           {/* Weekly Safety Report */}
           {activeModal === 'weekly_report' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100vh-120px)]'}`}>
-                <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
+                <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-h-full border border-slate-200">
                   <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Weekly Report...</div>}>
                     <WeeklySafetyReport
                       onClose={() => setActiveModal(null)}
@@ -1950,7 +2416,7 @@ const App: React.FC = () => {
                       userCircles={userCircles}
                       currentCircle={currentCircle}
                       currentUserId={user?.uid}
-                      theme={theme}
+                      theme={activeTheme}
                     />
                   </React.Suspense>
                 </div>
@@ -1967,7 +2433,7 @@ const App: React.FC = () => {
                 onClose={() => setActiveModal(null)}
                 onBack={() => setActiveModal('settings')}
                 showNotification={showNotification}
-                theme={theme}
+                theme={activeTheme}
               />
             </React.Suspense>
           )}
@@ -1977,7 +2443,7 @@ const App: React.FC = () => {
             <OverlayManager>
               <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
                 <div className={`rounded-3xl overflow-hidden shadow-2xl border ${
-                  theme === 'dark' ? 'bg-slate-900/95 border-white/10' : 'bg-white/95 border-slate-200'
+                  activeTheme === 'dark' ? 'bg-slate-900/95 border-white/10' : 'bg-[#fdfbf7]/98 border-slate-200/80 shadow-2xl'
                 }`}>
                   <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Key Recovery...</div>}>
                     <KeyRecoveryPanel
@@ -1985,7 +2451,7 @@ const App: React.FC = () => {
                       onClose={() => setActiveModal(null)}
                       onBack={() => setActiveModal('settings')}
                       showNotification={showNotification}
-                      theme={theme}
+                      theme={activeTheme}
                     />
                   </React.Suspense>
                 </div>
@@ -1997,7 +2463,7 @@ const App: React.FC = () => {
           {activeModal === 'maintenance' && (
             <React.Suspense fallback={<div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 text-slate-300 font-bold text-sm">Loading Maintenance Hub...</div>}>
               <MaintenancePanel
-                theme={theme}
+                theme={activeTheme}
                 onClose={() => setActiveModal(null)}
               />
             </React.Suspense>
@@ -2007,7 +2473,7 @@ const App: React.FC = () => {
           {activeModal === 'battery_prompt' && (
             <BatteryOptimizationPrompt
               onDismiss={() => setActiveModal(null)}
-              theme={theme}
+              theme={activeTheme}
             />
           )}
         </div>
@@ -2015,14 +2481,15 @@ const App: React.FC = () => {
 
       {/* Mobile Bottom Sheet - replaces sidebar on mobile */}
       {
-        isMobile && !isDriveMode && !activeModal && (
+        isMobile && !isDriveMode && !activeModal && !arrivalTripData && (
           <BottomSheet
+            className={selectedPlace ? 'landscape:hidden' : ''}
             isExpanded={isBottomSheetExpanded}
             onExpandedChange={setIsBottomSheetExpanded}
             members={members}
             selectedId={selectedMemberId}
-            onSelect={setSelectedMemberId}
-            theme={theme}
+            onSelect={handleSelectMember}
+            theme={activeTheme}
             hasCircle={!!profile?.familyCircleId}
             circleName={currentCircle?.name}
             userCircles={userCircles}
@@ -2036,7 +2503,6 @@ const App: React.FC = () => {
             inviteCode={currentCircle?.inviteCode}
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
-            avgGasPrice={avgGasPrice}
             showNotification={showNotification}
             onOpenSettings={() => {
               setIsBottomSheetExpanded(false);
@@ -2065,7 +2531,7 @@ const App: React.FC = () => {
             }}
             onOpenMessages={(recipientId) => {
               setIsBottomSheetExpanded(false);
-              setMessagingRecipientId(recipientId || null);
+              setMessagingRecipientId(typeof recipientId === 'string' && recipientId.trim() ? recipientId : null);
               setActiveModal('messaging');
             }}
             onSOS={handleManualSOS}
@@ -2089,72 +2555,67 @@ const App: React.FC = () => {
       {/* ────────────────────────────────────────────────────────── */}
       {/* UNIFIED INTERACTION CONTAINER (MOBILE: UNIFIED BOTTOM SHEET) */}
       {/* ────────────────────────────────────────────────────────── */}
-      {isMobile && !isDriveMode && !activeModal && !isBottomSheetExpanded && !correctingPlace && (
-        <OverlayManager>
-          <div className={`absolute inset-x-0 bottom-0 z-[150] pointer-events-auto flex flex-col transition-all duration-300 ${
-            selectedPlace
-              ? 'max-h-[min(60vh,420px)] sm:max-h-[min(65vh,480px)] bg-[#0f172a]/95 backdrop-blur-2xl border-t border-white/10 rounded-t-[2.5rem] shadow-[0_-15px_40px_rgba(0,0,0,0.6)] pb-[max(env(safe-area-inset-bottom,16px),16px)]'
-              : 'bottom-[calc(116px+env(safe-area-inset-bottom,0px))] px-4 pb-1 max-h-[min(50vh,360px)]'
-          }`}>
-            {/* Mobile Drag Handle (Only when place is selected) */}
-            {selectedPlace && (
-              <div 
-                className="pt-3 pb-1 shrink-0 cursor-grab active:cursor-grabbing"
-                onTouchStart={() => (document.activeElement as HTMLElement)?.blur()}
-                onMouseDown={() => (document.activeElement as HTMLElement)?.blur()}
-              >
-                <div className="w-12 h-1 rounded-full mx-auto bg-white/20" />
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* UNIFIED INTERACTION CONTAINER (MOBILE: UNIFIED BOTTOM SHEET) */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {isMobile && !isDriveMode && !activeModal && (!isBottomSheetExpanded || isPlaceDetailOpen || selectedPlace) && !correctingPlace && !arrivalTripData && (
+        <OverlayManager priority={isPlaceDetailOpen || selectedPlace ? 8 : 5}>
+          <div className="contents">
+            {/* Search Input Bar (Floats above bottom peek sheet, cleanly pushes down and hides when a place is selected) */}
+            <div className={`absolute inset-x-0 bottom-[calc(116px+env(safe-area-inset-bottom,0px))] px-4 pb-1 max-h-[min(50vh,360px)] z-[90] pointer-events-none transition-all duration-300 ${
+              (selectedPlace && isPlaceDetailOpen) ? 'translate-y-8 opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
+            }`}>
+              <div className="w-full pointer-events-auto">
+                <SearchBox
+                  onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
+                  onSearchResultsChange={setSearchResultPlaces}
+                  onNavigate={handleStartNavigation}
+                  onCategorySearch={handleQuickSearch}
+                  onLocate={() => {
+                    const targetId = user?.uid || 'demo-you';
+                    handleSelectMember(targetId);
+                    showNotification("📍 Centered on your location", 2000);
+                  }}
+                  onQuickStop={() => setActiveModal('quickstop')}
+                  onOpenMessages={() => {
+                    setMessagingRecipientId(null);
+                    setActiveModal('messaging');
+                  }}
+                  theme={activeTheme}
+                  userPlaces={userPlaces}
+                  onSelectSavedPlace={handleSelectPlace}
+                  onSelectPlace={handleSelectPlace}
+                  userLocation={userLocation}
+                  selectedPlace={selectedPlace}
+                  onClearSelectedPlace={handleClearSelectedPlace}
+                  searchText={searchText}
+                  onSearchTextChange={setSearchText}
+                  mapCenter={mapCenter}
+                />
               </div>
-            )}
-
-            {/* Search Input Bar (Anchors dropdown directly below) */}
-            <div className={selectedPlace ? 'px-4 pb-2 shrink-0' : 'w-full'}>
-              <SearchBox
-                onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
-                onSearchResultsChange={setSearchResultPlaces}
-                onNavigate={handleStartNavigation}
-                onCategorySearch={handleQuickSearch}
-                onLocate={() => {
-                  const targetId = user?.uid || 'demo-you';
-                  setSelectedMemberId(targetId);
-                  setMapCenter(undefined);
-                  showNotification("📍 Centered on your location", 2000);
-                }}
-                onQuickStop={() => setActiveModal('quickstop')}
-                onOpenMessages={() => {
-                  setMessagingRecipientId(null);
-                  setActiveModal('messaging');
-                }}
-                theme={theme}
-                userPlaces={userPlaces}
-                onSelectSavedPlace={handleSelectPlace}
-                onSelectPlace={handleSelectPlace}
-                userLocation={userLocation}
-                selectedPlace={selectedPlace}
-                onClearSelectedPlace={handleClearSelectedPlace}
-              />
             </div>
 
-            {/* Mobile Place Detail Panel (Renders immediately below search in the exact same sheet) */}
-            {selectedPlace && !correctingPlace && (
-              <div 
-                className="flex-1 overflow-y-auto overscroll-contain no-scrollbar max-h-[calc(min(60vh,420px)-65px)] animate-in slide-in-from-bottom-3 duration-300"
-                onScroll={() => (document.activeElement as HTMLElement)?.blur()}
-                onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
-              >
+            {/* Mobile Place Detail Panel (Slides over the search bar cleanly from bottom-0 at z-[100]) */}
+            {(selectedPlace && isPlaceDetailOpen) && (
+              <div className="absolute inset-x-0 bottom-0 landscape:inset-x-auto landscape:left-4 landscape:top-16 landscape:bottom-4 landscape:my-auto landscape:w-[380px] landscape:max-w-[46vw] landscape:max-h-[calc(100dvh-5.5rem)] z-[100] opacity-100 pointer-events-auto flex flex-col animate-in slide-in-from-bottom landscape:slide-in-from-left duration-300">
                 <PlaceDetailPanel
-                  place={userPlaces.find(p => p.id === selectedPlace.id) || selectedPlace}
+                  place={userPlaces.find(p => p.id === selectedPlace.id || (p.location && selectedPlace.location && Math.abs(p.location.lat - selectedPlace.location.lat) < 0.00005 && Math.abs(p.location.lng - selectedPlace.location.lng) < 0.00005)) || selectedPlace}
                   onClose={handleClearSelectedPlace}
                   onNavigate={(selectedRoute) => {
                     handleStartNavigation(selectedPlace.name, selectedPlace.location, selectedRoute);
                     handleClearSelectedPlace();
                   }}
-                  onSelectRoutePreview={(route) => setPreviewRoute(route)}
-                  theme={theme}
+                  onSelectRoutePreview={handleSelectRoutePreview}
+                  theme={activeTheme}
                   userLocation={userLocation}
                   isMobile={true}
                   onUpdateRadius={handleUpdatePlaceRadius}
-                  isSaved={userPlaces.some(p => p.id === selectedPlace.id || (p.location.lat === selectedPlace.location.lat && p.location.lng === selectedPlace.location.lng))}
+                  isSaved={userPlaces.some(p => 
+                    p.id === selectedPlace.id || 
+                    ((p.name || '').trim().toLowerCase() === (selectedPlace.name || '').trim().toLowerCase()) ||
+                    (p.address && selectedPlace.address && (p.address || '').trim().toLowerCase() === (selectedPlace.address || '').trim().toLowerCase()) ||
+                    (p.location && selectedPlace.location && Math.abs(p.location.lat - selectedPlace.location.lat) < 0.0005 && Math.abs(p.location.lng - selectedPlace.location.lng) < 0.0005)
+                  )}
                   onAddPlace={handleAddPlace}
                   onDeletePlace={handleDeletePlace}
                   onEditPlace={(place) => setEditingPlace(place)}
@@ -2199,9 +2660,11 @@ const App: React.FC = () => {
 };
 
 const AppWrapper: React.FC = () => {
-    // Audit #5: Persistent theme state logic to pass to PermissionGuard
+    // Persistent theme state logic to pass to PermissionGuard
     // during cold-start boot when profile might not be ready yet.
     const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+        const skin = localStorage.getItem('myway_map_skin');
+        if (skin === 'default' || skin === 'warm_cream') return 'light';
         const saved = localStorage.getItem('myway_theme');
         return (saved as 'light' | 'dark') || 'dark';
     });

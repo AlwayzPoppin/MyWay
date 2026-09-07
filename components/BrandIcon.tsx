@@ -1,9 +1,19 @@
-import React from 'react';
+import React, { ReactNode } from 'react';
 import { getBrandMeta } from '../services/brandLogoService';
+import { 
+    MapPin, 
+    Home, 
+    Briefcase, 
+    GraduationCap, 
+    Dumbbell, 
+    Utensils, 
+    Coffee, 
+    Fuel 
+} from 'lucide-react';
 
 interface BrandIconProps {
     placeName?: string;
-    defaultIcon?: string;
+    defaultIcon?: string | ReactNode;
     className?: string;
     size?: 'sm' | 'md' | 'lg' | 'xl';
 }
@@ -41,11 +51,46 @@ const BrandIcon: React.FC<BrandIconProps> = ({
         );
     }
 
+    const renderIcon = () => {
+        if (React.isValidElement(defaultIcon)) {
+            return defaultIcon;
+        }
+        const iconStr = typeof defaultIcon === 'string' ? defaultIcon : '';
+        const iconClasses = size === 'sm' ? 'w-3.5 h-3.5' : size === 'lg' ? 'w-5 h-5' : size === 'xl' ? 'w-6 h-6' : 'w-4 h-4';
+
+        switch (iconStr) {
+            case '🏠':
+            case 'home':
+            case 'residential':
+                return <Home className={`${iconClasses} text-indigo-400 shrink-0`} />;
+            case '💼':
+            case 'work':
+                return <Briefcase className={`${iconClasses} text-indigo-400 shrink-0`} />;
+            case '🏫':
+            case 'school':
+                return <GraduationCap className={`${iconClasses} text-indigo-400 shrink-0`} />;
+            case '🏋️':
+            case 'gym':
+                return <Dumbbell className={`${iconClasses} text-indigo-400 shrink-0`} />;
+            case '🍔':
+            case 'food':
+                return <Utensils className={`${iconClasses} text-indigo-400 shrink-0`} />;
+            case '☕':
+            case 'coffee':
+                return <Coffee className={`${iconClasses} text-indigo-400 shrink-0`} />;
+            case '⛽':
+            case 'gas':
+                return <Fuel className={`${iconClasses} text-indigo-400 shrink-0`} />;
+            default:
+                return <MapPin className={`${iconClasses} text-indigo-400 shrink-0`} />;
+        }
+    };
+
     return (
         <span
             className={`shrink-0 flex items-center justify-center bg-white/5 border border-white/10 ${sizeClasses} ${className}`}
         >
-            {defaultIcon}
+            {renderIcon()}
         </span>
     );
 };

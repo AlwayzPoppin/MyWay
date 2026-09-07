@@ -8,7 +8,22 @@ import { searchPlacesText } from '../services/placesService';
 import { addUserPlace } from '../services/userPlacesService';
 import { compressImageFile } from '../services/placeCorrectionService';
 import { Location, Place } from '../types';
+import { extractHouseNumber } from '../utils/addressUtils';
 import { hapticTick, hapticSuccess, hapticError } from '../utils/haptics';
+import { communityBuildingService } from '../services/communityBuildingService';
+import { 
+    Sparkles, 
+    User as UserIcon, 
+    Calendar, 
+    Search, 
+    Crosshair, 
+    Home, 
+    MapPin, 
+    ShieldCheck, 
+    AlertTriangle, 
+    ArrowRight, 
+    ArrowLeft 
+} from 'lucide-react';
 
 interface SetupWizardModalProps {
     isOpen: boolean;
@@ -16,7 +31,7 @@ interface SetupWizardModalProps {
     profile: UserProfile | null;
     theme?: 'light' | 'dark';
     userLocation?: Location | null;
-    onComplete: (updatedProfile: Partial<UserProfile>) => void;
+    onComplete: (updatedProfile: Partial<UserProfile>, createdPlace?: Place) => void;
 }
 
 type WizardStep = 1 | 2 | 3;
@@ -33,6 +48,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
 
     // Step state
     const [currentStep, setCurrentStep] = useState<WizardStep>(1);
+    const [submitError, setSubmitError] = useState<string | null>(null);
 
     // Step 1: Social Profile State
     const [fullName, setFullName] = useState(profile?.displayName || user?.displayName || '');
@@ -213,7 +229,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
 
         // Create Custom Draggable Marker Element with Glowing Amber Pin
         const markerEl = document.createElement('div');
-        markerEl.className = 'w-10 h-10 -ml-5 -mt-10 cursor-grab active:cursor-grabbing select-none relative group';
+        markerEl.className = 'w-10 h-10 cursor-grab active:cursor-grabbing select-none relative group';
         markerEl.innerHTML = `
             <div class="w-10 h-10 rounded-full bg-amber-500/30 animate-ping absolute inset-0 pointer-events-none"></div>
             <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-600 to-amber-400 border-2 border-white shadow-[0_4px_16px_rgba(245,158,11,0.6)] flex items-center justify-center text-lg text-slate-950 font-black relative z-10 transition-transform hover:scale-110">
@@ -224,7 +240,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
 
         const marker = new maplibregl.Marker({
             element: markerEl,
-            draggable: true
+            draggable: true,
+            anchor: 'bottom'
         })
             .setLngLat([initialLng, initialLat])
             .addTo(map);
@@ -251,10 +268,18 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
         // Allow clicking anywhere on the map to jump the pin there
         map.on('click', (e) => {
             hapticTick();
-            marker.setLngLat(e.lngLat);
+            const container = mapContainerRef.current;
+            let targetLngLat = e.lngLat;
+            if (container) {
+                const rect = container.getBoundingClientRect();
+                const clientX = e.originalEvent?.clientX ?? (rect.left + e.point.x);
+                const clientY = e.originalEvent?.clientY ?? (rect.top + e.point.y);
+                targetLngLat = map.unproject([clientX - rect.left, clientY - rect.top]);
+            }
+            marker.setLngLat(targetLngLat);
             setPrecisionCoords({
-                lat: parseFloat(e.lngLat.lat.toFixed(6)),
-                lng: parseFloat(e.lngLat.lng.toFixed(6))
+                lat: parseFloat(targetLngLat.lat.toFixed(6)),
+                lng: parseFloat(targetLngLat.lng.toFixed(6))
             });
         });
 
@@ -307,6 +332,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     const handleCompleteSetup = async () => {
         if (!user || isSaving) return;
         setIsSaving(true);
+        setSubmitError(null);
         try {
             hapticSuccess();
 
@@ -320,28 +346,35 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
             }
 
             const homeAddressString = selectedHomePlace?.address || selectedHomePlace?.description || selectedHomePlace?.name || 'Home';
+            const extractedHN = extractHouseNumber(homeAddressString) || extractHouseNumber(searchQuery) || undefined;
 
-            // 1. Update Firebase User Profile Document
+            // 1. Update Firebase User Profile Document (RTDB & Firestore)
+            const preciseHomeLocationObj: Record<string, any> = {
+                lat: precisionCoords.lat,
+                lng: precisionCoords.lng,
+                address: homeAddressString,
+                label: 'Verified Precision Pin'
+            };
+            if (extractedHN) {
+                preciseHomeLocationObj.houseNumber = extractedHN;
+            }
+
             const profileUpdates: Partial<UserProfile> = {
                 displayName: fullName.trim(),
                 photoURL: finalPhotoUrl,
                 dateOfBirth: dob || undefined,
                 gender: gender || 'prefer_not_to_say',
                 hasCompletedSetup: true,
-                preciseHomeLocation: {
-                    lat: precisionCoords.lat,
-                    lng: precisionCoords.lng,
-                    address: homeAddressString,
-                    label: 'Verified Precision Pin'
-                }
+                preciseHomeLocation: preciseHomeLocationObj as any
             };
 
             await updateUserProfile(user.uid, profileUpdates);
 
-            // 2. Automatically register "Home" in user's saved places & geofences
+            // 2. Explicitly create and persist Place document in Firestore and Realtime Database
+            const targetCircleId = profile?.familyCircleId || `user_${user.uid}`;
+            let createdHomePlace: Place;
             try {
-                const targetCircleId = profile?.familyCircleId || `user_${user.uid}`;
-                await addUserPlace(
+                createdHomePlace = await addUserPlace(
                     targetCircleId,
                     {
                         name: 'Home',
@@ -351,23 +384,67 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             lat: precisionCoords.lat,
                             lng: precisionCoords.lng
                         },
+                        type: 'home',
                         category: 'home',
                         icon: 'home',
                         radius: 150, // Standard 150m arrival geofence
                         isCorrected: true,
+                        houseNumber: extractedHN,
                         entranceNotes: 'Precision front door / driveway routing pin',
                         tags: ['Verified Precision Pin', 'home']
                     },
                     user.uid
                 );
-            } catch (placeErr) {
-                console.warn('[SetupWizard] Non-critical error saving Home place to circle:', placeErr);
+            } catch (placeErr: any) {
+                console.error('[SetupWizard] Failed to save Home place:', placeErr);
+                // Construct local fallback place so UI is never left without home base
+                createdHomePlace = {
+                    id: `place_home_${user.uid}_${Date.now()}`,
+                    name: 'Home',
+                    address: homeAddressString,
+                    description: homeAddressString,
+                    location: {
+                        lat: precisionCoords.lat,
+                        lng: precisionCoords.lng
+                    },
+                    type: 'home',
+                    category: 'home',
+                    icon: 'home',
+                    radius: 150,
+                    isCorrected: true,
+                    houseNumber: extractedHN,
+                    tags: ['Verified Precision Pin', 'home']
+                };
             }
 
-            // 3. Complete callback
-            onComplete(profileUpdates);
-        } catch (err) {
+            // 3. Publish verified rooftop building number to shared community layer
+            try {
+                if (extractedHN) {
+                    await communityBuildingService.publishVerifiedBuilding({
+                        address: homeAddressString,
+                        houseNumber: extractedHN,
+                        coordinates: precisionCoords,
+                        userId: user.uid,
+                        source: 'pinpoint_verification'
+                    });
+                }
+            } catch (communityErr) {
+                console.warn('[SetupWizard] Non-critical error publishing to community building layer:', communityErr);
+            }
+
+            // 4. Mark onboarding complete in localStorage
+            if (typeof window !== 'undefined') {
+                try {
+                    localStorage.setItem('myway_onboarding_complete', 'true');
+                } catch (e) {}
+            }
+
+            // 5. Complete callback with both profileUpdates and createdHomePlace
+            onComplete(profileUpdates, createdHomePlace);
+        } catch (err: any) {
             console.error('[SetupWizard] Failed to complete setup:', err);
+            const msg = err?.message || 'Failed to complete setup. Please check your network connection and try again.';
+            setSubmitError(msg);
             hapticError();
         } finally {
             setIsSaving(false);
@@ -382,14 +459,14 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                 className={`w-full max-w-2xl rounded-3xl border shadow-2xl flex flex-col overflow-hidden transition-all duration-300 max-h-[92vh] ${
                     isDark
                         ? 'bg-slate-900/95 border-white/10 text-white'
-                        : 'bg-white/95 border-slate-200 text-slate-900'
+                        : 'bg-[#fdfbf7]/98 border-slate-200/80 shadow-2xl text-slate-900'
                 }`}
             >
                 {/* Modal Header & Progress Stepper */}
-                <div className={`px-6 pt-6 pb-4 border-b shrink-0 ${isDark ? 'border-white/10' : 'border-slate-100'}`}>
+                <div className={`px-6 pt-6 pb-4 border-b shrink-0 ${isDark ? 'border-white/10' : 'border-slate-200/80'}`}>
                     <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                            <span className="text-2xl">✨</span>
+                            <Sparkles className="w-6 h-6 text-amber-400 shrink-0" />
                             <h2 className="text-xl font-black tracking-tight">Welcome to MyWay</h2>
                         </div>
                         <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider ${
@@ -458,8 +535,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                         {avatarPreview ? (
                                             <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
                                         ) : (
-                                            <span className="text-3xl font-black text-amber-400">
-                                                {fullName ? fullName.charAt(0).toUpperCase() : '👤'}
+                                            <span className="text-3xl font-black text-amber-400 flex items-center justify-center">
+                                                {fullName ? fullName.charAt(0).toUpperCase() : <UserIcon className="w-8 h-8 text-amber-400" />}
                                             </span>
                                         )}
                                     </div>
@@ -517,8 +594,9 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 {/* Date of Birth */}
                                 <div className="space-y-1.5">
-                                    <label className={`block text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                                        Date of Birth 🎂
+                                    <label className={`block text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                                        <span>Date of Birth</span>
+                                        <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                                     </label>
                                     <input
                                         type="date"
@@ -572,9 +650,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             {/* Search Box */}
                             <div className="space-y-2">
                                 <div className="relative">
-                                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-base opacity-50">
-                                        🔍
-                                    </span>
+                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                                     <input
                                         type="text"
                                         value={searchQuery}
@@ -601,7 +677,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                                 : 'bg-slate-100 border-slate-200 text-amber-700 hover:bg-slate-200'
                                         }`}
                                     >
-                                        <span>📍</span>
+                                        <Crosshair className="w-3.5 h-3.5 shrink-0" />
                                         <span>Use My Current Location</span>
                                     </button>
                                 </div>
@@ -620,7 +696,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                                 isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'
                                             }`}
                                         >
-                                            <span className="text-base shrink-0 mt-0.5">🏠</span>
+                                            <Home className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
                                             <div className="min-w-0 flex-1">
                                                 <p className="text-xs font-bold truncate">{place.name}</p>
                                                 <p className={`text-[11px] truncate opacity-70 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -641,8 +717,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                         : 'bg-amber-50 border-amber-300 text-slate-900'
                                 }`}>
                                     <div className="flex items-start gap-3 min-w-0">
-                                        <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shrink-0">
-                                            🏠
+                                        <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                                            <Home className="w-5 h-5 text-amber-400" />
                                         </div>
                                         <div className="min-w-0">
                                             <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
@@ -692,7 +768,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                 {/* High-Contrast Instruction Overlay Badge */}
                                 <div className="absolute top-3 left-3 right-3 pointer-events-none flex justify-center">
                                     <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 backdrop-blur-md border border-white/15 text-white text-[11px] font-bold shadow-lg flex items-center gap-1.5">
-                                        <span>📍</span>
+                                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                                         <span>Drag pin or tap map to place exact entrance</span>
                                     </div>
                                 </div>
@@ -705,7 +781,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                         title="Recenter on pin"
                                         className="w-8 h-8 rounded-xl bg-slate-900/90 text-white border border-white/20 flex items-center justify-center text-sm shadow hover:bg-slate-800 transition-colors"
                                     >
-                                        🎯
+                                        <Crosshair className="w-4 h-4 text-amber-400" />
                                     </button>
                                     <button
                                         type="button"
@@ -737,18 +813,28 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             <div className={`px-3 py-2 rounded-xl border flex items-center gap-2 text-xs ${
                                 isDark ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'
                             }`}>
-                                <span className="text-base">🛡️</span>
+                                <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
                                 <p className="text-[11px] leading-tight font-medium">
                                     This pin is saved to your profile and tagged as <strong className="text-amber-400">Verified Precision Pin</strong> for family navigation accuracy.
                                 </p>
                             </div>
+
+                            {submitError && (
+                                <div className="px-3.5 py-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 flex items-start gap-2.5 text-xs">
+                                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                                    <div className="flex-1">
+                                        <p className="font-bold text-rose-200">Unable to complete setup</p>
+                                        <p className="text-[11px] text-rose-300/90 mt-0.5 leading-tight">{submitError}</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
 
                 {/* Modal Footer: Navigation Controls */}
                 <div className={`px-6 py-4 border-t flex items-center justify-between shrink-0 ${
-                    isDark ? 'border-white/10 bg-slate-900/80' : 'border-slate-100 bg-slate-50/80'
+                    isDark ? 'border-white/10 bg-slate-900/80' : 'border-slate-200/80 bg-[#f5f2eb]/90'
                 }`}>
                     {currentStep > 1 ? (
                         <button
@@ -757,11 +843,12 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                 hapticTick();
                                 setCurrentStep((prev) => (prev - 1) as WizardStep);
                             }}
-                            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer ${
+                            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5 ${
                                 isDark ? 'text-slate-300 hover:bg-white/5' : 'text-slate-600 hover:bg-slate-200'
                             }`}
                         >
-                            ← Back
+                            <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                            <span>Back</span>
                         </button>
                     ) : (
                         <div />
@@ -774,7 +861,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             className="px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-[0_4px_12px_rgba(245,158,11,0.3)] hover:brightness-110 active:scale-95 transition-all cursor-pointer flex items-center gap-2"
                         >
                             <span>Next: Set Home Base</span>
-                            <span>➔</span>
+                            <ArrowRight className="w-3.5 h-3.5 shrink-0" />
                         </button>
                     )}
 
@@ -790,7 +877,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             }`}
                         >
                             <span>Next: Precision Pin</span>
-                            <span>➔</span>
+                            <ArrowRight className="w-3.5 h-3.5 shrink-0" />
                         </button>
                     )}
 
@@ -809,7 +896,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             ) : (
                                 <>
                                     <span>Complete Setup</span>
-                                    <span>🎉</span>
+                                    <Sparkles className="w-3.5 h-3.5 shrink-0" />
                                 </>
                             )}
                         </button>

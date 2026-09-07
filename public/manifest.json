@@ -1,12 +1,12 @@
 {
-    "name": "My Way - Family GPS",
+    "name": "My Way: Shared GPS Navigation",
     "short_name": "My Way",
-    "description": "Real-time family location sharing with premium features",
+    "description": "Real-time family circle tracking and precision shared GPS navigation with live road safety alerts",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#050914",
-    "theme_color": "#f59e0b",
-    "orientation": "portrait-primary",
+    "theme_color": "#7c3aed",
+    "orientation": "any",
     "icons": [
         {
             "src": "/icon.png",

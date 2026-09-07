@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { QrCode } from 'lucide-react';
 import { FamilyMember } from '../types';
 import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo } from '../services/authService';
 import { getCirclePrivacyMode, PRIVACY_LEVELS } from '../services/privacyService';
 import { formatSegmentedInviteCode, cleanInviteCode, isValidInviteCode } from '../utils/inviteCode';
 import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
+import QRScannerModal from './QRScannerModal';
 
 interface CircleSettingsModalProps {
     isOpen: boolean;
@@ -60,6 +62,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     const [newCircleColor, setNewCircleColor] = useState<string>(defaultColor);
     const [activeThemeColor, setActiveThemeColor] = useState<string>(defaultColor);
     const [isJoiningCircle, setIsJoiningCircle] = useState(false);
+    const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [joinInviteCode, setJoinInviteCode] = useState('');
     const [manualInviteCode, setManualInviteCode] = useState('');
     const [joinError, setJoinError] = useState<string | null>(null);
@@ -74,6 +77,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             setActiveTab(initialTab);
             setIsCreatingCircle(false);
             setIsJoiningCircle(false);
+            setIsScannerOpen(false);
             setJoinInviteCode('');
             setManualInviteCode('');
             setJoinError(null);
@@ -196,6 +200,19 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         }
     };
 
+    const handleScanResult = (scannedInviteCode: string) => {
+        setIsScannerOpen(false);
+        const cleaned = cleanInviteCode(scannedInviteCode);
+        if (cleaned) {
+            const formatted = formatSegmentedInviteCode(cleaned);
+            setJoinInviteCode(formatted);
+            setManualInviteCode(formatted);
+            if (cleaned.length === 8) {
+                handleJoinCircle(cleaned);
+            }
+        }
+    };
+
     const handleCodeChange = (val: string, target: 'tab1' | 'tab3') => {
         const formatted = formatSegmentedInviteCode(val);
         const cleaned = cleanInviteCode(formatted);
@@ -283,17 +300,33 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     };
 
     const handleShareInvite = async () => {
-        const text = `Join my circle "${currentCircle?.name || 'Family'}" on MyWay GPS! Use Invite Code: ${inviteCode}\n${shareUrl}`;
+        const inviteUrl = shareUrl;
+        const shareText = `Join my circle on My Way! Use my code: ${inviteCode} or tap the link to join:`;
         if (navigator.share) {
             try {
                 await navigator.share({
-                    title: `Join ${currentCircle?.name || 'Family'} on MyWay GPS`,
-                    text,
-                    url: shareUrl
+                    title: `Join ${currentCircle?.name || 'Circle'} on My Way`,
+                    text: shareText,
+                    url: inviteUrl
                 });
-            } catch {}
+            } catch (err: any) {
+                // Ignore silent cancellation by user
+                if (err?.name !== 'AbortError') {
+                    try {
+                        await navigator.clipboard.writeText(`${shareText} ${inviteUrl}`);
+                        showNotification?.('📋 Copied invite link & message to clipboard!', 2500);
+                    } catch {
+                        handleCopyCode();
+                    }
+                }
+            }
         } else {
-            handleCopyCode();
+            try {
+                await navigator.clipboard.writeText(`${shareText} ${inviteUrl}`);
+                showNotification?.('📋 Copied invite link & message to clipboard!', 2500);
+            } catch {
+                handleCopyCode();
+            }
         }
     };
 
@@ -603,8 +636,8 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                 isDark ? 'border-white/15 bg-white/5 hover:bg-white/10 text-white' : 'border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-900'
                                             }`}
                                         >
-                                            <span>🔗</span>
-                                            <span>Join with Code</span>
+                                            <QrCode className="w-3.5 h-3.5 text-purple-400" />
+                                            <span>Join / Scan Code</span>
                                         </button>
                                     </div>
                                 )}
@@ -748,6 +781,20 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                         : `${cleanInviteCode(joinInviteCode).length}/8`}
                                             </span>
                                         </div>
+
+                                        {/* Scan QR Code Button */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsScannerOpen(true)}
+                                            className={`w-full py-2.5 px-3 rounded-xl border text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${
+                                                isDark
+                                                    ? 'border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300'
+                                                    : 'border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-700'
+                                            }`}
+                                        >
+                                            <QrCode className="w-4 h-4 text-purple-400" />
+                                            <span>Scan QR Code with Camera</span>
+                                        </button>
 
                                         {joinError && (
                                             <p className="text-[10px] font-bold text-red-400 mt-1">{joinError}</p>
@@ -1146,6 +1193,16 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                     )}
                 </div>
             </div>
+
+            {/* Camera QR Scanner Modal */}
+            <QRScannerModal
+                isOpen={isScannerOpen}
+                onClose={() => setIsScannerOpen(false)}
+                onScan={handleScanResult}
+                theme={theme}
+                title="Scan Circle QR Code"
+                description="Point your camera at another family member's screen to join their Circle instantly"
+            />
         </div>
     );
 };

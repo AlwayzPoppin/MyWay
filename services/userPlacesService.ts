@@ -1,12 +1,31 @@
 // User Places Service - Firebase-backed user-defined places (Home, Work, etc.)
 import { ref, set, get, push, remove, onValue, off } from 'firebase/database';
-import { database } from './firebase';
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { database, db } from './firebase';
 import { Place } from '../types';
 
 export interface UserPlace extends Place {
     createdAt: number;
     createdBy: string;
     circleId?: string;
+}
+
+/**
+ * Strips undefined properties recursively so Firebase RTDB and Firestore do not reject payloads
+ */
+function sanitizeForFirebase<T>(data: T): T {
+    if (data === undefined) return null as any;
+    if (data === null || typeof data !== 'object') return data;
+    if (Array.isArray(data)) {
+        return data.map(sanitizeForFirebase).filter(x => x !== undefined) as any;
+    }
+    const clean: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined) {
+            clean[key] = sanitizeForFirebase(value);
+        }
+    }
+    return clean as T;
 }
 
 /**
@@ -130,7 +149,7 @@ export const addUserPlace = async (
     circleId: string,
     place: Omit<UserPlace, 'id' | 'createdAt'>,
     userId: string
-): Promise<string> => {
+): Promise<UserPlace> => {
     const targetCircleKey = circleId || (userId ? `user_${userId}` : 'default');
     const placesRef = ref(database, `places/${targetCircleKey}`);
     const newPlaceRef = push(placesRef);
@@ -147,19 +166,34 @@ export const addUserPlace = async (
         createdBy: userId || 'local-user'
     };
 
-    // Save to primary circle
-    await set(ref(database, `places/${targetCircleKey}/${id}`), placeWithMeta);
+    const cleanPayload = sanitizeForFirebase(placeWithMeta);
 
-    // Also mirror to user personal places store so it persists regardless of circle switching
+    // 1. Save to primary circle in Realtime Database
+    await set(ref(database, `places/${targetCircleKey}/${id}`), cleanPayload);
+
+    // 2. Also mirror to user personal places store so it persists regardless of circle switching
     if (userId && targetCircleKey !== `user_${userId}`) {
         try {
-            await set(ref(database, `places/user_${userId}/${id}`), placeWithMeta);
+            await set(ref(database, `places/user_${userId}/${id}`), cleanPayload);
         } catch (e) {
             console.warn('[UserPlaces] Personal mirror save skipped:', e);
         }
     }
 
-    return id;
+    // 3. Save to Firestore root 'places' collection and user subcollection
+    if (db) {
+        try {
+            await setDoc(doc(db, 'places', id), cleanPayload);
+            if (userId) {
+                await setDoc(doc(db, 'users', userId, 'places', id), cleanPayload);
+            }
+            console.log(`📍 [UserPlaces] Successfully created Firestore place doc: places/${id}`);
+        } catch (fsErr) {
+            console.warn('[UserPlaces] Firestore place write fallback:', fsErr);
+        }
+    }
+
+    return placeWithMeta;
 };
 
 // Update an existing user place across all associated circles and personal store
@@ -174,6 +208,7 @@ export const updateUserPlace = async (
     if (updates.radius !== undefined) {
         sanitizedUpdates.radius = sanitizeGeofenceRadius(updates.radius);
     }
+    const cleanUpdates = sanitizeForFirebase(sanitizedUpdates);
 
     const candidateTargets = Array.from(new Set([
         circleId,
@@ -191,7 +226,7 @@ export const updateUserPlace = async (
             const snapshot = await get(placeRef);
             if (snapshot.exists()) {
                 const existing = snapshot.val();
-                await set(placeRef, { ...existing, ...sanitizedUpdates });
+                await set(placeRef, { ...existing, ...cleanUpdates });
                 updatedAny = true;
             }
         } catch (e) {
@@ -204,7 +239,7 @@ export const updateUserPlace = async (
         const primaryTarget = candidateTargets[0];
         try {
             const placeRef = ref(database, `places/${primaryTarget}/${placeId}`);
-            await set(placeRef, { id: placeId, ...sanitizedUpdates });
+            await set(placeRef, { id: placeId, ...cleanUpdates });
         } catch (e) {
             console.warn(`[UserPlaces] Failed writing fallback to ${primaryTarget}:`, e);
         }
@@ -212,10 +247,22 @@ export const updateUserPlace = async (
         if (userId && primaryTarget !== `user_${userId}`) {
             try {
                 const userPlaceRef = ref(database, `places/user_${userId}/${placeId}`);
-                await set(userPlaceRef, { id: placeId, ...sanitizedUpdates });
+                await set(userPlaceRef, { id: placeId, ...cleanUpdates });
             } catch (e) {
                 console.warn(`[UserPlaces] Failed writing fallback to personal store:`, e);
             }
+        }
+    }
+
+    // 3. Mirror updates to Firestore places collection
+    if (db) {
+        try {
+            await setDoc(doc(db, 'places', placeId), cleanUpdates, { merge: true });
+            if (userId) {
+                await setDoc(doc(db, 'users', userId, 'places', placeId), cleanUpdates, { merge: true });
+            }
+        } catch (fsErr) {
+            console.warn('[UserPlaces] Firestore update fallback:', fsErr);
         }
     }
 };
@@ -255,6 +302,7 @@ export const deleteUserPlace = async (
 ): Promise<void> => {
     const targets = Array.from(new Set([
         circleId,
+        'default',
         ...(userId ? [`user_${userId}`] : []),
         ...allCircleIds
     ].filter(Boolean)));
@@ -264,6 +312,18 @@ export const deleteUserPlace = async (
             await remove(ref(database, `places/${targetKey}/${placeId}`));
         } catch (e) {
             // Ignore if key didn't exist
+        }
+    }
+
+    // Mirror deletion to Firestore places collection
+    if (db) {
+        try {
+            await deleteDoc(doc(db, 'places', placeId));
+            if (userId) {
+                await deleteDoc(doc(db, 'users', userId, 'places', placeId));
+            }
+        } catch (fsErr) {
+            console.warn('[UserPlaces] Firestore place delete fallback:', fsErr);
         }
     }
 };

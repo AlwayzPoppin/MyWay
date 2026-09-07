@@ -1,5 +1,5 @@
 // Place Correction Service - High-Precision Pin Relocation & Storefront Photo Crowdsourcing
-import { Place, Location, EntranceType } from '../types';
+import { Place, Location, EntranceType, EntrancePrecision } from '../types';
 import { database, storage } from './firebase';
 import { ref, set, get, onValue, off } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -13,9 +13,11 @@ export interface PlaceCorrection {
     correctedLocation: Location;
     correctedName?: string;
     correctedAddress?: string;
+    category?: string;
     imageUrl?: string;
     entranceType?: EntranceType;
     entranceNotes?: string;
+    entrancePrecision?: EntrancePrecision;
     timestamp: number;
     submittedBy?: string;
     submitterName?: string;
@@ -197,14 +199,16 @@ class PlaceCorrectionService {
         correctedLocation: Location;
         correctedName?: string;
         correctedAddress?: string;
+        category?: string;
         imageUrl?: string;
         entranceType?: EntranceType;
         entranceNotes?: string;
+        entrancePrecision?: EntrancePrecision;
         userId?: string;
         submitterName?: string;
         submitterAvatar?: string;
     }): Promise<PlaceCorrection> {
-        const { place, correctedLocation, correctedName, correctedAddress, imageUrl, entranceType, entranceNotes, userId, submitterName, submitterAvatar } = params;
+        const { place, correctedLocation, correctedName, correctedAddress, category, imageUrl, entranceType, entranceNotes, entrancePrecision, userId, submitterName, submitterAvatar } = params;
         const anchorLocation = place.originalLocation || place.location;
         const normalizedKey = normalizePlaceKey(place.name, place.description, anchorLocation);
 
@@ -221,9 +225,11 @@ class PlaceCorrectionService {
             correctedLocation,
             correctedName,
             correctedAddress,
+            category: category || place.type,
             imageUrl: imageUrl || place.imageUrl,
             entranceType: entranceType || place.entranceType,
             entranceNotes: entranceNotes || place.entranceNotes,
+            entrancePrecision: entrancePrecision || place.entrancePrecision,
             timestamp: Date.now(),
             submittedBy: userId || 'community',
             submitterName: submitterName || 'MyWay Community',
@@ -305,6 +311,8 @@ class PlaceCorrectionService {
                 isCorrected: true,
                 entranceType: correction.entranceType || p.entranceType,
                 entranceNotes: correction.entranceNotes || p.entranceNotes,
+                entranceLocation: correction.entrancePrecision?.location || p.entranceLocation,
+                entrancePrecision: correction.entrancePrecision || p.entrancePrecision,
                 correctedAt: correction.timestamp,
                 submitterId: correction.submittedBy,
                 submitterName: correction.submitterName,

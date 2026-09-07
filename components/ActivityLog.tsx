@@ -62,7 +62,7 @@ const ActivityLog: React.FC<ActivityLogProps> = ({ activities, members, onResolv
     const sortedActivities = [...sosUnresolved, ...otherActivities];
 
     return (
-        <div className="flex flex-col h-[calc(100vh-220px)] animate-in fade-in duration-300">
+        <div className="flex flex-col h-[calc(100dvh-220px)] animate-in fade-in duration-300">
             {/* Header / Summary */}
             <div className="px-2 mb-2 flex items-center justify-between">
                 <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">

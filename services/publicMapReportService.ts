@@ -21,6 +21,7 @@ import {
 } from 'firebase/firestore';
 import { ref, set as setRtdb, get as getRtdb, update as updateRtdb, remove as removeRtdb, onValue } from 'firebase/database';
 import { encodeGeohash, isCoordinateInBounds, BoundingBox } from '../utils/geohash';
+import { EntrancePrecision } from '../types';
 
 export type PublicReportType = 'pin_move' | 'entrance_fix' | 'hazard';
 
@@ -38,10 +39,12 @@ export interface PublicMapReport {
     downvoterIds: string[];
     placeId?: string;
     placeName?: string;
+    category?: string;
     details?: string;
     imageUrl?: string;
     entranceType?: string;
     entranceNotes?: string;
+    entrancePrecision?: EntrancePrecision;
     expiresAt?: number;
     visibility: 'public' | 'circle';
 }
@@ -137,9 +140,11 @@ class PublicMapReportService {
         placeId?: string;
         placeName?: string;
         details?: string;
+        category?: string;
         imageUrl?: string;
         entranceType?: string;
         entranceNotes?: string;
+        entrancePrecision?: EntrancePrecision;
         visibility?: 'public' | 'circle';
     }): Promise<PublicMapReport> {
         const {
@@ -150,10 +155,12 @@ class PublicMapReportService {
             userAvatar,
             placeId,
             placeName,
+            category,
             details,
             imageUrl,
             entranceType,
             entranceNotes,
+            entrancePrecision,
             visibility = 'public'
         } = params;
 
@@ -206,10 +213,12 @@ class PublicMapReportService {
             downvoterIds: existingReport?.downvoterIds || [],
             placeId,
             placeName,
+            category: category || existingReport?.category,
             details,
             imageUrl: imageUrl || existingReport?.imageUrl,
             entranceType: entranceType || existingReport?.entranceType,
             entranceNotes: entranceNotes || existingReport?.entranceNotes,
+            entrancePrecision: entrancePrecision || existingReport?.entrancePrecision,
             expiresAt,
             visibility
         };

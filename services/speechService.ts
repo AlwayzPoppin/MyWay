@@ -6,12 +6,14 @@
 import { audioService } from './audioService';
 import { LaneGuidance } from '../types';
 
-export type ManeuverProximity = 'initial' | 'far' | 'near' | 'immediate' | 'arrival' | 'reroute';
+export type ManeuverProximity = 'initial' | 'preparatory' | 'mid' | 'immediate' | 'far' | 'near' | 'arrival' | 'reroute';
 
 class SpeechService {
     private isMuted: boolean = false;
     private lastSpokenText: string = '';
     private lastSpokenTime: number = 0;
+    private lastManeuverKey: string = '';
+    private lastManeuverTime: number = 0;
     private audioCtx: AudioContext | null = null;
     private suspendTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly IDLE_SUSPEND_DELAY_MS = 5000;
@@ -46,7 +48,19 @@ class SpeechService {
     public setMuted(muted: boolean): void {
         this.isMuted = muted;
         if (typeof window !== 'undefined') {
-            localStorage.setItem('myway_voice_muted', String(muted));
+            try {
+                localStorage.setItem('myway_voice_muted', String(muted));
+            } catch {}
+        }
+        audioService.setMuted(muted);
+        if (muted) {
+            // Instantly flush TTS queue and cut off any speech currently mid-sentence
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                try {
+                    window.speechSynthesis.cancel();
+                } catch {}
+            }
+            audioService.cancel();
         }
         this.listeners.forEach(cb => cb(this.isMuted));
     }
@@ -244,6 +258,9 @@ class SpeechService {
             await new Promise(r => setTimeout(r, 150));
         }
 
+        // Re-check isMuted after chime delay in case user clicked mute during chime
+        if (this.isMuted) return;
+
         try {
             await audioService.speak(text);
         } catch (err) {
@@ -252,16 +269,24 @@ class SpeechService {
     }
 
     /**
+     * Play spoken navigation audio with strict mute checking
+     */
+    public async playAudio(text: string, options?: { priority?: boolean; chime?: 'turn' | 'arrival' | 'reroute' | 'alert' }): Promise<void> {
+        if (this.isMuted || !text) return;
+        return this.speak(text, options);
+    }
+
+    /**
      * Format spoken lane recommendation
      */
     private formatLaneHint(lanes?: LaneGuidance[]): string {
         if (!lanes || lanes.length <= 1) return '';
-        const validCount = lanes.filter(l => l.valid || l.active).length;
+        const validCount = lanes.filter(l => (l as any).valid || l.isValid || (l as any).active || l.isActive).length;
         const totalCount = lanes.length;
         if (validCount === 0 || validCount === totalCount) return '';
 
         const validIndices = lanes
-            .map((l, i) => ((l.valid || l.active) ? i : -1))
+            .map((l, i) => (((l as any).valid || l.isValid || (l as any).active || l.isActive) ? i : -1))
             .filter(i => i !== -1);
 
         if (validIndices.length === 1) {
@@ -288,6 +313,7 @@ class SpeechService {
 
     /**
      * Natural speech formatter for navigation maneuvers
+     * Enforces strict distance brackets and proximity gating to prevent premature turn spam.
      */
     public announceManeuver(
         instruction: string,
@@ -298,11 +324,32 @@ class SpeechService {
     ): void {
         if (this.isMuted) return;
 
+        const feet = Math.round(distanceMeters * 3.28084);
+
+        // Strict Proximity Gate:
+        // Do NOT announce turn actions if distance exceeds ~1 mile (> 5,280 ft / 1609m)
+        // (Applies to turn brackets: preparatory, mid, immediate, far, near)
+        if ((proximity === 'preparatory' || proximity === 'mid' || proximity === 'immediate' || proximity === 'far' || proximity === 'near') && feet > 5400) {
+            console.warn(`[SpeechService] Suppressed premature turn alert (${feet}ft > 1 mile threshold): "${instruction}"`);
+            return;
+        }
+
+        // Maneuver State Lock & Debounce:
+        // Prevent repeating the exact same maneuver for the same proximity stage within 8 seconds
+        const cleanInstr = instruction.trim().toLowerCase();
+        const maneuverKey = `${cleanInstr}:${proximity}`;
+        const now = Date.now();
+        if (this.lastManeuverKey === maneuverKey && now - this.lastManeuverTime < 8000) {
+            return;
+        }
+
         let speechText = '';
         let chimeType: 'turn' | 'arrival' | 'reroute' | 'alert' = 'turn';
 
-        const feet = Math.round(distanceMeters * 3.28084);
-        const laneHint = (proximity === 'far' || proximity === 'near') ? this.formatLaneHint(lanes) : '';
+        const laneHint = (proximity === 'preparatory' || proximity === 'mid' || proximity === 'far' || proximity === 'near')
+            ? this.formatLaneHint(lanes)
+            : '';
+        const cleanInstruction = instruction.replace(/^(turn|take|make|head)\s+/i, '');
 
         switch (proximity) {
             case 'initial':
@@ -310,37 +357,54 @@ class SpeechService {
                 if (destinationName) {
                     speechText = `Starting route to ${destinationName}. In ${feet > 1000 ? `${(feet / 5280).toFixed(1)} miles` : `${feet} feet`}, ${instruction}.`;
                 } else {
-                    speechText = `In ${feet} feet, ${instruction}.`;
+                    speechText = `In ${feet > 1000 ? `${(feet / 5280).toFixed(1)} miles` : `${feet} feet`}, ${instruction}.`;
                 }
                 break;
 
-            case 'far': // ~500-1000 ft advance warning
+            case 'preparatory': // ~1 mile advance notice
                 chimeType = 'turn';
                 if (laneHint) {
-                    const cleanInstruction = instruction.replace(/^(turn|take|make|head)\s+/i, '');
-                    speechText = feet >= 1000
-                        ? `In a quarter mile, ${laneHint} to ${cleanInstruction}.`
-                        : `In ${Math.round(feet / 100) * 100} feet, ${laneHint} to ${cleanInstruction}.`;
-                } else if (feet >= 1000) {
-                    speechText = `In a quarter mile, ${instruction}.`;
+                    speechText = `In one mile, ${laneHint} to ${cleanInstruction}.`;
                 } else {
-                    speechText = `In ${Math.round(feet / 100) * 100} feet, ${instruction}.`;
+                    speechText = `In one mile, ${instruction}.`;
                 }
                 break;
 
-            case 'near': // ~150-250 ft approach warning
+            case 'mid': // ~1000 ft advance notice
+            case 'far': // Backward compatibility when <= 1200 ft
+                chimeType = 'turn';
+                if (feet >= 850) {
+                    if (laneHint) {
+                        speechText = `In one thousand feet, ${laneHint} to ${cleanInstruction}.`;
+                    } else {
+                        speechText = `In one thousand feet, ${instruction}.`;
+                    }
+                } else {
+                    const rounded = Math.max(300, Math.round(feet / 100) * 100);
+                    if (laneHint) {
+                        speechText = `In ${rounded} feet, ${laneHint} to ${cleanInstruction}.`;
+                    } else {
+                        speechText = `In ${rounded} feet, ${instruction}.`;
+                    }
+                }
+                break;
+
+            case 'near': // Backward compatibility (~300-500 ft)
                 chimeType = 'turn';
                 if (laneHint) {
-                    const cleanInstruction = instruction.replace(/^(turn|take|make|head)\s+/i, '');
-                    speechText = `In ${feet} feet, ${laneHint} to ${cleanInstruction}.`;
+                    speechText = `In ${Math.round(feet / 50) * 50} feet, ${laneHint} to ${cleanInstruction}.`;
                 } else {
-                    speechText = `In ${feet} feet, ${instruction}.`;
+                    speechText = `In ${Math.round(feet / 50) * 50} feet, ${instruction}.`;
                 }
                 break;
 
-            case 'immediate': // Right at the turn
+            case 'immediate': // < 300 ft execution
                 chimeType = 'turn';
-                speechText = `${instruction} now.`;
+                if (feet <= 100) {
+                    speechText = `${instruction} now.`;
+                } else {
+                    speechText = `In ${Math.round(feet / 50) * 50} feet, ${instruction}.`;
+                }
                 break;
 
             case 'arrival':
@@ -357,6 +421,8 @@ class SpeechService {
         }
 
         if (speechText) {
+            this.lastManeuverKey = maneuverKey;
+            this.lastManeuverTime = now;
             this.speak(speechText, { chime: chimeType });
         }
     }

@@ -10,6 +10,7 @@ import { getBufferedMessages } from '../services/offlineMessageBuffer';
 import { parseMessageIntent, MessageIntent, getSocialSafetyAdvisory } from '../services/geminiService';
 import { FamilyCircle, getCircleColor } from '../services/authService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
+import { MessageHeader } from './MessageHeader';
 
 const OMNI_ID = 'omni-ai';
 
@@ -40,7 +41,24 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
         if (userCircles.length > 0) return 'all';
         return circleId || 'all';
     });
-    const [selectedRecipientId, setSelectedRecipientId] = useState<string | null>(initialRecipientId);
+    const isGroupCircle = useCallback((id: string | null | undefined): boolean => {
+        if (!id) return false;
+        return id === 'all' || userCircles.some(c => c.id === id);
+    }, [userCircles]);
+
+    const [selectedRecipientId, setSelectedRecipientId] = useState<string | null>(() => {
+        if (typeof initialRecipientId === 'string' && initialRecipientId.trim()) {
+            if (
+                initialRecipientId === 'all' ||
+                initialRecipientId === currentUserId ||
+                userCircles.some(c => c.id === initialRecipientId)
+            ) {
+                return null;
+            }
+            return initialRecipientId;
+        }
+        return null;
+    });
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [queuedMessages, setQueuedMessages] = useState<ChatMessage[]>([]);
     const [newMessage, setNewMessage] = useState('');
@@ -52,14 +70,63 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     // Sync initialRecipientId if passed from parent
     useEffect(() => {
         if (initialRecipientId !== undefined && initialRecipientId !== null) {
-            setSelectedRecipientId(initialRecipientId);
+            if (typeof initialRecipientId === 'string' && initialRecipientId.trim()) {
+                if (
+                    userCircles.some(c => c.id === initialRecipientId) ||
+                    initialRecipientId === 'all' ||
+                    initialRecipientId === currentUserId
+                ) {
+                    setSelectedChannelId(initialRecipientId === currentUserId ? (userCircles[0]?.id || 'all') : initialRecipientId);
+                    setSelectedRecipientId(null);
+                } else {
+                    setSelectedRecipientId(initialRecipientId);
+                }
+            } else {
+                setSelectedRecipientId(null);
+            }
         }
-    }, [initialRecipientId]);
+    }, [initialRecipientId, userCircles, currentUserId]);
+
+    // Safety guard: If selectedRecipientId matches a circle ID or current user, route to channel
+    useEffect(() => {
+        if (selectedRecipientId && typeof selectedRecipientId === 'string') {
+            if (
+                userCircles.some(c => c.id === selectedRecipientId) ||
+                selectedRecipientId === 'all' ||
+                selectedRecipientId === currentUserId
+            ) {
+                setSelectedChannelId(selectedRecipientId === currentUserId ? (userCircles[0]?.id || 'all') : selectedRecipientId);
+                setSelectedRecipientId(null);
+            }
+        }
+    }, [selectedRecipientId, userCircles, currentUserId]);
 
     const activeRecipient = useMemo(() => {
-        if (!selectedRecipientId) return null;
+        if (!selectedRecipientId || selectedRecipientId === currentUserId || isGroupCircle(selectedRecipientId)) return null;
         return members.find(m => m.id === selectedRecipientId) || null;
-    }, [selectedRecipientId, members]);
+    }, [selectedRecipientId, members, currentUserId, isGroupCircle]);
+
+    // Explicit Type Guard & Condition:
+    // A conversation is strictly a group chat if viewing all groups feed, or a circle channel,
+    // or if the recipient evaluates to a group/circle context, or if recipient ID is missing or self.
+    const isGroupChat = Boolean(
+        !selectedRecipientId ||
+        selectedRecipientId === 'all' ||
+        selectedRecipientId === currentUserId ||
+        isGroupCircle(selectedRecipientId) ||
+        selectedChannelId === 'all' ||
+        activeChannelCircle !== null ||
+        (selectedChannelId && isGroupCircle(selectedChannelId)) ||
+        !activeRecipient
+    );
+
+    // True direct message ONLY when it is strictly not a group chat and has an active other member recipient
+    const isDirectMessage = !isGroupChat && Boolean(
+        selectedRecipientId &&
+        activeRecipient &&
+        selectedRecipientId !== currentUserId &&
+        !isGroupCircle(selectedRecipientId)
+    );
 
     const otherMembers = useMemo(() => {
         return members.filter(m => m.id !== currentUserId);
@@ -263,111 +330,20 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                 ? 'bg-slate-900/98 border-white/10'
                 : 'bg-white/98 border-slate-200'}`}
         >
-            {/* Header */}
-            <div className={`flex items-center justify-between p-3.5 border-b
-        ${theme === 'dark' ? 'border-white/10 bg-slate-950/60' : 'border-slate-200 bg-slate-50/80'}`}
-            >
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                    {selectedRecipientId && activeRecipient ? (
-                        <>
-                            <button
-                                type="button"
-                                onClick={() => setSelectedRecipientId(null)}
-                                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-                                    theme === 'dark' ? 'bg-white/5 hover:bg-white/10 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
-                                }`}
-                                title="Back to Group Channels"
-                            >
-                                <span className="text-sm font-bold">←</span>
-                            </button>
-                            <div className="relative shrink-0">
-                                {activeRecipient.avatar ? (
-                                    <img
-                                        src={getSafeAvatarUrl(activeRecipient.avatar, activeRecipient.name)}
-                                        onError={(e) => {
-                                            (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(activeRecipient.name);
-                                        }}
-                                        alt={activeRecipient.name}
-                                        className="w-9 h-9 rounded-full object-cover border-2 border-indigo-500 shadow-sm"
-                                    />
-                                ) : (
-                                    <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold text-sm flex items-center justify-center border-2 border-indigo-400">
-                                        {activeRecipient.name[0]}
-                                    </div>
-                                )}
-                                <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-900 ${
-                                    activeRecipient.status === 'Driving' ? 'bg-indigo-500 animate-pulse' :
-                                    activeRecipient.status === 'Moving' ? 'bg-amber-500' : 'bg-emerald-500'
-                                }`} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
-                                    <h3 className={`font-black text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                        {activeRecipient.name}
-                                    </h3>
-                                    <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-400 uppercase tracking-wider">
-                                        1-on-1 DM
-                                    </span>
-                                </div>
-                                <p className="text-[10px] text-slate-400 truncate">
-                                    {activeRecipient.status} {activeRecipient.speed > 0 ? `• ${Math.round(activeRecipient.speed)} MPH` : ''} • 🔋 {activeRecipient.battery}%
-                                </p>
-                            </div>
-                        </>
-                    ) : selectedChannelId === 'all' ? (
-                        <>
-                            <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-blue-600 via-purple-600 to-emerald-600 flex items-center justify-center text-lg text-white shadow-md shrink-0">
-                                ✨
-                            </div>
-                            <div className="min-w-0">
-                                <h3 className={`font-black text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                    All Groups Feed
-                                </h3>
-                                <p className="text-[10px] text-slate-400 truncate">
-                                    {userCircles.length} {userCircles.length === 1 ? 'Circle' : 'Circles'} Connected • Unified Live Chat
-                                </p>
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            {(() => {
-                                const cHex = activeChannelCircle?.color || getCircleColor(selectedChannelId).hex;
-                                return (
-                                    <>
-                                        <div
-                                            style={{ backgroundColor: `${cHex}33`, borderColor: cHex }}
-                                            className="w-9 h-9 rounded-2xl border flex items-center justify-center text-base shrink-0 shadow-sm"
-                                        >
-                                            {activeChannelCircle?.name.toLowerCase().includes('work') ? '💼' :
-                                             activeChannelCircle?.name.toLowerCase().includes('trip') ? '🚗' :
-                                             activeChannelCircle?.name.toLowerCase().includes('friend') ? '🎉' : '🏠'}
-                                        </div>
-                                        <div className="min-w-0">
-                                            <div className="flex items-center gap-1.5">
-                                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: cHex }} />
-                                                <h3 className={`font-black text-sm truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                                    {activeChannelCircle?.name || 'Circle Channel'}
-                                                </h3>
-                                            </div>
-                                            <p className="text-[10px] text-slate-400 truncate">
-                                                {activeChannelCircle?.members?.length || members.filter(m => m.circleId === selectedChannelId).length || 1} members • Circle Channel
-                                            </p>
-                                        </div>
-                                    </>
-                                );
-                            })()}
-                        </>
-                    )}
-                </div>
-
-                <button
-                    onClick={onClose}
-                    className={`p-2 rounded-xl transition-colors cursor-pointer
-            ${theme === 'dark' ? 'hover:bg-white/10 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
-                >
-                    ✕
-                </button>
-            </div>
+            {/* Header / MessageHeader with dynamic Group Chat vs 1-on-1 DM indicators */}
+            <MessageHeader
+                isDirectMessage={isDirectMessage}
+                isGroupChat={isGroupChat}
+                activeRecipient={activeRecipient}
+                selectedRecipientId={selectedRecipientId}
+                selectedChannelId={selectedChannelId}
+                activeChannelCircle={activeChannelCircle}
+                userCircles={userCircles}
+                members={members}
+                theme={theme}
+                onBackToGroup={() => setSelectedRecipientId(null)}
+                onClose={onClose}
+            />
 
             {/* Circle Channels & 1-on-1 DM Switcher Strip */}
             <div className={`px-3 py-2 border-b flex items-center gap-1.5 overflow-x-auto no-scrollbar ${
@@ -713,3 +689,4 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
 };
 
 export default MessagingPanel;
+export { MessageHeader } from './MessageHeader';

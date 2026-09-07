@@ -29,6 +29,7 @@ class OSMTrafficService {
     private cache = new Map<string, CacheEntry>();
     private readonly CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
     private activeRequests = new Map<string, Promise<TrafficControlPoint[]>>();
+    private outageCooldownUntil: number = 0; // Circuit breaker when Overpass mirrors fail
 
     /**
      * Compute a cache key from bounding box rounded to 3 decimal places (~100m)
@@ -47,6 +48,11 @@ class OSMTrafficService {
         maxLat: number,
         maxLng: number
     ): Promise<TrafficControlPoint[]> {
+        // Circuit breaker: If all Overpass mirrors recently failed/timed out, skip network immediately
+        if (Date.now() < this.outageCooldownUntil) {
+            return [];
+        }
+
         const cacheKey = this.getBBoxKey(minLat, minLng, maxLat, maxLng);
         const cached = this.cache.get(cacheKey);
         if (cached && (Date.now() - cached.timestamp < this.CACHE_TTL_MS)) {
@@ -59,9 +65,9 @@ class OSMTrafficService {
         }
 
         const queryPromise = (async () => {
-            // Overpass QL Query for real physical traffic infrastructure
+            // Overpass QL Query for real physical traffic infrastructure with 2s timeout
             const bboxStr = `${minLat.toFixed(6)},${minLng.toFixed(6)},${maxLat.toFixed(6)},${maxLng.toFixed(6)}`;
-            const overpassQL = `[out:json][timeout:6];
+            const overpassQL = `[out:json][timeout:2];
 (
   node["highway"="traffic_signals"](${bboxStr});
   node["highway"="stop"](${bboxStr});
@@ -80,7 +86,7 @@ out body;`;
                             'User-Agent': 'MyWay-GPS-Navigation/1.0 (contact@mywaygps.com)'
                         },
                         body: 'data=' + encodeURIComponent(overpassQL),
-                        signal: AbortSignal.timeout(6000)
+                        signal: AbortSignal.timeout(2000)
                     });
 
                     if (!response.ok) continue;
@@ -131,10 +137,13 @@ out body;`;
 
                     return controls;
                 } catch (e) {
-                    console.warn(`[OSMTraffic] Endpoint ${endpoint} failed:`, e);
+                    // Endpoint failed or timed out, try next mirror
                 }
             }
 
+            // All Overpass mirrors failed or timed out: activate circuit breaker for 5 minutes
+            this.outageCooldownUntil = Date.now() + 5 * 60 * 1000;
+            console.warn('[OSMTraffic] Overpass mirrors unavailable. 5-minute circuit breaker active.');
             return [];
         })();
 

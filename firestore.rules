@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User Profiles
+    match /users/{userId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Community Buildings and verified locations
+    match /community_buildings/{buildingId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Circles and Chat Messages
+    match /circles/{circleId} {
+      allow read, write: if request.auth != null;
+      match /{allSubcollections=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+    
+    // Public incident and safety reports
+    match /incidents/{incidentId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Default fallback: require authentication
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

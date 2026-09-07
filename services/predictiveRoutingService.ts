@@ -249,7 +249,10 @@ class PredictiveRoutingService {
         // 4. MAP TO PREDICTED DESTINATIONS & SORT
         const predictions: PredictedDestination[] = Array.from(candidateMap.values())
             .map((item, idx) => {
-                const distStr = userLocation ? getDistanceMiles(userLocation, item.location) : undefined;
+                const distMiles = userLocation ? getDistanceMiles(userLocation, item.location) : undefined;
+                const distStr = distMiles !== undefined
+                    ? (distMiles < 0.1 ? `${Math.round(distMiles * 5280)} ft` : `${distMiles.toFixed(1)} mi`)
+                    : undefined;
                 return {
                     id: `pred_${idx}_${item.name.replace(/\s+/g, '_')}`,
                     name: item.name,

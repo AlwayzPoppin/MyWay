@@ -25,6 +25,7 @@ dist-ssr
 
 # Development & Agent Artifacts
 scripts/
+scratch/
 agent_bridge.js
 agent_bridge.cjs
 test_*.js

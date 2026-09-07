@@ -12,7 +12,8 @@ const ACTIVE_VEHICLE_STORAGE_KEY = 'myway_active_vehicle_id';
 const GAS_PRICE_STORAGE_KEY = 'myway_gas_price';
 
 export const VEHICLE_PRESETS: Omit<Vehicle, 'id'>[] = [
-    { name: 'Standard Sedan', make: 'Toyota', model: 'Camry', year: 2023, fuelType: 'gasoline', mpg: 32, tankCapacityGal: 15.8, isPrimary: true },
+    { name: 'Jeep Wrangler 4x4', make: 'Jeep', model: 'Wrangler', year: 2024, fuelType: 'gasoline', mpg: 22, tankCapacityGal: 18.5, isPrimary: true },
+    { name: 'Standard Sedan', make: 'Toyota', model: 'Camry', year: 2023, fuelType: 'gasoline', mpg: 32, tankCapacityGal: 15.8 },
     { name: 'Compact Car', make: 'Honda', model: 'Civic', year: 2023, fuelType: 'gasoline', mpg: 36, tankCapacityGal: 12.4 },
     { name: 'Midsize SUV', make: 'Toyota', model: 'RAV4', year: 2022, fuelType: 'gasoline', mpg: 28, tankCapacityGal: 14.5 },
     { name: 'Full-Size SUV', make: 'Chevy', model: 'Tahoe', year: 2022, fuelType: 'gasoline', mpg: 18, tankCapacityGal: 24.0 },
@@ -109,6 +110,20 @@ class VehicleFuelService {
         };
     }
 
+    public getActiveVehicleNullable(): Vehicle | null {
+        if (this.vehicles.length === 0) return null;
+        const found = this.vehicles.find(v => v.id === this.activeVehicleId);
+        if (found) return found;
+        return this.vehicles[0] || null;
+    }
+
+    public clearActiveVehicle(): void {
+        this.activeVehicleId = '';
+        if (typeof window !== 'undefined') {
+            localStorage.removeItem(ACTIVE_VEHICLE_STORAGE_KEY);
+        }
+    }
+
     public setActiveVehicle(id: string): void {
         this.activeVehicleId = id;
         if (typeof window !== 'undefined') {
@@ -122,9 +137,8 @@ class VehicleFuelService {
             id: `veh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
         };
         this.vehicles.push(newVehicle);
-        if (this.vehicles.length === 1 || vehicle.isPrimary) {
-            this.setActiveVehicle(newVehicle.id);
-        }
+        // Instantly populate this active card with the newly added vehicle
+        this.setActiveVehicle(newVehicle.id);
         this.saveVehicles();
         return newVehicle;
     }
@@ -136,8 +150,12 @@ class VehicleFuelService {
 
     public deleteVehicle(id: string): void {
         this.vehicles = this.vehicles.filter(v => v.id !== id);
-        if (this.activeVehicleId === id && this.vehicles.length > 0) {
-            this.setActiveVehicle(this.vehicles[0].id);
+        if (this.activeVehicleId === id) {
+            if (this.vehicles.length > 0) {
+                this.setActiveVehicle(this.vehicles[0].id);
+            } else {
+                this.clearActiveVehicle();
+            }
         }
         this.saveVehicles();
     }

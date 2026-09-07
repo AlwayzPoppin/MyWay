@@ -1,8 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import { MapSkinId, resolveMapSkinId } from '../services/mapSkinService';
+import { solarService } from '../services/solarService';
 
 interface UIContextType {
     theme: 'light' | 'dark';
     setTheme: (theme: 'light' | 'dark') => void;
+    mapSkin: MapSkinId;
+    setMapSkin: (skin: MapSkinId) => void;
+    effectiveSkin: MapSkinId;
+    isDefaultSkin: boolean;
     isMobile: boolean;
     isUpsellOpen: boolean;
     setUpsellOpen: (open: boolean) => void;
@@ -38,12 +44,52 @@ export const useUI = () => {
 
 export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+    const [mapSkin, setMapSkinState] = useState<MapSkinId>(() => {
+        if (typeof window !== 'undefined') {
+            return (localStorage.getItem('myway_map_skin') as MapSkinId) || 'default';
+        }
+        return 'default';
+    });
+    const [isDaylight, setIsDaylight] = useState(() => solarService.getSolarInfo().isDaylight);
+
+    useEffect(() => {
+        return solarService.subscribe((info) => {
+            setIsDaylight(info.isDaylight);
+        });
+    }, []);
+
+    const effectiveSkin = useMemo<MapSkinId>(() => {
+        return resolveMapSkinId(mapSkin, isDaylight);
+    }, [mapSkin, isDaylight]);
+
+    const isDefaultSkin = effectiveSkin === 'default' || effectiveSkin === 'warm_cream';
+
+    const setMapSkin = useCallback((newSkin: MapSkinId) => {
+        setMapSkinState(newSkin);
+        if (typeof window !== 'undefined') {
+            localStorage.setItem('myway_map_skin', newSkin);
+        }
+    }, []);
+
+    // Inject theme-default / light-mode on document.body
+    useEffect(() => {
+        if (typeof document !== 'undefined') {
+            if (isDefaultSkin || theme === 'light') {
+                document.body.classList.add('theme-default', 'light-mode');
+                document.body.classList.remove('theme-dark', 'dark-mode');
+            } else {
+                document.body.classList.remove('theme-default', 'light-mode');
+                document.body.classList.add('theme-dark', 'dark-mode');
+            }
+        }
+    }, [isDefaultSkin, theme]);
     const checkIsMobileDevice = () => {
         if (typeof window === 'undefined') return false;
         const isTouch = 'ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
         const shortEdge = Math.min(window.innerWidth, window.innerHeight);
         // Handheld phone devices have a short edge < 600px; they remain mobile in both portrait and landscape
-        if (isTouch && shortEdge < 600) return true;
+        if (shortEdge < 600) return true;
+        if (isTouch && shortEdge < 768) return true;
         return window.innerWidth < 768;
     };
 
@@ -68,8 +114,9 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         const handleResize = () => {
             if (timeoutId) clearTimeout(timeoutId);
             timeoutId = setTimeout(() => {
-                setIsMobile(checkIsMobileDevice());
-            }, 100);
+                const nextIsMobile = checkIsMobileDevice();
+                setIsMobile(prev => (prev !== nextIsMobile ? nextIsMobile : prev));
+            }, 150);
         };
         window.addEventListener('resize', handleResize, { passive: true });
         window.addEventListener('orientationchange', handleResize, { passive: true });
@@ -90,6 +137,10 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const value: UIContextType = useMemo(() => ({
         theme,
         setTheme,
+        mapSkin,
+        setMapSkin,
+        effectiveSkin,
+        isDefaultSkin,
         isMobile,
         isUpsellOpen,
         setUpsellOpen,
@@ -116,6 +167,10 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     }), [
         theme,
         setTheme,
+        mapSkin,
+        setMapSkin,
+        effectiveSkin,
+        isDefaultSkin,
         isMobile,
         isUpsellOpen,
         setUpsellOpen,

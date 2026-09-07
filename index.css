@@ -1,5 +1,34 @@
 @import "tailwindcss";
 
+/* Design Tokens & Theme Variables */
+:root {
+    --panel-bg: rgba(15, 23, 42, 0.78);
+    --panel-bg-solid: #0f172a;
+    --panel-border: rgba(255, 255, 255, 0.1);
+    --panel-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    --text-primary: #ffffff;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --card-bg: rgba(255, 255, 255, 0.04);
+    --card-border: rgba(255, 255, 255, 0.08);
+}
+
+/* Light / Default Theme: Soft off-white and warm cream */
+.theme-default,
+body.theme-default,
+.light-mode,
+body.light-mode {
+    --panel-bg: rgba(253, 251, 247, 0.94);
+    --panel-bg-solid: #fdfbf7;
+    --panel-border: rgba(226, 232, 240, 0.85);
+    --panel-shadow: 0 12px 36px 0 rgba(15, 23, 42, 0.09);
+    --text-primary: #0f172a;
+    --text-secondary: #334155;
+    --text-muted: #64748b;
+    --card-bg: rgba(255, 255, 255, 0.82);
+    --card-border: rgba(226, 232, 240, 0.8);
+}
+
 /* Map Attribution Polish & Positioning */
 .maplibregl-ctrl-bottom-right {
     bottom: 16px !important;
@@ -82,6 +111,41 @@
     filter: invert(1) !important; /* Make sure icons are white/visible */
 }
 
+/* Light theme overrides for map controls */
+.theme-default .maplibregl-ctrl-group,
+body.theme-default .maplibregl-ctrl-group {
+    background: rgba(253, 251, 247, 0.92) !important;
+    border: 1px solid rgba(226, 232, 240, 0.9) !important;
+    box-shadow: 0 4px 20px 0 rgba(15, 23, 42, 0.08) !important;
+}
+
+.theme-default .maplibregl-ctrl-group button:hover,
+body.theme-default .maplibregl-ctrl-group button:hover {
+    background: rgba(15, 23, 42, 0.06) !important;
+}
+
+.theme-default .maplibregl-ctrl-group button .maplibregl-ctrl-icon,
+body.theme-default .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+    filter: none !important;
+}
+
+.theme-default .maplibregl-ctrl-attrib,
+body.theme-default .maplibregl-ctrl-attrib {
+    background: rgba(253, 251, 247, 0.85) !important;
+    border: 1px solid rgba(226, 232, 240, 0.85) !important;
+}
+
+.theme-default .maplibregl-ctrl-attrib a,
+body.theme-default .maplibregl-ctrl-attrib a {
+    color: #475569 !important;
+}
+
+.theme-default .maplibregl-ctrl-attrib-button,
+body.theme-default .maplibregl-ctrl-attrib-button {
+    background-color: rgba(241, 245, 249, 0.8) !important;
+    filter: none !important;
+}
+
 /* Attribution styling with own background to prevent stretching */
 .maplibregl-ctrl-attrib {
     background: rgba(15, 23, 42, 0.6) !important;
@@ -101,24 +165,33 @@
 
 /* Premium Vibe Utilities */
 .glass-panel {
-    background: rgba(15, 23, 42, 0.7) !important;
+    background: var(--panel-bg, rgba(15, 23, 42, 0.7)) !important;
     backdrop-filter: blur(16px) saturate(180%) !important;
     -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37) !important;
+    border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.1)) !important;
+    box-shadow: var(--panel-shadow, 0 8px 32px 0 rgba(0, 0, 0, 0.37)) !important;
+    color: var(--text-primary, #ffffff);
 }
 
 .glass-card {
-    background: rgba(255, 255, 255, 0.03) !important;
+    background: var(--card-bg, rgba(255, 255, 255, 0.03)) !important;
     backdrop-filter: blur(8px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid var(--card-border, rgba(255, 255, 255, 0.08)) !important;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    color: var(--text-primary, #ffffff);
 }
 
 .glass-card:hover {
     background: rgba(255, 255, 255, 0.08) !important;
     border-color: rgba(255, 255, 255, 0.2) !important;
     transform: translateY(-2px);
+}
+
+.theme-default .glass-card:hover,
+body.theme-default .glass-card:hover {
+    background: rgba(255, 255, 255, 0.95) !important;
+    border-color: rgba(203, 213, 225, 1) !important;
+    box-shadow: 0 4px 14px 0 rgba(15, 23, 42, 0.06);
 }
 
 .glow-primary {
@@ -187,9 +260,18 @@
     background: rgba(99, 102, 241, 0.5);
 }
 
-/* Navigation vehicle puck micro-smoothing: dampens GPS sensor micro-jitter at stoplights */
+/* Navigation vehicle puck: zero CSS transition interference with MapLibre hardware rotation */
 .myway-puck-arrow,
 .myway-puck-beam {
-    transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+    transition: none !important;
     will-change: transform;
 }
+
+/* Landscape Controls Responsive Separation & Safe-Area Inset Handling */
+@media (orientation: landscape) {
+    .map-controls-cluster {
+        bottom: max(6rem, calc(env(safe-area-inset-bottom, 0px) + 5rem)) !important;
+        top: auto !important;
+        right: max(1rem, calc(env(safe-area-inset-right, 0px) + 0.75rem)) !important;
+    }
+}

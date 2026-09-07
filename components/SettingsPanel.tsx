@@ -1,11 +1,53 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+    Shield, 
+    Bell, 
+    Compass, 
+    Map, 
+    Settings, 
+    User, 
+    ChevronDown, 
+    Pencil, 
+    Camera, 
+    X, 
+    EyeOff, 
+    MapPin, 
+    Snowflake, 
+    Radio, 
+    Zap, 
+    CreditCard, 
+    ShieldCheck, 
+    Key, 
+    AlertTriangle, 
+    LogOut, 
+    Lock, 
+    Trash2, 
+    Sparkles, 
+    Building, 
+    Building2, 
+    Landmark, 
+    Square, 
+    Minus, 
+    Sun, 
+    Sunrise, 
+    Sunset, 
+    Moon, 
+    Cpu,
+    Award,
+    History,
+    ArrowLeft,
+    ChevronRight,
+    Star,
+    Check
+} from 'lucide-react';
 import { MapSkinId, MAP_SKINS } from '../services/mapSkinService';
 import { solarService, SolarInfo } from '../services/solarService';
 import StorageManager from './StorageManager';
 import { PrivacyMode } from '../types';
 import { useUI } from '../contexts/UIContext';
 import { nativeSettingsService } from '../services/nativeSettingsService';
+import { contributionService, TripContributionPayload } from '../services/contributionService';
 
 
 export interface UserSettings {
@@ -46,7 +88,9 @@ interface SettingsPanelProps {
     onOpenKeyRecovery?: () => void;
     onOpenBatteryPrompt?: () => void;
     onUpdateProfile?: (name: string, avatarFile?: File) => Promise<void>;
-    onDeleteAccount?: () => Promise<void>;
+    onDeleteAccount?: (password?: string) => Promise<void>;
+    onOpenContributions?: () => void;
+    initialView?: 'main' | 'contributions';
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -68,13 +112,44 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onOpenKeyRecovery,
     onOpenBatteryPrompt,
     onUpdateProfile,
-    onDeleteAccount
+    onDeleteAccount,
+    onOpenContributions,
+    initialView = 'main'
 }) => {
+    const [currentView, setCurrentView] = useState<'main' | 'contributions'>(initialView);
     const { isLowDataMode, setIsLowDataMode } = useUI();
+
+    const handleOpenContributions = () => {
+        if (onOpenContributions) {
+            onOpenContributions();
+        }
+        setCurrentView('contributions');
+    };
     const [localSettings, setLocalSettings] = useState(settings);
     const [solarInfo, setSolarInfo] = useState<SolarInfo>(() => solarService.getSolarInfo());
     const [isPromptDisabled, setIsPromptDisabled] = useState(() => nativeSettingsService.isPromptDisabledByUser());
     const [isBatteryIgnored, setIsBatteryIgnored] = useState(false);
+
+    // Crowdsourced Contribution History State
+    const [contributions, setContributions] = useState<TripContributionPayload[]>([]);
+
+    useEffect(() => {
+        if (currentView === 'contributions') {
+            const unsub = contributionService.subscribeUserContributions(userId, (items) => {
+                setContributions(items);
+            });
+            return () => {
+                unsub();
+            };
+        }
+    }, [currentView, userId]);
+
+    // Delete Account Modal State
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [deleteConfirmText, setDeleteConfirmText] = useState('');
+    const [deletePassword, setDeletePassword] = useState('');
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
         nativeSettingsService.isIgnoringBatteryOptimizations().then(setIsBatteryIgnored);
@@ -125,13 +200,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         id,
         title,
         subtitle,
-        emoji,
+        icon: Icon,
         children
     }: {
         id: string;
         title: string;
         subtitle?: string;
-        emoji: string;
+        icon: React.ComponentType<{ className?: string }>;
         children: React.ReactNode;
     }) => {
         const isOpen = !!expandedSections[id];
@@ -142,7 +217,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     className="w-full flex items-center justify-between py-3 text-left focus:outline-none group/btn transition-colors"
                 >
                     <div className="flex items-center gap-3">
-                        <span className="text-xl">{emoji}</span>
+                        <div className="w-8 h-8 rounded-xl bg-indigo-500/10 flex items-center justify-center shrink-0">
+                            <Icon className="w-4 h-4 text-indigo-500" />
+                        </div>
                         <div>
                             <p className={`font-semibold text-sm ${theme === 'dark' ? 'text-white' : 'text-slate-900'} group-hover/btn:text-indigo-400 transition-colors`}>
                                 {title}
@@ -154,9 +231,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             )}
                         </div>
                     </div>
-                    <span className={`text-xs text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180 text-indigo-400' : ''}`}>
-                        ▼
-                    </span>
+                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 shrink-0 ${isOpen ? 'rotate-180 text-indigo-400' : ''}`} />
                 </button>
                 <div
                     className={`grid transition-all duration-300 ease-in-out ${
@@ -210,11 +285,206 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         </div>
     );
 
+    // Contribution History View
+    if (currentView === 'contributions') {
+        return (
+            <div className={`flex flex-col h-full max-h-full rounded-3xl overflow-hidden shadow-2xl border
+                ${theme === 'dark'
+                    ? 'bg-slate-900/95 border-white/10 text-white'
+                    : 'bg-[#fdfbf7]/95 border-slate-200/80 shadow-2xl text-slate-900'
+                } `}
+            >
+                {/* Header */}
+                <div className={`p-6 border-b shrink-0 ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} `}>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={() => setCurrentView('main')}
+                                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${
+                                    theme === 'dark'
+                                        ? 'bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                                        : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200'
+                                }`}
+                                aria-label="Back to settings"
+                            >
+                                <ArrowLeft className="w-4 h-4" />
+                                <span>Back</span>
+                            </button>
+                            <div className="flex items-center gap-2">
+                                <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
+                                    Your Contributions
+                                </h2>
+                                {contributions.length > 0 && (
+                                    <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
+                                        {contributions.length}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <button
+                            onClick={onClose}
+                            className={`p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors ${
+                                theme === 'dark' ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                            aria-label="Close"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Content Container */}
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 no-scrollbar">
+                    {contributions.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center my-auto py-8">
+                            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${
+                                theme === 'dark'
+                                    ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                                    : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
+                            }`}>
+                                <Award className="w-8 h-8" />
+                            </div>
+                            <h3 className={`text-base font-bold mb-1.5 ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
+                                Your Contributions
+                            </h3>
+                            <p className={`text-xs max-w-[280px] leading-relaxed mb-6 ${
+                                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+                            }`}>
+                                Track your map edits, added places, verified building numbers, and community reports.
+                            </p>
+
+                            <div className={`w-full max-w-sm rounded-2xl border border-dashed p-8 flex flex-col items-center justify-center gap-3 ${
+                                theme === 'dark' ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50/60'
+                            }`}>
+                                <div className="w-10 h-10 rounded-full bg-slate-500/10 flex items-center justify-center text-slate-400">
+                                    <History className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <p className={`text-xs font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
+                                        No contributions recorded yet
+                                    </p>
+                                    <p className="text-[11px] text-slate-400 mt-0.5">
+                                        Complete a trip and rate your destination to earn points
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between px-1 mb-1">
+                                <span className={`text-[11px] font-bold uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                    Contribution History ({contributions.length})
+                                </span>
+                            </div>
+
+                            {contributions.map((item) => {
+                                const isPinCorrection = item.type === 'pin_correction' || item.isAccurate === false;
+                                const dateFormatted = new Date(item.timestamp).toLocaleDateString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric'
+                                });
+                                const timeFormatted = new Date(item.timestamp).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                });
+
+                                return (
+                                    <div
+                                        key={item.id || `${item.timestamp}_${item.destinationAddress}`}
+                                        className={`p-4 rounded-2xl border transition-all ${
+                                            theme === 'dark'
+                                                ? 'bg-white/5 border-white/10 hover:border-white/20'
+                                                : 'bg-white border-slate-200 shadow-sm hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {/* Top Meta Row */}
+                                        <div className="flex items-center justify-between gap-2 mb-2">
+                                            {isPinCorrection ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/15 text-amber-500 border border-amber-500/30">
+                                                    <MapPin className="w-3 h-3" />
+                                                    <span>Pin Correction</span>
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
+                                                    <Check className="w-3 h-3" />
+                                                    <span>Trip Review</span>
+                                                </span>
+                                            )}
+                                            <span className="text-[10px] font-semibold text-slate-400 shrink-0">
+                                                {dateFormatted} · {timeFormatted}
+                                            </span>
+                                        </div>
+
+                                        {/* Destination Title & Address */}
+                                        <h4 className={`text-sm font-black leading-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                            {item.destinationName || item.destinationAddress}
+                                        </h4>
+                                        {item.destinationAddress && item.destinationAddress !== item.destinationName && (
+                                            <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">
+                                                {item.destinationAddress}
+                                            </p>
+                                        )}
+
+                                        {/* Badges / Details Row */}
+                                        <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2 border-t border-dashed border-slate-500/20">
+                                            {item.rating > 0 && (
+                                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
+                                                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                                                    <span>{item.rating}/5</span>
+                                                </span>
+                                            )}
+
+                                            {item.placeType && (
+                                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                                                    item.placeType === 'residential'
+                                                        ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+                                                        : 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                                                }`}>
+                                                    {item.placeType === 'residential' ? '🏠 Residential' : '🏢 Business'}
+                                                </span>
+                                            )}
+
+                                            {item.isAccurate ? (
+                                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                    ✅ Pin Perfect
+                                                </span>
+                                            ) : (
+                                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                                    📍 Pin Relocated
+                                                </span>
+                                            )}
+
+                                            {item.correctedCoordinates && (
+                                                <span className="px-2 py-0.5 rounded-md text-[10px] font-mono text-slate-400 bg-slate-500/10 border border-slate-500/20">
+                                                    [{item.correctedCoordinates[0].toFixed(4)}, {item.correctedCoordinates[1].toFixed(4)}]
+                                                </span>
+                                            )}
+
+                                            {item.tags && item.tags.map((tag) => (
+                                                <span
+                                                    key={tag}
+                                                    className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-500/10 text-slate-400 border border-slate-500/15"
+                                                >
+                                                    #{tag.replace(/_/g, ' ')}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className={`flex flex-col h-full max-h-full rounded-3xl overflow-hidden shadow-2xl border
       ${theme === 'dark'
-                ? 'bg-slate-900/95 border-white/10'
-                : 'bg-white/95 border-slate-200'
+                ? 'bg-slate-900/95 border-white/10 text-white'
+                : 'bg-[#fdfbf7]/95 border-slate-200/80 shadow-2xl text-slate-900'
             } `}
         >
             {/* Header */}
@@ -230,12 +500,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     setEditName(userName);
                                     setIsEditingProfile(true);
                                 }}
-                                className={`px-4 py-2 rounded-xl border text-sm font-bold transition-all
+                                className={`px-4 py-2 rounded-xl border text-sm font-bold transition-all flex items-center gap-1.5
                                     ${theme === 'dark'
                                         ? 'bg-white/5 border-white/10 text-indigo-400 hover:bg-white/10'
                                         : 'bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100'}`}
                             >
-                                ✏️ Edit Profile
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>Edit Profile</span>
                             </button>
                         ) : (
                             <div className="flex gap-2">
@@ -280,7 +551,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 } `}
                             aria-label="Close settings"
                         >
-                            ✕
+                            <X className="w-5 h-5" />
                         </button>
                     </div>
                 </div>
@@ -298,9 +569,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         {isEditingProfile && (
                             <button
                                 onClick={() => fileInputRef.current?.click()}
-                                className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-opacity"
+                                className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-opacity cursor-pointer"
                             >
-                                <span className="text-xl">📸</span>
+                                <Camera className="w-6 h-6 text-white" />
                             </button>
                         )}
                         <input
@@ -366,7 +637,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <AccordionSection
                     id="privacy"
                     title="Privacy & Visibility"
-                    emoji="🛡️"
+                    icon={Shield}
                     subtitle={`${localSettings.privacyMode === 'blurred' ? 'Neighborhood Blurred' : localSettings.privacyMode === 'status_only' ? 'Status Only' : localSettings.privacyMode === 'frozen' ? 'Location Frozen' : 'Exact GPS'} • ${localSettings.locationSharing ? 'Sharing On' : 'Sharing Off'}`}
                 >
                     {/* Granular Ghost & Privacy Blur Selector */}
@@ -374,7 +645,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         <div className="flex items-center justify-between mb-1.5">
                             <div>
                                 <h4 className={`text-xs font-black flex items-center gap-1.5 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                    <span>👻</span>
+                                    <EyeOff className="w-3.5 h-3.5 text-purple-400" />
                                     <span>Location Privacy Level</span>
                                 </h4>
                                 <p className="text-[11px] text-slate-400">Control how circle members see your location</p>
@@ -388,12 +659,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'
                         }`}>
                             {[
-                                { id: 'exact', label: '📍 Exact (5m)', desc: 'Live GPS Pin' },
-                                { id: 'blurred', label: '🏙️ Blurred (~1.5mi)', desc: 'Neighborhood Halo' },
-                                { id: 'status_only', label: '🏫 Status Only', desc: 'Geofences Only' },
-                                { id: 'frozen', label: '❄️ Frozen', desc: 'Pause Location' }
+                                { id: 'exact', icon: MapPin, label: 'Exact (5m)', desc: 'Live GPS Pin' },
+                                { id: 'blurred', icon: EyeOff, label: 'Blurred (~1.5mi)', desc: 'Neighborhood Halo' },
+                                { id: 'status_only', icon: Building, label: 'Status Only', desc: 'Geofences Only' },
+                                { id: 'frozen', icon: Snowflake, label: 'Frozen', desc: 'Pause Location' }
                             ].map(mode => {
                                 const isCurrent = (localSettings.privacyMode || 'exact') === mode.id;
+                                const ModeIcon = mode.icon;
                                 return (
                                     <button
                                         key={mode.id}
@@ -410,7 +682,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                                     : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                                         }`}
                                     >
-                                        <div className="text-[11px] font-black">{mode.label}</div>
+                                        <div className="flex items-center gap-1.5">
+                                            <ModeIcon className={`w-3.5 h-3.5 ${isCurrent ? 'text-white' : 'text-purple-400'}`} />
+                                            <span className="text-[11px] font-black">{mode.label}</span>
+                                        </div>
                                         <div className={`text-[9px] mt-0.5 ${isCurrent ? 'text-purple-200' : 'text-slate-400'}`}>{mode.desc}</div>
                                     </button>
                                 );
@@ -427,7 +702,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <AccordionSection
                     id="alerts"
                     title="Notifications & Alerts"
-                    emoji="🔔"
+                    icon={Bell}
                     subtitle={`${localSettings.notifications ? 'Push On' : 'Push Off'} • ${localSettings.batteryAlerts ? 'Battery On' : 'Battery Off'} • ${localSettings.speedAlerts ? 'Speed On' : 'Speed Off'}`}
                 >
                     <SettingRow label="Push Notifications" description="Receive alerts on your device">
@@ -448,7 +723,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <AccordionSection
                     id="navigation_routing"
                     title="Navigation & Routing"
-                    emoji="🧭"
+                    icon={Compass}
                     subtitle={`${localSettings.avoidTolls ? 'Avoiding Tolls' : 'Allow Tolls'} • ${localSettings.avoidHighways ? 'Avoiding Highways' : 'Use Highways'}`}
                 >
                     <SettingRow label="Avoid Toll Roads & Bridges" description="Prioritize toll-free routes and calculate toll fees">
@@ -470,7 +745,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <AccordionSection
                     id="map_visuals"
                     title="Map & 3D Visuals"
-                    emoji="🗺️"
+                    icon={Map}
                     subtitle={`${localSettings.buildingScale === 'none' ? 'No Buildings (Clean)' : localSettings.buildingScale === 'flat' ? 'Flat 2D Mode' : localSettings.buildingScale === 'monumental' ? 'Metropolis Mode' : localSettings.buildingScale === 'realistic' ? 'Realistic Scale' : 'Enhanced Heights'} • ${localSettings.landmarkGlow ? 'Glow On' : 'Glow Off'}`}
                 >
                     <div className="space-y-4">
@@ -489,24 +764,29 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'
                             }`}>
                                 {[
-                                    { id: 'none', label: '🚫 None' },
-                                    { id: 'flat', label: '🗺️ Flat' },
-                                    { id: 'realistic', label: '🏢 Real (1x)' },
-                                    { id: 'enhanced', label: '🏙️ Enhanced (1.8x)' },
-                                    { id: 'monumental', label: '🌆 Metropolis (2.6x)' }
-                                ].map(scale => (
-                                    <button
-                                        key={scale.id}
-                                        onClick={() => updateSetting('buildingScale', scale.id as any)}
-                                        className={`flex-1 py-1.5 px-1.5 text-[9.5px] font-black uppercase rounded-lg transition-all min-w-0 text-center truncate ${
-                                            (localSettings.buildingScale || 'enhanced') === scale.id
-                                                ? 'bg-indigo-600 text-white shadow-md'
-                                                : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
-                                        }`}
-                                    >
-                                        {scale.label}
-                                    </button>
-                                ))}
+                                    { id: 'none', label: 'None', icon: Minus },
+                                    { id: 'flat', label: 'Flat', icon: Square },
+                                    { id: 'realistic', label: 'Real (1x)', icon: Building },
+                                    { id: 'enhanced', label: 'Enhanced (1.8x)', icon: Building2 },
+                                    { id: 'monumental', label: 'Metropolis (2.6x)', icon: Landmark }
+                                ].map(scale => {
+                                    const ScaleIcon = scale.icon;
+                                    const isSelected = (localSettings.buildingScale || 'enhanced') === scale.id;
+                                    return (
+                                        <button
+                                            key={scale.id}
+                                            onClick={() => updateSetting('buildingScale', scale.id as any)}
+                                            className={`flex-1 py-1.5 px-1.5 text-[9.5px] font-black uppercase rounded-lg transition-all min-w-0 flex items-center justify-center gap-1 truncate ${
+                                                isSelected
+                                                    ? 'bg-indigo-600 text-white shadow-md'
+                                                    : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
+                                            }`}
+                                        >
+                                            <ScaleIcon className={`w-3 h-3 shrink-0 ${isSelected ? 'text-white' : 'text-slate-400'}`} />
+                                            <span className="truncate">{scale.label}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
 
@@ -539,9 +819,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 : 'bg-gradient-to-r from-indigo-950/40 via-purple-950/30 to-slate-900/40 border-indigo-500/30'
                         }`}>
                             <div className="flex items-center gap-2.5 min-w-0">
-                                <span className="text-2xl filter drop-shadow">
-                                    {solarInfo.solarPhase === 'day' ? '☀️' : solarInfo.solarPhase === 'golden_hour' ? '🌅' : solarInfo.solarPhase === 'twilight' ? '🌇' : '🌙'}
-                                </span>
+                                <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
+                                    {solarInfo.solarPhase === 'day' ? (
+                                        <Sun className="w-5 h-5 text-amber-400 shrink-0 animate-spin-slow" />
+                                    ) : solarInfo.solarPhase === 'golden_hour' ? (
+                                        <Sunrise className="w-5 h-5 text-orange-400 shrink-0" />
+                                    ) : solarInfo.solarPhase === 'twilight' ? (
+                                        <Sunset className="w-5 h-5 text-rose-400 shrink-0" />
+                                    ) : (
+                                        <Moon className="w-5 h-5 text-indigo-300 shrink-0" />
+                                    )}
+                                </div>
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <h5 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
@@ -553,8 +841,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                             {solarInfo.sunElevationDeg > 0 ? `+${solarInfo.sunElevationDeg}°` : `${solarInfo.sunElevationDeg}°`} Sun
                                         </span>
                                     </div>
-                                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                                        🌅 Rise: {solarInfo.sunriseTime} • 🌇 Set: {solarInfo.sunsetTime}
+                                    <p className="text-[10px] text-slate-400 font-bold mt-0.5 flex items-center gap-2">
+                                        <span className="inline-flex items-center gap-1">
+                                            <Sunrise className="w-3 h-3 text-amber-400" /> Rise: {solarInfo.sunriseTime}
+                                        </span>
+                                        <span>•</span>
+                                        <span className="inline-flex items-center gap-1">
+                                            <Sunset className="w-3 h-3 text-orange-400" /> Set: {solarInfo.sunsetTime}
+                                        </span>
                                     </p>
                                 </div>
                             </div>
@@ -613,7 +907,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <AccordionSection
                     id="system"
                     title="System & Storage"
-                    emoji="⚙️"
+                    icon={Settings}
                     subtitle="Cache, Space & Region Maps"
                 >
                     <div className="space-y-3">
@@ -623,7 +917,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         }`}>
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2.5">
-                                    <span className="text-lg">📡</span>
+                                    <div className="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center shrink-0">
+                                        <Radio className="w-4 h-4 text-indigo-400" />
+                                    </div>
                                     <div>
                                         <h4 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                                             Continuous Background Tracking
@@ -646,13 +942,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <button
                                     type="button"
                                     onClick={() => nativeSettingsService.openAppSettings()}
-                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all ${
+                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all flex items-center justify-center gap-1.5 ${
                                         theme === 'dark'
                                             ? 'bg-white/5 hover:bg-white/10 text-slate-200 border-white/10'
                                             : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
                                     }`}
                                 >
-                                    📍 Phone Permissions
+                                    <MapPin className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                    <span>Phone Permissions</span>
                                 </button>
                                 <button
                                     type="button"
@@ -662,13 +959,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                             nativeSettingsService.isIgnoringBatteryOptimizations().then(setIsBatteryIgnored);
                                         }, 1500);
                                     }}
-                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all ${
+                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all flex items-center justify-center gap-1.5 ${
                                         theme === 'dark'
                                             ? 'bg-white/5 hover:bg-white/10 text-slate-200 border-white/10'
                                             : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
                                     }`}
                                 >
-                                    ⚡ Battery Optimization
+                                    <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                    <span>Battery Optimization</span>
                                 </button>
                             </div>
 
@@ -727,19 +1025,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <AccordionSection
                     id="account"
                     title="Membership & Security"
-                    emoji="👤"
+                    icon={User}
                     subtitle="Circle Locker & Billing"
                 >
                     <div className="space-y-3">
                         {onManageSubscription && (
                             <button
                                 onClick={onManageSubscription}
-                                className={`w-full py-3 rounded-xl font-medium transition-colors ${theme === 'dark'
+                                className={`w-full py-3 px-4 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 ${theme === 'dark'
                                     ? 'bg-white/5 text-slate-300 hover:bg-white/10'
                                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                     } `}
                             >
-                                💳 Manage Subscription
+                                <CreditCard className="w-4 h-4 text-indigo-400 shrink-0" />
+                                <span>Manage Subscription</span>
                             </button>
                         )}
                         <button
@@ -757,7 +1056,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                 } `}>
                             <span className="flex items-center gap-2">
-                                <span>🛡️</span>
+                                <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
                                 <span>Circle Privacy & Visibility</span>
                             </span>
                             <span className="text-xs text-indigo-400 font-bold">Configure →</span>
@@ -765,15 +1064,54 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         {onOpenKeyRecovery && (
                             <button
                                 onClick={onOpenKeyRecovery}
-                                className={`w-full py-3 rounded-xl font-medium transition-colors ${theme === 'dark'
+                                className={`w-full py-3 px-4 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 ${theme === 'dark'
                                     ? 'bg-white/5 text-slate-300 hover:bg-white/10'
                                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                     } `}>
-                                🔑 My Security Locker
+                                <Key className="w-4 h-4 text-amber-400 shrink-0" />
+                                <span>My Security Locker</span>
                             </button>
                         )}
+                        <button
+                            onClick={handleOpenContributions}
+                            className={`w-full py-3 px-4 rounded-xl font-medium transition-colors flex items-center justify-between ${theme === 'dark'
+                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                } `}>
+                            <span className="flex items-center gap-2">
+                                <Award className="w-4 h-4 text-indigo-400 shrink-0" />
+                                <span>Contribution History</span>
+                            </span>
+                            <span className="text-xs text-indigo-400 font-bold">View →</span>
+                        </button>
                     </div>
                 </AccordionSection>
+
+                {/* 7. Contribution History Menu Item */}
+                <div className={`border-b ${theme === 'dark' ? 'border-white/5' : 'border-slate-100'} pb-3`}>
+                    <button
+                        onClick={handleOpenContributions}
+                        className="w-full flex items-center justify-between py-3 text-left focus:outline-none group/btn transition-colors cursor-pointer"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-indigo-500/10 flex items-center justify-center shrink-0">
+                                <Award className="w-4 h-4 text-indigo-500" />
+                            </div>
+                            <div>
+                                <p className={`font-semibold text-sm ${theme === 'dark' ? 'text-white' : 'text-slate-900'} group-hover/btn:text-indigo-400 transition-colors`}>
+                                    Contribution History
+                                </p>
+                                <p className="text-[10px] text-slate-500 font-bold mt-0.5 uppercase tracking-wider">
+                                    Map edits, added places & reports
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-indigo-400 font-bold hidden sm:inline-block">View</span>
+                            <ChevronRight className="w-4 h-4 text-slate-400 group-hover/btn:text-indigo-400 group-hover/btn:translate-x-0.5 transition-all shrink-0" />
+                        </div>
+                    </button>
+                </div>
 
                 {/* ⚠️ Dedicated Danger Zone */}
                 <div className={`mt-8 p-4 rounded-2xl border ${
@@ -782,7 +1120,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         : 'bg-red-50/70 border-red-200'
                 }`}>
                     <div className="flex items-center gap-2 mb-3">
-                        <span className="text-sm">⚠️</span>
+                        <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
                         <h4 className={`text-xs font-black uppercase tracking-wider ${
                             theme === 'dark' ? 'text-red-400' : 'text-red-600'
                         }`}>
@@ -806,7 +1144,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 }`}
                             >
                                 <span className="flex items-center gap-2">
-                                    <span>🚪</span>
+                                    <LogOut className="w-4 h-4 text-amber-400 shrink-0" />
                                     <span>Leave MyFamily Circle</span>
                                 </span>
                                 <span className="text-[10px] uppercase tracking-wider font-extrabold opacity-75">Leave</span>
@@ -823,7 +1161,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             }`}
                         >
                             <span className="flex items-center gap-2">
-                                <span>🔒</span>
+                                <Lock className="w-4 h-4 text-red-400 shrink-0" />
                                 <span>Sign Out</span>
                             </span>
                             <span className="text-[10px] uppercase tracking-wider font-extrabold opacity-75">End Session</span>
@@ -831,31 +1169,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
                         <button
                             type="button"
-                            onClick={async () => {
-                                const firstConfirm = confirm('⚠️ Delete your account? This will permanently remove all your data, leave any circles, and cannot be undone.');
-                                if (!firstConfirm) return;
-                                const typed = prompt('Type DELETE to confirm account deletion:');
-                                if (typed !== 'DELETE') return;
-                                try {
-                                    if (onDeleteAccount) {
-                                        await onDeleteAccount();
-                                    } else {
-                                        const { deleteAccount } = await import('../services/authService');
-                                        await deleteAccount(userId, circleId);
-                                    }
-                                    alert('Account deleted successfully.');
-                                    onSignOut?.();
-                                } catch (err: any) {
-                                    alert(`Failed: ${err.message}`);
-                                }
+                            onClick={() => {
+                                setShowDeleteModal(true);
+                                setDeleteConfirmText('');
+                                setDeletePassword('');
+                                setDeleteError(null);
                             }}
-                            className={`w-full py-2 px-3 rounded-xl text-[11px] font-bold text-center transition-all ${
+                            className={`w-full py-2 px-3 rounded-xl text-[11px] font-bold text-center transition-all flex items-center justify-center gap-1.5 ${
                                 theme === 'dark'
                                     ? 'text-red-400/80 hover:text-red-300 hover:bg-red-500/10'
                                     : 'text-red-600/80 hover:text-red-700 hover:bg-red-100/50'
                             }`}
                         >
-                            🗑️ Permanently Delete Account
+                            <Trash2 className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                            <span>Permanently Delete Account</span>
                         </button>
                     </div>
                 </div>
@@ -868,7 +1195,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 text-black font-black text-sm uppercase tracking-wider
                                 hover:shadow-lg hover:shadow-amber-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
                         >
-                            <span>✨</span> Upgrade to Gold
+                            <Sparkles className="w-4 h-4 text-black shrink-0" />
+                            <span>Upgrade to Gold</span>
                         </button>
                     </div>
                 )}
@@ -878,6 +1206,157 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <p className="text-xs text-slate-500">My Way v1.0.0</p>
                 </div>
             </div>
+
+            {/* Delete Account In-App Confirmation Modal */}
+            {showDeleteModal && (
+                <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl border ${
+                        theme === 'dark'
+                            ? 'bg-[#0f172a] border-red-500/30 text-white'
+                            : 'bg-white border-red-200 text-slate-900'
+                    } animate-in fade-in zoom-in duration-200`}>
+                        {/* Header */}
+                        <div className="flex items-start justify-between gap-3 mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 rounded-full bg-red-500/10 text-red-500 shrink-0">
+                                    <AlertTriangle className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-red-500">Delete Account & Erase Data</h3>
+                                    <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                        This action is permanent and irreversible.
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() => setShowDeleteModal(false)}
+                                className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Warning Text */}
+                        <div className={`p-3 rounded-xl mb-4 text-xs leading-relaxed border ${
+                            theme === 'dark' 
+                                ? 'bg-red-950/40 border-red-900/50 text-red-300' 
+                                : 'bg-red-50 border-red-200 text-red-700'
+                        }`}>
+                            ⚠️ All your data, circle memberships, location history, saved places, and cryptographic keys will be permanently deleted from the servers and Google Firebase Authentication.
+                        </div>
+
+                        {/* Error Message */}
+                        {deleteError && (
+                            <div className="mb-4 p-3 rounded-xl bg-red-500/15 border border-red-500/40 text-red-400 text-xs font-semibold">
+                                {deleteError}
+                            </div>
+                        )}
+
+                        {/* Confirmation input: Type DELETE */}
+                        <div className="space-y-3 mb-5">
+                            <div>
+                                <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1.5 ${
+                                    theme === 'dark' ? 'text-slate-300' : 'text-slate-700'
+                                }`}>
+                                    Type <span className="text-red-500 font-mono font-black">DELETE</span> to confirm:
+                                </label>
+                                <input
+                                    type="text"
+                                    value={deleteConfirmText}
+                                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                                    placeholder="DELETE"
+                                    disabled={isDeleting}
+                                    className={`w-full px-3 py-2 text-sm rounded-xl outline-none font-mono text-center tracking-widest uppercase transition-all ${
+                                        theme === 'dark'
+                                            ? 'bg-white/5 border border-white/10 text-white focus:border-red-500'
+                                            : 'bg-slate-50 border border-slate-200 text-slate-900 focus:border-red-500'
+                                    }`}
+                                />
+                            </div>
+
+                            {/* Password input for re-auth */}
+                            <div>
+                                <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1.5 ${
+                                    theme === 'dark' ? 'text-slate-300' : 'text-slate-700'
+                                }`}>
+                                    Account Password:
+                                </label>
+                                <input
+                                    type="password"
+                                    value={deletePassword}
+                                    onChange={(e) => setDeletePassword(e.target.value)}
+                                    placeholder="Enter your password"
+                                    disabled={isDeleting}
+                                    className={`w-full px-3 py-2 text-sm rounded-xl outline-none transition-all ${
+                                        theme === 'dark'
+                                            ? 'bg-white/5 border border-white/10 text-white focus:border-red-500'
+                                            : 'bg-slate-50 border border-slate-200 text-slate-900 focus:border-red-500'
+                                    }`}
+                                />
+                                <p className="text-[10px] text-slate-400 mt-1">
+                                    Required by Firebase security to verify identity before deleting credentials. (Leave blank if you signed in with Google).
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-3">
+                            <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() => setShowDeleteModal(false)}
+                                className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all border ${
+                                    theme === 'dark'
+                                        ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white'
+                                        : 'bg-slate-100 border-slate-200 hover:bg-slate-200 text-slate-700'
+                                }`}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                disabled={deleteConfirmText.trim() !== 'DELETE' || isDeleting}
+                                onClick={async () => {
+                                    if (deleteConfirmText.trim() !== 'DELETE') return;
+                                    setIsDeleting(true);
+                                    setDeleteError(null);
+                                    try {
+                                        if (onDeleteAccount) {
+                                            await onDeleteAccount(deletePassword || undefined);
+                                        } else {
+                                            const { deleteAccount } = await import('../services/authService');
+                                            await deleteAccount(userId, circleId, deletePassword || undefined);
+                                        }
+                                        setShowDeleteModal(false);
+                                        onSignOut?.();
+                                    } catch (err: any) {
+                                        console.error('Delete account error:', err);
+                                        setDeleteError(err.message || 'Failed to delete account. Please verify your password.');
+                                    } finally {
+                                        setIsDeleting(false);
+                                    }
+                                }}
+                                className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                                    deleteConfirmText.trim() === 'DELETE' && !isDeleting
+                                        ? 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-600/30'
+                                        : 'bg-red-600/40 text-white/50 cursor-not-allowed'
+                                }`}
+                            >
+                                {isDeleting ? (
+                                    <span>Deleting...</span>
+                                ) : (
+                                    <>
+                                        <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                                        <span>Permanently Delete</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

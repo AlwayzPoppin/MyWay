@@ -159,6 +159,27 @@ export const applySkinOverrides = (
                 } catch (e) {}
             }
         });
+    } else {
+        // Default / Daylight Skin: Crisp dark slate labels with pure white halos
+        const roadLabelLayerIds = [
+            'roadname_minor', 'roadname_sec', 'roadname_pri', 'roadname_major',
+            'myway-road-labels-major', 'myway-road-labels-minor',
+            'road-label', 'street-labels', 'road_label'
+        ];
+
+        roadLabelLayerIds.forEach(id => {
+            if (map.getLayer(id)) {
+                try {
+                    map.setLayoutProperty(id, 'visibility', 'visible');
+                    map.setLayoutProperty(id, 'text-field', ['get', 'name']);
+                    map.setLayoutProperty(id, 'text-font', ['Open Sans Regular', 'Arial Unicode MS Regular']);
+                    map.setPaintProperty(id, 'text-color', '#0f172a');
+                    map.setPaintProperty(id, 'text-halo-color', '#ffffff');
+                    map.setPaintProperty(id, 'text-halo-width', 2.8);
+                    map.setPaintProperty(id, 'text-halo-blur', 0.5);
+                } catch (e) {}
+            }
+        });
     }
 
     const layers = map.getStyle()?.layers || [];
@@ -173,13 +194,43 @@ export const applySkinOverrides = (
                 map.setPaintProperty(l.id, 'text-halo-width', 2.8);
                 map.setPaintProperty(l.id, 'text-halo-blur', 0.5);
             } catch (e) {}
-        } else if (l.id === 'housenumber' || l['source-layer'] === 'housenumber') {
+        } else if (!isCarbonAmber && l.type === 'symbol' && (l['source-layer'] === 'transportation_name' || l.id.includes('roadname') || l.id.includes('road-label') || l.id.includes('street-label'))) {
             try {
                 map.setLayoutProperty(l.id, 'visibility', 'visible');
-                map.setPaintProperty(l.id, 'text-color', isCarbonAmber ? '#cccccc' : '#555555');
-                map.setPaintProperty(l.id, 'text-halo-color', isCarbonAmber ? '#000000' : '#ffffff');
+                map.setLayoutProperty(l.id, 'text-field', ['get', 'name']);
+                map.setLayoutProperty(l.id, 'text-font', ['Open Sans Regular', 'Arial Unicode MS Regular']);
+                map.setPaintProperty(l.id, 'text-color', '#0f172a');
+                map.setPaintProperty(l.id, 'text-halo-color', '#ffffff');
+                map.setPaintProperty(l.id, 'text-halo-width', 2.8);
+                map.setPaintProperty(l.id, 'text-halo-blur', 0.5);
+            } catch (e) {}
+        } else if (
+            l.id === 'housenumber' ||
+            l['source-layer'] === 'housenumber' ||
+            l.id.includes('housenumber') ||
+            l.id.includes('house-number') ||
+            (l['source-layer'] === 'building' && l.type === 'symbol' && l.layout?.['text-field']) ||
+            (l['source-layer'] === 'address' && l.type === 'symbol')
+        ) {
+            try {
+                map.setLayoutProperty(l.id, 'visibility', 'visible');
+                map.setLayoutProperty(l.id, 'text-pitch-alignment', 'viewport');
+                map.setLayoutProperty(l.id, 'text-rotation-alignment', 'viewport');
+                map.setLayoutProperty(l.id, 'text-field', ['coalesce', ['get', 'houseNumber'], ['get', 'housenumber'], ['get', 'addr:housenumber'], '']);
+                map.setLayoutProperty(l.id, 'text-font', ['Open Sans Bold', 'Open Sans Regular', 'Arial Unicode MS Bold']);
+                map.setLayoutProperty(l.id, 'text-anchor', 'center');
+                map.setLayoutProperty(l.id, 'text-justify', 'center');
+                try {
+                    map.setLayerZoomRange(l.id, 16, 24);
+                } catch {}
+                map.setPaintProperty(l.id, 'text-color', isCarbonAmber ? '#fef9c3' : '#0f172a');
+                map.setPaintProperty(l.id, 'text-halo-color', isCarbonAmber ? 'rgba(0, 0, 0, 0.95)' : 'rgba(255, 255, 255, 0.95)');
                 map.setPaintProperty(l.id, 'text-halo-width', 2.0);
                 map.setPaintProperty(l.id, 'text-halo-blur', 0.5);
+                // Ensure vector housenumber layer is moved above 3D extrusions
+                try {
+                    map.moveLayer(l.id);
+                } catch {}
             } catch (e) {}
         }
     });

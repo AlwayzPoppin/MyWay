@@ -7,6 +7,7 @@ interface LoginScreenProps {
     onSignInWithEmail: (email: string, password: string) => Promise<void>;
     onSignUpWithEmail: (email: string, password: string, displayName: string) => Promise<void>;
     onSendMagicLink: (email: string) => Promise<void>;
+    onSendPasswordReset?: (email: string) => Promise<void>;
     magicLinkSent: boolean;
     loading: boolean;
     error: string | null;
@@ -19,6 +20,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     onSignInWithEmail,
     onSignUpWithEmail,
     onSendMagicLink,
+    onSendPasswordReset,
     magicLinkSent,
     loading,
     error,
@@ -29,6 +31,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [displayName, setDisplayName] = useState('');
+    const [resetSent, setResetSent] = useState(false);
+    const [resetLoading, setResetLoading] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -59,7 +63,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     </div>
                     <h1 className="text-3xl font-bold" style={{ fontFamily: 'Poppins, sans-serif' }}>
                         <span className={isDark ? 'text-white' : 'text-slate-800'}>My</span>
-                        <span className="bg-gradient-to-r from-amber-400 via-orange-500 to-amber-500 bg-clip-text text-transparent">Way</span>
+                        <span className="bg-gradient-to-r from-purple-500 via-indigo-500 to-violet-400 bg-clip-text text-transparent">Way</span>
                     </h1>
                     <p className={`text-sm mt-2 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                         Family GPS - Stay Connected
@@ -77,6 +81,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 {magicLinkSent && (
                     <div className="mb-6 p-4 rounded-xl bg-green-500/10 border border-green-500/30 text-green-400 text-sm animate-in fade-in zoom-in">
                         ✨ Magic link sent! Check your inbox to sign in.
+                    </div>
+                )}
+
+                {resetSent && (
+                    <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm animate-in fade-in zoom-in flex items-center justify-between">
+                        <span>📧 Password reset link sent to <strong>{email}</strong>! Check your inbox or spam.</span>
+                        <button onClick={() => setResetSent(false)} className="text-emerald-300 hover:text-white font-bold ml-2">✕</button>
                     </div>
                 )}
 
@@ -132,18 +143,49 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                         required
                     />
                     {!useMagicLink && (
-                        <input
-                            type="password"
-                            placeholder="Password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${isDark
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-amber-500/50'
-                                : 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
-                                }`}
-                            required={!useMagicLink}
-                            minLength={6}
-                        />
+                        <div>
+                            <input
+                                type="password"
+                                placeholder="Password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${isDark
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-amber-500/50'
+                                    : 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
+                                    }`}
+                                required={!useMagicLink}
+                                minLength={6}
+                            />
+                            {!isSignUp && (
+                                <div className="flex justify-end mt-1.5">
+                                    <button
+                                        type="button"
+                                        disabled={resetLoading}
+                                        onClick={async () => {
+                                            if (!email || !email.includes('@')) {
+                                                alert('Please enter your email address above, then click Forgot password.');
+                                                return;
+                                            }
+                                            try {
+                                                setResetLoading(true);
+                                                onClearError();
+                                                if (onSendPasswordReset) {
+                                                    await onSendPasswordReset(email);
+                                                    setResetSent(true);
+                                                }
+                                            } catch (err: any) {
+                                                console.warn('Password reset failed:', err);
+                                            } finally {
+                                                setResetLoading(false);
+                                            }
+                                        }}
+                                        className="text-xs text-amber-500 hover:text-amber-400 font-semibold transition-colors"
+                                    >
+                                        {resetLoading ? 'Sending reset link...' : 'Forgot password?'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     )}
                     <button
                         type="submit"

@@ -9,6 +9,8 @@
 import { getMessaging, getToken, onMessage, MessagePayload } from 'firebase/messaging';
 import app from './firebase';
 import { bufferMessage } from './offlineMessageBuffer';
+import { EntranceType } from '../types';
+import { getEntranceArrivalMessage } from './geofenceService';
  
 // Import configuration to sync with Service Worker
 const firebaseConfig = {
@@ -35,7 +37,7 @@ const initMessaging = async () => {
         messaging = getMessaging(app);
         
         // AUDIT FIX: Sync config with service worker immediately
-        const registration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
+        const registration = (await navigator.serviceWorker.getRegistration('/sw.js')) || (await navigator.serviceWorker.getRegistration());
         if (registration?.active) {
             registration.active.postMessage({
                 type: 'SET_FIREBASE_CONFIG',
@@ -206,13 +208,21 @@ export const broadcastGeofencePushAlert = async (
     memberName: string,
     geofenceName: string,
     transitionType: 'arrival' | 'departure',
-    location?: { lat: number; lng: number }
+    location?: { lat: number; lng: number },
+    entranceType?: EntranceType
 ): Promise<void> => {
     if (!circleId) return;
 
     const isArrival = transitionType === 'arrival';
-    const title = isArrival ? `📍 ${memberName} arrived at ${geofenceName}` : `🚶 ${memberName} left ${geofenceName}`;
-    const body = `${memberName} has ${isArrival ? 'entered' : 'departed'} the ${geofenceName} safe zone.`;
+    let title = isArrival ? `📍 ${memberName} arrived at ${geofenceName}` : `🚶 ${memberName} left ${geofenceName}`;
+    let body = `${memberName} has ${isArrival ? 'entered' : 'departed'} the ${geofenceName} safe zone.`;
+
+    if (isArrival && entranceType) {
+        const entranceMsg = getEntranceArrivalMessage(memberName, geofenceName, entranceType);
+        title = entranceMsg.title;
+        body = entranceMsg.body;
+    }
+
     const alertId = `alert_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     // 1. Buffer to persistent timeline
@@ -237,16 +247,17 @@ export const broadcastGeofencePushAlert = async (
         const alertRef = push(ref(database, `familyCircles/${circleId}/geofenceAlerts`));
         await set(alertRef, {
             id: alertId,
-            type: isArrival ? 'geofence_enter' : 'geofence_exit',
+            type: isArrival ? (entranceType ? 'entrance_arrival' : 'geofence_enter') : 'geofence_exit',
             memberId,
             memberName,
             geofenceName,
+            entranceType: entranceType || null,
             location: location || null,
             title,
             body,
             timestamp: Date.now()
         });
-        console.log(`🔔 Geofence alert broadcasted for ${memberName} at ${geofenceName}`);
+        console.log(`🔔 Geofence alert broadcasted for ${memberName} at ${geofenceName} (${entranceType || 'main'})`);
     } catch (dbErr) {
         console.warn('⚠️ Could not broadcast geofence alert to Firebase:', dbErr);
     }

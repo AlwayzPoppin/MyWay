@@ -8,47 +8,66 @@ import { httpsCallable } from 'firebase/functions';
 // We use a proxy function to avoid exposing keys in the client bundle.
 
 let isCloudAIAvailable = true;
+let isCloudProxyAvailable: boolean | null = null;
 
-const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.0-flash') => {
-  if (!isCloudAIAvailable) {
-    return { text: '', candidates: [] };
-  }
-
+export const callGeminiProxy = async (prompt: any, config?: any, model: string = 'gemini-2.0-flash') => {
   const clientApiKey = ((import.meta as any).env.VITE_GEMINI_API_KEY || '').trim();
 
-  // If no Gemini API key is configured, immediately run local heuristics with 0 network calls
-  if (!clientApiKey || clientApiKey.length < 20 || clientApiKey === 'your_gemini_api_key_here') {
-    isCloudAIAvailable = false;
-    return { text: '', candidates: [] };
+  // Determine whether prompt is already a Part[] or multimodal structure
+  let contentsPayload: any = prompt;
+  if (typeof prompt === 'string') {
+    contentsPayload = prompt;
+  } else if (Array.isArray(prompt)) {
+    // Check if prompt has inlineData or parts
+    const hasMultimodal = prompt.some((p: any) => p?.inlineData || p?.text !== undefined);
+    if (hasMultimodal) {
+      contentsPayload = prompt;
+    } else {
+      contentsPayload = prompt.map((p: any) => p.parts?.map((pt: any) => pt.text).join(' ')).join('\n');
+    }
   }
 
-  try {
-    const genAI = new GoogleGenAI({ apiKey: clientApiKey });
-    const promptText = typeof prompt === 'string'
-      ? prompt
-      : Array.isArray(prompt)
-        ? prompt.map((p: any) => p.parts?.map((pt: any) => pt.text).join(' ')).join('\n')
-        : JSON.stringify(prompt);
+  // 1. Try direct client GoogleGenAI if key is present
+  if (clientApiKey && clientApiKey.length >= 20 && clientApiKey !== 'your_gemini_api_key_here') {
+    try {
+      const genAI = new GoogleGenAI({ apiKey: clientApiKey });
+      const sdkModel = model || 'gemini-2.0-flash';
 
-    const sdkModel = model || 'gemini-2.0-flash';
+      const response = await genAI.models.generateContent({
+        model: sdkModel,
+        contents: contentsPayload,
+        config: config || undefined
+      });
 
-    const response = await genAI.models.generateContent({
-      model: sdkModel,
-      contents: promptText,
-      config: config || undefined
-    });
-
-    return {
-      text: response.text || '',
-      candidates: []
-    };
-  } catch (apiErr: any) {
-    isCloudAIAvailable = false;
-    return {
-      text: '',
-      candidates: []
-    };
+      return {
+        text: response.text || '',
+        candidates: []
+      };
+    } catch (apiErr: any) {
+      console.warn('[GeminiService] Direct API call error, checking proxy:', apiErr?.message);
+    }
   }
+
+  // 2. Try Firebase Cloud Function proxy (callGeminiAI) if available
+  if (isCloudProxyAvailable !== false && functions) {
+    try {
+      const callable = httpsCallable(functions, 'callGeminiAI');
+      const res: any = await callable({ prompt: contentsPayload, config, model });
+      isCloudProxyAvailable = true;
+      return {
+        text: res.data?.text || '',
+        candidates: res.data?.candidates || []
+      };
+    } catch (fbErr: any) {
+      // Proxy unavailable or CORS restricted in current development environment
+      if (isCloudProxyAvailable === null) {
+        console.info('[GeminiService] Cloud Function AI proxy unavailable or CORS restricted; using local heuristic intelligence.');
+        isCloudProxyAvailable = false;
+      }
+    }
+  }
+
+  return { text: '', candidates: [] };
 };
 
 // SECURITY: Direct API key access has been removed to prevent exposure in client bundle.

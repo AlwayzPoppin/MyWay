@@ -14,8 +14,8 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({ theme, message = 'Initial
         }`}>
             {/* Logo container with pulse effect */}
             <div className="relative mb-8">
-                <div className={`absolute -inset-4 rounded-full blur-2xl opacity-20 animate-pulse ${
-                    isDark ? 'bg-amber-500' : 'bg-orange-500'
+                <div className={`absolute -inset-4 rounded-full blur-2xl opacity-25 animate-pulse ${
+                    isDark ? 'bg-purple-600' : 'bg-indigo-500'
                 }`} />
                 <div className="relative w-24 h-24">
                     <img 

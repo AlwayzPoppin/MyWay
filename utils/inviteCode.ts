@@ -31,3 +31,50 @@ export const formatSegmentedInviteCode = (raw: string): string => {
 export const isValidInviteCode = (raw: string): boolean => {
     return cleanInviteCode(raw).length === 8;
 };
+
+/**
+ * Extracts an 8-character invite code from a scanned QR payload,
+ * which may be a full URL, deep link, formatted string, or raw code.
+ * Examples:
+ *   - "https://myway-gps.com/join/ABCD1234" -> "ABCD1234"
+ *   - "myway://join/ABCD-1234" -> "ABCD1234"
+ *   - "https://myway-gps.com?code=ABCD1234" -> "ABCD1234"
+ *   - "Join my circle on My Way! Use my code: ABCD1234..." -> "ABCD1234"
+ *   - "ABCD - 1234" -> "ABCD1234"
+ *   - "ABCD1234" -> "ABCD1234"
+ */
+export const extractInviteCodeFromQr = (scannedText: string): string => {
+    if (!scannedText) return '';
+    const trimmed = scannedText.trim();
+
+    // 1. Check for /join/{code} URL patterns
+    const joinMatch = trimmed.match(/\/join\/([A-Za-z0-9_-]+)/i);
+    if (joinMatch && joinMatch[1]) {
+        const cleaned = cleanInviteCode(joinMatch[1]);
+        if (cleaned.length === 8) return cleaned;
+    }
+
+    // 2. Check for ?code= or ?invite= or ?inviteCode= query parameters
+    const queryMatch = trimmed.match(/[?&](?:code|invite|inviteCode)=([A-Za-z0-9_-]+)/i);
+    if (queryMatch && queryMatch[1]) {
+        const cleaned = cleanInviteCode(queryMatch[1]);
+        if (cleaned.length === 8) return cleaned;
+    }
+
+    // 3. Check for "code: ABCD1234" or "code ABCD1234" in message text
+    const textCodeMatch = trimmed.match(/code[:\s]+([A-Za-z0-9\-_]{4,11})/i);
+    if (textCodeMatch && textCodeMatch[1]) {
+        const cleaned = cleanInviteCode(textCodeMatch[1]);
+        if (cleaned.length === 8) return cleaned;
+    }
+
+    // 4. Check for segmented pattern like "ABCD - 1234" or "ABCD-1234"
+    const segmentedMatch = trimmed.match(/\b([A-Za-z0-9]{4})\s*[-_ ]\s*([A-Za-z0-9]{4})\b/);
+    if (segmentedMatch) {
+        const cleaned = cleanInviteCode(segmentedMatch[1] + segmentedMatch[2]);
+        if (cleaned.length === 8) return cleaned;
+    }
+
+    // 5. Fallback: clean the whole string (covers raw "ABCD1234")
+    return cleanInviteCode(trimmed);
+};

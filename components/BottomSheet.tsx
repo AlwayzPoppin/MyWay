@@ -7,6 +7,49 @@ import ActivityLog from './ActivityLog';
 import CircleManager from './CircleManager';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { FamilyCircle, getCircleColor } from '../services/authService';
+import { MemberStatusText } from '../utils/memberStatus';
+import { MemberAvatarWithRing, AddMemberButton } from './MemberCard';
+import {
+    Shield,
+    Fuel,
+    Navigation,
+    Users,
+    MapPin,
+    FileText,
+    Zap,
+    Battery,
+    MessageSquare,
+    Bell,
+    Wrench,
+    Trophy,
+    AlertTriangle,
+    Sparkles,
+    ChevronDown,
+    Car,
+    Radio,
+    Home,
+    Briefcase,
+    Edit3,
+    Trash2,
+    Settings,
+    Clock,
+    Building2,
+    GraduationCap,
+    Dumbbell,
+    Utensils,
+    Coffee
+} from 'lucide-react';
+
+const BOTTOM_SHEET_PLACE_CATEGORIES = [
+    { type: 'home', icon: '🏠', iconComp: Home, label: 'Home' },
+    { type: 'work', icon: '💼', iconComp: Briefcase, label: 'Work' },
+    { type: 'school', icon: '🏫', iconComp: GraduationCap, label: 'School' },
+    { type: 'gym', icon: '🏋️', iconComp: Dumbbell, label: 'Gym' },
+    { type: 'food', icon: '🍔', iconComp: Utensils, label: 'Food' },
+    { type: 'coffee', icon: '☕', iconComp: Coffee, label: 'Coffee' },
+    { type: 'gas', icon: '⛽', iconComp: Fuel, label: 'Gas' },
+    { type: 'other', icon: '📍', iconComp: MapPin, label: 'Other' },
+];
 
 interface BottomSheetProps {
     members: FamilyMember[];
@@ -22,7 +65,6 @@ interface BottomSheetProps {
     activeFilterCircleId?: string | 'all';
     onSelectFilterCircle?: (circleId: string | 'all') => void;
     onOpenCircleSettings?: (tab?: 'circles' | 'invite' | 'manage') => void;
-    avgGasPrice?: string;
     showNotification?: (msg: string, duration?: number) => void;
     onOpenSettings?: () => void;
     onOpenTripHistory?: () => void;
@@ -45,6 +87,7 @@ interface BottomSheetProps {
     userLocation?: Location | null;
     isExpanded?: boolean;
     onExpandedChange?: (expanded: boolean) => void;
+    className?: string;
 }
 
 const BottomSheet: React.FC<BottomSheetProps> = ({
@@ -52,6 +95,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     selectedId,
     onSelect,
     theme,
+    className,
     hasCircle = true,
     inviteCode,
     circleName,
@@ -61,7 +105,6 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     onOpenCircleSettings,
     onCreateCircle,
     onJoinCircle,
-    avgGasPrice = '$3.45',
     showNotification,
     onOpenSettings,
     onOpenTripHistory,
@@ -104,6 +147,32 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     const [customPlaceType, setCustomPlaceType] = useState<'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other'>('other');
     const sheetRef = useRef<HTMLDivElement>(null);
 
+    const renderPlaceIcon = (icon?: string, type?: string, name?: string, sizeClass = 'w-5 h-5') => {
+        const key = (icon || type || name || '').toLowerCase();
+        if (key === '🏠' || key.includes('home') || key === 'house') {
+            return <Home className={`${sizeClass} text-indigo-400 shrink-0`} />;
+        }
+        if (key === '💼' || key === '🏢' || key.includes('work') || key.includes('office')) {
+            return <Briefcase className={`${sizeClass} text-indigo-400 shrink-0`} />;
+        }
+        if (key === '🏫' || key === '🎓' || key.includes('school') || key.includes('college') || key.includes('univ')) {
+            return <GraduationCap className={`${sizeClass} text-indigo-400 shrink-0`} />;
+        }
+        if (key === '🏋️' || key === '💪' || key.includes('gym') || key.includes('fitness')) {
+            return <Dumbbell className={`${sizeClass} text-indigo-400 shrink-0`} />;
+        }
+        if (key === '🍔' || key.includes('food') || key.includes('restaurant') || key.includes('burger')) {
+            return <Utensils className={`${sizeClass} text-indigo-400 shrink-0`} />;
+        }
+        if (key === '☕' || key.includes('coffee') || key.includes('cafe')) {
+            return <Coffee className={`${sizeClass} text-indigo-400 shrink-0`} />;
+        }
+        if (key === '⛽' || key.includes('gas') || key.includes('fuel')) {
+            return <Fuel className={`${sizeClass} text-indigo-400 shrink-0`} />;
+        }
+        return <MapPin className={`${sizeClass} text-indigo-400 shrink-0`} />;
+    };
+
     const dismissKeyboard = () => {
         if (typeof document !== 'undefined') {
             (document.activeElement as HTMLElement)?.blur();
@@ -129,6 +198,17 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         setDragStart(null);
     };
 
+    const handleAddMember = () => {
+        if (onOpenInviteShare) {
+            onOpenInviteShare();
+        } else if (onOpenCircleSettings) {
+            onOpenCircleSettings('invite');
+        } else if (inviteCode) {
+            navigator.clipboard?.writeText(inviteCode);
+            if (showNotification) showNotification(`Invite code ${inviteCode} copied to clipboard!`);
+        }
+    };
+
     const getBatteryColor = (battery: number) => {
         if (battery <= 20) return '#ef4444';
         if (battery <= 50) return '#f59e0b';
@@ -146,15 +226,15 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         }
     };
 
-    const getStatusIcon = (status: string, currentPlace?: string) => {
-        if (currentPlace && status === 'Stationary') return '🏠';
+    const renderStatusIcon = (status: string, currentPlace?: string) => {
+        if (currentPlace && status === 'Stationary') return <Home className="w-2.5 h-2.5 text-indigo-400 shrink-0" />;
         switch (status) {
-            case 'Driving': return '🚗';
-            case 'Walking': return '🚶';
-            case 'Moving': return '🚶';
-            case 'Stationary': return '📍';
-            case 'Offline': return '💤';
-            default: return '📍';
+            case 'Driving': return <Car className="w-2.5 h-2.5 text-sky-400 shrink-0" />;
+            case 'Walking':
+            case 'Moving': return <Navigation className="w-2.5 h-2.5 text-emerald-400 shrink-0" />;
+            case 'Stationary': return <MapPin className="w-2.5 h-2.5 text-emerald-400 shrink-0" />;
+            case 'Offline': return <Clock className="w-2.5 h-2.5 text-slate-400 shrink-0" />;
+            default: return <MapPin className="w-2.5 h-2.5 text-slate-400 shrink-0" />;
         }
     };
 
@@ -198,10 +278,10 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                 ref={sheetRef}
                 className={`fixed bottom-0 left-0 right-0 z-[100] bottom-sheet safe-bottom transition-all duration-300 ease-out
                     ${isDark
-                        ? 'bg-gradient-to-t from-[#090d16] via-[#0f172a]/98 to-[#0f172a]/95'
-                        : 'bg-gradient-to-t from-slate-50 via-white/98 to-white/95'}
-                    backdrop-blur-2xl border-t ${isDark ? 'border-white/10' : 'border-slate-200'}
-                    rounded-t-[28px] shadow-[0_-10px_60px_rgba(0,0,0,0.35)] flex flex-col`}
+                        ? 'bg-gradient-to-t from-[#090d16] via-[#0f172a]/98 to-[#0f172a]/95 text-white'
+                        : 'bg-gradient-to-t from-[#f5f2eb] via-[#fdfbf7]/98 to-[#fdfbf7]/95 text-slate-900'}
+                    backdrop-blur-2xl border-t ${isDark ? 'border-white/10' : 'border-slate-200/80'}
+                    rounded-t-[28px] shadow-[0_-10px_60px_rgba(0,0,0,0.35)] flex flex-col ${className || ''}`}
                 style={{
                     height: isExpanded ? 'min(62vh, 480px)' : 'calc(100px + env(safe-area-inset-bottom, 0px))',
                     maxHeight: isExpanded ? 'min(62vh, 480px)' : undefined,
@@ -225,9 +305,9 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 
             {/* ─── COLLAPSED PEEK VIEW ─── */}
             {!isExpanded && (
-                <div className="px-4 flex items-center justify-between gap-2 h-16 shrink-0">
+                <div className="px-4 flex items-center justify-between gap-2 min-h-[72px] py-1.5 shrink-0">
                     {/* Avatars Carousel */}
-                    <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-1">
+                    <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-2 px-1">
                         {members.map((member, index) => {
                             const isUnresolved = !member.location || (member.location.lat === 0 && member.location.lng === 0);
                             return (
@@ -237,18 +317,18 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                     onSelect(member.id);
                                     setExpanded(true);
                                 }}
-                                className={`relative transition-all duration-300 shrink-0 ${
+                                className={`relative p-1 transition-all duration-300 shrink-0 ${
                                     isUnresolved ? 'opacity-70 hover:opacity-100' : ''
-                                } ${selectedId === member.id ? 'scale-110 z-10' : 'hover:scale-105 active:scale-95'}`}
+                                } ${selectedId === member.id ? 'scale-105 z-10' : 'hover:scale-105 active:scale-95'}`}
                                 style={{ animationDelay: `${index * 50}ms` }}
-                                title={isUnresolved ? `${member.name} (📡 Locating…)` : `${member.name} (${member.status})`}
+                                title={isUnresolved ? `${member.name} (Locating…)` : `${member.name} (${member.status})`}
                             >
                                 {/* Status Ring */}
                                 <div
-                                    className="absolute -inset-1 rounded-full"
+                                    className="absolute inset-0 rounded-full pointer-events-none"
                                     style={{
                                         border: isUnresolved ? '2px dashed #f59e0b' : `2.5px solid ${getStatusColor(member.status)}`,
-                                        opacity: selectedId === member.id ? 1 : 0.65
+                                        opacity: selectedId === member.id ? 1 : 0.75
                                     }}
                                 />
 
@@ -265,7 +345,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 
                                 {/* Status Icon Badge */}
                                 <div
-                                    className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border flex items-center justify-center text-[8px] ${
+                                    className={`absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full border flex items-center justify-center text-[8px] ${
                                         isUnresolved ? 'animate-pulse' : ''
                                     }`}
                                     style={{
@@ -273,7 +353,13 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         borderColor: isDark ? '#0f172a' : 'white'
                                     }}
                                 >
-                                    {isUnresolved ? '📡' : member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
+                                    {isUnresolved ? (
+                                        <Radio className="w-2.5 h-2.5 text-slate-950" />
+                                    ) : member.currentTrip ? (
+                                        <Car className="w-2.5 h-2.5 text-white" />
+                                    ) : (
+                                        renderStatusIcon(member.status, member.currentPlace)
+                                    )}
                                 </div>
                             </button>
                         );})}
@@ -285,11 +371,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                             <button
                                 key={p.id}
                                 onClick={() => onSelectPlace?.(p)}
-                                className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition-all active:scale-95
+                                className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-2 transition-all active:scale-95
                                     ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-100 border-slate-200 text-slate-800'}`}
                             >
-                                <span>{p.icon}</span>
-                                <span className="truncate max-w-[60px]">{p.name}</span>
+                                {renderPlaceIcon(p.icon, p.type, p.name, 'w-3.5 h-3.5')}
+                                <span className="truncate max-w-[60px]">{p.name || 'Home'}</span>
                             </button>
                         ))}
 
@@ -302,7 +388,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                     : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100'
                             }`}
                         >
-                            <span>⚡</span>
+                            <Zap className="w-3.5 h-3.5 shrink-0" />
                             <span>Hub</span>
                             <span className="text-[10px] opacity-70">▲</span>
                         </button>
@@ -325,14 +411,10 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 My Way
                             </h2>
                             {hasCircle && (
-                                <div className="flex items-center gap-1.5">
-                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                        🛡️ {members.length} Protected
-                                    </span>
-                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20">
-                                        ⛽ {avgGasPrice}
-                                    </span>
-                                </div>
+                                <span className="text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shrink-0">
+                                    <Shield className="w-3 h-3 text-emerald-400 shrink-0" />
+                                    <span>{members.length} Protected</span>
+                                </span>
                             )}
                         </div>
 
@@ -364,7 +446,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 }`}
                                 title="Minimize"
                             >
-                                <span className="text-xs">▼</span>
+                                <ChevronDown className="w-4 h-4" />
                             </button>
                         </div>
                     </div>
@@ -382,7 +464,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         : 'text-slate-400 hover:text-white'
                                 }`}
                             >
-                                <span>👥</span>
+                                <Users className="w-3.5 h-3.5 shrink-0" />
                                 <span>CIRCLE ({members.length})</span>
                             </button>
 
@@ -394,7 +476,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         : 'text-slate-400 hover:text-white'
                                 }`}
                             >
-                                <span>📍</span>
+                                <MapPin className="w-3.5 h-3.5 shrink-0" />
                                 <span>PLACES ({userPlaces.length})</span>
                             </button>
 
@@ -406,7 +488,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         : 'text-slate-400 hover:text-white'
                                 }`}
                             >
-                                <span>📜</span>
+                                <FileText className="w-3.5 h-3.5 shrink-0" />
                                 <span>LOG ({activities.length})</span>
                             </button>
                         </div>
@@ -437,8 +519,9 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         className={`min-w-0 flex-1 ${onOpenCircleSettings ? 'cursor-pointer group' : ''}`}
                                         title="Switch or Manage Circles"
                                     >
-                                        <div className="flex items-center gap-1 text-[9px] text-indigo-400 font-bold uppercase tracking-wider group-hover:text-indigo-300 transition-colors">
-                                            <span>👥 {circleName || 'Family Circle'}</span>
+                                        <div className="flex items-center gap-1.5 text-[9px] text-indigo-400 font-bold uppercase tracking-wider group-hover:text-indigo-300 transition-colors">
+                                            <Users className="w-3.5 h-3.5 shrink-0" />
+                                            <span>{circleName || 'Family Circle'}</span>
                                             {onOpenCircleSettings && <span className="text-[8px]">▾</span>}
                                         </div>
                                         <h3 className={`text-sm font-black truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
@@ -450,12 +533,12 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         {onOpenCircleSettings && (
                                             <button
                                                 onClick={() => onOpenCircleSettings('manage')}
-                                                className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex items-center gap-1 cursor-pointer ${
+                                                className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer ${
                                                     isDark ? 'bg-white/10 hover:bg-white/15 text-slate-200' : 'bg-white hover:bg-slate-100 text-slate-700 shadow-sm'
                                                 }`}
                                                 title="Circle Settings & Management"
                                             >
-                                                <span>⚙️</span>
+                                                <Settings className="w-3.5 h-3.5 shrink-0" />
                                                 <span>Settings</span>
                                             </button>
                                         )}
@@ -487,7 +570,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                     : isDark ? 'bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300' : 'bg-slate-100 border border-slate-200 text-slate-700'
                                             }`}
                                         >
-                                            <span>✨</span>
+                                            <Sparkles className="w-3.5 h-3.5 shrink-0" />
                                             <span>All Groups ({members.length})</span>
                                         </button>
                                         {userCircles.map(c => {
@@ -541,28 +624,16 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                             }`}
                                         >
                                             <div className="flex items-center gap-3">
-                                                {/* Avatar */}
-                                                <div className="relative shrink-0">
-                                                    <img
-                                                        src={getSafeAvatarUrl(member.avatar, member.name || member.id)}
-                                                        onError={(e) => {
-                                                            (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name || member.id);
-                                                        }}
-                                                        alt={member.name}
-                                                        style={{ borderColor: isUnresolved ? '#f59e0b' : memberCircleHex }}
-                                                        className={`w-11 h-11 rounded-xl object-cover border-2 ${isDark ? 'bg-slate-800' : 'bg-slate-100'} ${
-                                                            selectedId === member.id ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-900' : ''
-                                                        } ${member.isGhostMode ? 'blur-[1.5px] grayscale opacity-75' : ''} ${isUnresolved ? 'saturate-75' : ''}`}
-                                                    />
-                                                    <div
-                                                        className={`absolute -bottom-1 -right-1 w-4.5 h-4.5 rounded-lg flex items-center justify-center text-[10px] border border-slate-900 ${
-                                                            isUnresolved ? 'animate-pulse' : ''
-                                                        }`}
-                                                        style={{ backgroundColor: isUnresolved ? '#f59e0b' : getStatusColor(member.status) }}
-                                                    >
-                                                        {isUnresolved ? '📡' : member.currentTrip ? '🚗' : getStatusIcon(member.status, member.currentPlace)}
-                                                    </div>
-                                                </div>
+                                                {/* Avatar with Status Ring */}
+                                                <MemberAvatarWithRing
+                                                    member={member}
+                                                    size="md"
+                                                    theme={isDark ? 'dark' : 'light'}
+                                                    isSelected={selectedId === member.id}
+                                                    isUnresolved={isUnresolved}
+                                                    circleColor={memberCircleHex}
+                                                    renderStatusBadge={true}
+                                                />
 
                                                 {/* Info */}
                                                 <div className="flex-1 text-left min-w-0">
@@ -607,11 +678,6 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             ) : null}
                                                         </div>
                                                         <div className="flex items-center gap-1.5 shrink-0">
-                                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shrink-0 ${
-                                                                member.battery <= 20 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
-                                                            }`}>
-                                                                {member.battery <= 20 ? '🪫' : '🔋'} {member.battery}%
-                                                            </span>
                                                             {onOpenMessages && (
                                                                 <button
                                                                     type="button"
@@ -624,7 +690,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                                     }`}
                                                                     title={`Direct message with ${member.name}`}
                                                                 >
-                                                                    <span className="text-xs">💬</span>
+                                                                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                                                                 </button>
                                                             )}
                                                         </div>
@@ -635,18 +701,13 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             <span className="truncate">Waiting for device signal…</span>
                                                         </div>
                                                     ) : (
-                                                        <div className={`text-[11px] font-medium truncate ${
-                                                            member.currentPlace && member.status === 'Stationary' ? 'text-emerald-400 font-semibold' :
-                                                            member.status === 'Driving' ? 'text-indigo-400' :
-                                                            member.status === 'Walking' || member.status === 'Moving' ? 'text-sky-400' :
-                                                            member.status === 'Stationary' ? 'text-emerald-400' :
-                                                            isDark ? 'text-slate-400' : 'text-slate-500'
-                                                        }`}>
-                                                            {member.currentPlace
-                                                                ? (member.status === 'Stationary' ? `At ${member.currentPlace}` : `${member.status} • ${member.currentPlace}`)
-                                                                : (member.status === 'Driving' ? `Driving ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
-                                                                   member.status === 'Walking' || member.status === 'Moving' ? `Walking ${member.speed > 0 ? `• ${member.speed} MPH` : ''}` :
-                                                                   'Stationary')}
+                                                        <div className="min-w-0 flex items-center gap-1.5 mt-0.5">
+                                                            <MemberStatusText
+                                                                member={member}
+                                                                className={`text-[11px] font-medium truncate ${
+                                                                    isDark ? 'text-slate-400' : 'text-slate-500'
+                                                                }`}
+                                                            />
                                                         </div>
                                                     )}
                                                 </div>
@@ -669,7 +730,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                         ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-200'
                                                         : 'bg-indigo-50 border-indigo-200 text-indigo-800'
                                                 }`}>
-                                                    <span className="text-sm shrink-0 animate-pulse">🚗</span>
+                                                    <Car className="w-3.5 h-3.5 shrink-0 text-indigo-400 animate-pulse" />
                                                     <div className="min-w-0 flex-1">
                                                         <div className="flex items-center justify-between gap-1">
                                                             <p className="text-[9px] font-black uppercase tracking-wider text-indigo-400">
@@ -680,11 +741,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
                                                                     convoyService.joinConvoy(member.id);
-                                                                    if (showNotification) showNotification(`🚗 Linked into convoy with ${member.name}!`);
+                                                                    if (showNotification) showNotification(`Linked into convoy with ${member.name}!`);
                                                                 }}
                                                                 className="px-2 py-0.5 rounded-md bg-purple-600 hover:bg-purple-500 text-white text-[8px] font-black shadow-sm flex items-center gap-1 active:scale-95"
                                                             >
-                                                                <span>🚗🚗</span>
+                                                                <Car className="w-3 h-3 shrink-0" />
                                                                 <span>Join Convoy</span>
                                                             </button>
                                                         </div>
@@ -697,6 +758,14 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         </div>
                                     );
                                 })}
+
+                                    {/* Add Member / Invite to Circle Button */}
+                                    <AddMemberButton
+                                        onClick={handleAddMember}
+                                        theme={isDark ? 'dark' : 'light'}
+                                        label="Add Member"
+                                        className="mt-0.5"
+                                    />
                                 </div>
 
                                 {/* ─── HISTORY & ACCESS SECTION (MOBILE BENTO GRID) ─── */}
@@ -712,7 +781,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                     isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
                                             >
-                                                <span className="text-xl">🛣️</span>
+                                                <Navigation className="w-5 h-5 text-indigo-400 shrink-0" />
                                                 <div>
                                                     <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Trips</p>
                                                     <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Journeys</p>
@@ -726,10 +795,13 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                     isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
                                             >
-                                                <span className="text-xl">🏆</span>
+                                                <Trophy className="w-5 h-5 text-amber-400 shrink-0" />
                                                 <div>
                                                     <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>Scorecard</p>
-                                                    <p className="text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">🏆 Badges</p>
+                                                    <span className="flex items-center gap-1 text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">
+                                                        <Trophy className="w-2.5 h-2.5 shrink-0" />
+                                                        <span>Badges</span>
+                                                    </span>
                                                 </div>
                                             </button>
                                         )}
@@ -740,7 +812,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                     isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
                                             >
-                                                <span className="text-xl">🔔</span>
+                                                <Bell className="w-5 h-5 text-sky-400 shrink-0" />
                                                 <div>
                                                     <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Alerts</p>
                                                     <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Alerts</p>
@@ -754,7 +826,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                     isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
                                             >
-                                                <span className="text-xl">🚘</span>
+                                                <Wrench className="w-5 h-5 text-rose-400 shrink-0" />
                                                 <div>
                                                     <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Garage & Maintenance</p>
                                                     <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Garage & Logs</p>
@@ -772,7 +844,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                             duration={1500}
                                             className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl bg-red-500/15 border border-red-500/30 active:scale-95 transition-all shadow-lg active:ring-2 active:ring-red-500/50"
                                         >
-                                            <span className="text-xl">🚨</span>
+                                            <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
                                             <span className="text-xs text-red-500 font-extrabold uppercase tracking-wider">Emergency SOS (Hold)</span>
                                         </HoldToActivate>
                                     </div>
@@ -811,45 +883,43 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                 isDark ? 'bg-slate-800/80 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
                                             }`}
                                         />
-                                        <div className="flex gap-2">
-                                            <select
-                                                value={customPlaceIcon}
-                                                onChange={(e) => setCustomPlaceIcon(e.target.value)}
-                                                className={`px-2.5 py-1.5 rounded-xl border text-xs outline-none ${
-                                                    isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
-                                                }`}
-                                            >
-                                                <option value="📍">📍 Pin</option>
-                                                <option value="🏠">🏠 Home</option>
-                                                <option value="🏢">🏢 Work</option>
-                                                <option value="🎓">🎓 School</option>
-                                                <option value="💪">💪 Gym</option>
-                                                <option value="🍔">🍔 Food</option>
-                                                <option value="☕">☕ Coffee</option>
-                                            </select>
-                                            <select
-                                                value={customPlaceType}
-                                                onChange={(e) => setCustomPlaceType(e.target.value as any)}
-                                                className={`flex-1 px-2.5 py-1.5 rounded-xl border text-xs outline-none ${
-                                                    isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
-                                                }`}
-                                            >
-                                                <option value="other">General</option>
-                                                <option value="home">Home</option>
-                                                <option value="work">Work</option>
-                                                <option value="school">School</option>
-                                                <option value="gym">Gym</option>
-                                                <option value="food">Food</option>
-                                                <option value="gas">Gas Station</option>
-                                            </select>
-                                            <button
-                                                onClick={handleSaveCustomPlace}
-                                                disabled={!customPlaceName.trim()}
-                                                className="px-4 py-1.5 bg-indigo-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md active:scale-95 transition-all"
-                                            >
-                                                Save
-                                            </button>
+                                        <div className="space-y-1.5">
+                                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Category</span>
+                                            <div className="grid grid-cols-4 gap-1.5">
+                                                {BOTTOM_SHEET_PLACE_CATEGORIES.map((cat) => {
+                                                    const isSelected = customPlaceIcon === cat.icon;
+                                                    const IconComp = cat.iconComp;
+                                                    return (
+                                                        <button
+                                                            key={cat.type}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setCustomPlaceIcon(cat.icon);
+                                                                setCustomPlaceType(cat.type as any);
+                                                            }}
+                                                            className={`p-1.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer group ${
+                                                                isSelected
+                                                                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/30'
+                                                                    : isDark
+                                                                        ? 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
+                                                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+                                                            }`}
+                                                            title={cat.label}
+                                                        >
+                                                            <IconComp className={`w-4 h-4 shrink-0 transition-colors ${isSelected ? 'text-white' : 'text-slate-500 group-hover:text-slate-400'}`} />
+                                                            <span className={`text-[8px] font-bold truncate ${isSelected ? 'text-white' : ''}`}>{cat.label}</span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
                                         </div>
+                                        <button
+                                            onClick={handleSaveCustomPlace}
+                                            disabled={!customPlaceName.trim()}
+                                            className="w-full py-2 bg-indigo-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md active:scale-95 transition-all cursor-pointer"
+                                        >
+                                            Save Place
+                                        </button>
                                     </div>
                                 )}
 
@@ -858,7 +928,9 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                     <div className={`p-6 rounded-2xl border text-center space-y-2 ${
                                         isDark ? 'bg-white/5 border-white/5 text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'
                                     }`}>
-                                        <span className="text-3xl block">📍</span>
+                                        <div className="w-12 h-12 rounded-2xl bg-slate-800/40 border border-white/5 flex items-center justify-center mx-auto mb-2 text-slate-500">
+                                            <MapPin className="w-6 h-6" />
+                                        </div>
                                         <p className="text-xs font-bold">No Saved Places Yet</p>
                                         <p className="text-[10px] leading-relaxed">
                                             Search for any location and tap ⭐ Star to save it as a family geofence.
@@ -887,10 +959,10 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                 }`}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 border ${
+                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
                                                         isDark ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-indigo-50 border-indigo-100'
                                                     }`}>
-                                                        {place.icon || '📍'}
+                                                        {renderPlaceIcon(place.icon, place.type, place.name)}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center justify-between gap-1">
@@ -934,7 +1006,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             }}
                                                             className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
                                                         >
-                                                            <span>🚀</span> Navigate Here
+                                                            <Navigation className="w-3.5 h-3.5 fill-current shrink-0" />
+                                                            <span>Navigate Here</span>
                                                         </button>
                                                     )}
                                                     {onEditPlace && (
@@ -947,7 +1020,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             className="p-1.5 px-2.5 rounded-xl border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 text-xs font-bold active:scale-95 transition-all cursor-pointer"
                                                             title="Edit Place & Geofence"
                                                         >
-                                                            ✏️
+                                                            <Edit3 className="w-3.5 h-3.5" />
                                                         </button>
                                                     )}
                                                     {onDeletePlace && (
@@ -961,7 +1034,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             className="p-1.5 px-2.5 rounded-xl border border-red-500/20 text-red-400 hover:bg-red-500/10 text-xs font-bold active:scale-95 transition-all"
                                                             title="Delete"
                                                         >
-                                                            🗑️
+                                                            <Trash2 className="w-3.5 h-3.5" />
                                                         </button>
                                                     )}
                                                 </div>

@@ -4,6 +4,8 @@ import { functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 import { getDistanceFromCoords as getDistanceMeters } from '../utils/geo';
 import { placeCorrectionService } from './placeCorrectionService';
+import { communityBuildingService } from './communityBuildingService';
+import { contributionService, applyCommunityPinsToPlaces } from './contributionService';
 
 // Mapbox Geocoding Access Token for rooftop-accurate address search & autocomplete
 // Google Places & Geocoding API Configuration for rooftop-accurate address search & autocomplete
@@ -269,6 +271,7 @@ const searchViaProxy = async (
 
     // Apply user & community precision location corrections and photos
     results = placeCorrectionService.applyCorrectionsToPlaces(results);
+    results = await applyCommunityPinsToPlaces(results);
 
     return results;
 };
@@ -457,6 +460,8 @@ const searchViaPhoton = async (
             const cleanAddress = parts.length > 0 ? parts.join(', ') : (props.name || 'Nearby');
 
             const osmValue = (props.osm_value || props.type || '').toLowerCase();
+            const isStreetOrHighway = osmValue === 'highway' || props.type === 'street' || props.osm_key === 'highway';
+            const hasVerifiedHouseNum = Boolean(props.housenumber) && !isStreetOrHighway;
             let placeType: Place['type'] = 'search_result';
             if (osmValue === 'fuel') placeType = 'gas';
             else if (osmValue === 'cafe') placeType = 'coffee';
@@ -490,7 +495,10 @@ const searchViaPhoton = async (
                 location: { lat, lng },
                 radius: 0.15,
                 brandColor: '#6366f1',
-                description: cleanAddress
+                description: cleanAddress,
+                houseNumber: hasVerifiedHouseNum ? String(props.housenumber) : undefined,
+                isRooftop: hasVerifiedHouseNum,
+                geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : 'street'
             };
         });
     } catch (err) {
@@ -779,9 +787,12 @@ const searchViaNominatim = async (
             const roadName = addr.road || r.name || (r.display_name ? r.display_name.split(',')[0] : 'Unknown Place');
             
             // STRICT VERIFICATION: ONLY use house number if explicitly verified by Nominatim/OSM
-            // NEVER synthesize or force-prepend queryHouseNum onto an unverified road centerline!
+            // NEVER synthesize or force-prepend queryHouseNum onto an unverified road centerline or intersection!
             const verifiedHouseNum = addr.house_number || '';
-            const displayName = verifiedHouseNum ? `${verifiedHouseNum} ${roadName}` : roadName;
+            const isIntersection = r.addresstype === 'intersection' || r.type === 'intersection';
+            const isStreetOrRoad = r.class === 'highway' || r.addresstype === 'road' || !verifiedHouseNum;
+            const hasVerifiedHouseNum = Boolean(verifiedHouseNum) && !isStreetOrRoad;
+            const displayName = hasVerifiedHouseNum ? `${verifiedHouseNum} ${roadName}` : roadName;
 
             const city = addr.city || addr.town || addr.village || addr.hamlet || 'Fayetteville';
             const state = addr.state || 'NC';
@@ -810,7 +821,10 @@ const searchViaNominatim = async (
                 type: placeType,
                 icon,
                 rating: 4.5,
-                source: 'nominatim'
+                source: 'nominatim',
+                houseNumber: hasVerifiedHouseNum ? verifiedHouseNum : undefined,
+                isRooftop: hasVerifiedHouseNum,
+                geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : (isIntersection ? 'intersection' : 'street')
             };
         });
 
@@ -928,17 +942,19 @@ export const searchPlacesText = async (
                                             const streetNumberComp = r.address_components?.find((c: any) => c.types?.includes('street_number'));
                                             const isRooftop = r.geometry?.location_type === 'ROOFTOP';
                                             const hasVerifiedHouseNum = Boolean(streetNumberComp?.long_name || streetNumberComp?.short_name) && isRooftop;
+                                            const isIntersection = r.types?.includes('intersection');
                                             const isRouteOnly = (r.types?.includes('route') || r.geometry?.location_type === 'GEOMETRIC_CENTER' || r.geometry?.location_type === 'RANGE_INTERPOLATED' || r.geometry?.location_type === 'APPROXIMATE') && !hasVerifiedHouseNum;
 
                                             let mainText = pred.structured_formatting?.main_text || pred.description?.split(',')[0] || '';
                                             let formattedAddress = r.formatted_address || pred.description || mainText;
 
-                                            // If search query started with a house number, but API only matched the road:
-                                            // Format strictly as the verified road/street, never a fabricated numbered address
-                                            if (queryHouseNum && isRouteOnly) {
+                                            // NEVER synthesize or force-prepend queryHouseNum onto an unverified road centerline or intersection!
+                                            if (!hasVerifiedHouseNum) {
                                                 const routeComp = r.address_components?.find((c: any) => c.types?.includes('route'));
-                                                mainText = routeComp?.long_name || mainText.replace(/^\d+[a-zA-Z]?\s+/, '');
-                                                formattedAddress = formattedAddress.replace(/^\d+[a-zA-Z]?\s+/, '');
+                                                if (isRouteOnly || isIntersection) {
+                                                    mainText = routeComp?.long_name || mainText.replace(/^\d+[a-zA-Z]?\s+/, '');
+                                                    formattedAddress = formattedAddress.replace(/^\d+[a-zA-Z]?\s+/, '');
+                                                }
                                             }
 
                                             const types = [...(pred.types || []), ...(r.types || [])];
@@ -962,7 +978,10 @@ export const searchPlacesText = async (
                                                 brandColor: '#4285F4',
                                                 description: formattedAddress,
                                                 address: formattedAddress,
-                                                rating: 4.5
+                                                rating: 4.5,
+                                                houseNumber: hasVerifiedHouseNum ? (streetNumberComp?.long_name || streetNumberComp?.short_name) : undefined,
+                                                isRooftop: hasVerifiedHouseNum,
+                                                geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : (isIntersection ? 'intersection' : 'street')
                                             });
                                         } else {
                                             resResolve(null);
@@ -974,7 +993,8 @@ export const searchPlacesText = async (
 
                         const validMapped = resolved.filter((p): p is Place => p !== null);
                         if (validMapped.length > 0) {
-                            const uniquePlaces = deduplicatePlaces(validMapped);
+                            const verifiedPlaces = await applyCommunityPinsToPlaces(validMapped);
+                            const uniquePlaces = deduplicatePlaces(verifiedPlaces);
                             setCachedResults(cacheKey, uniquePlaces);
                             return uniquePlaces;
                         }
@@ -1019,12 +1039,13 @@ export const searchPlacesText = async (
                             const streetNumberComp = res.address_components?.find((c: any) => c.types?.includes('street_number'));
                             const isRooftop = res.geometry?.location_type === 'ROOFTOP';
                             const hasVerifiedHouseNum = Boolean(streetNumberComp?.long_name || streetNumberComp?.short_name) && isRooftop;
+                            const isIntersection = res.types?.includes('intersection');
                             const isRouteOnly = (res.types?.includes('route') || res.geometry?.location_type === 'GEOMETRIC_CENTER' || res.geometry?.location_type === 'RANGE_INTERPOLATED' || res.geometry?.location_type === 'APPROXIMATE') && !hasVerifiedHouseNum;
 
                             let mainText = pred.structured_formatting?.main_text || pred.description?.split(',')[0] || '';
                             let formattedAddress = res.formatted_address || pred.description || mainText;
 
-                            if (queryHouseNum && isRouteOnly) {
+                            if (!hasVerifiedHouseNum && (isRouteOnly || isIntersection)) {
                                 const routeComp = res.address_components?.find((c: any) => c.types?.includes('route'));
                                 mainText = routeComp?.long_name || mainText.replace(/^\d+[a-zA-Z]?\s+/, '');
                                 formattedAddress = formattedAddress.replace(/^\d+[a-zA-Z]?\s+/, '');
@@ -1051,7 +1072,10 @@ export const searchPlacesText = async (
                                 brandColor: '#4285F4',
                                 description: formattedAddress,
                                 address: formattedAddress,
-                                rating: 4.5
+                                rating: 4.5,
+                                houseNumber: hasVerifiedHouseNum ? (streetNumberComp?.long_name || streetNumberComp?.short_name) : undefined,
+                                isRooftop: hasVerifiedHouseNum,
+                                geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : (isIntersection ? 'intersection' : 'street')
                             };
                         } catch {
                             return null;
@@ -1061,7 +1085,8 @@ export const searchPlacesText = async (
 
                 const validMapped = resolvedPlaces.filter((p): p is Place => p !== null);
                 if (validMapped.length > 0) {
-                    const uniquePlaces = deduplicatePlaces(validMapped);
+                    const verifiedPlaces = await applyCommunityPinsToPlaces(validMapped);
+                    const uniquePlaces = deduplicatePlaces(verifiedPlaces);
                     setCachedResults(cacheKey, uniquePlaces);
                     return uniquePlaces;
                 }
@@ -1087,12 +1112,13 @@ export const searchPlacesText = async (
                         const streetNumberComp = place.address_components?.find((c: any) => c.types?.includes('street_number'));
                         const isRooftop = place.geometry?.location_type === 'ROOFTOP';
                         const hasVerifiedHouseNum = Boolean(streetNumberComp?.long_name || streetNumberComp?.short_name) && isRooftop;
+                        const isIntersection = place.types?.includes('intersection');
                         const isRouteOnly = (place.types?.includes('route') || place.geometry?.location_type === 'GEOMETRIC_CENTER' || place.geometry?.location_type === 'RANGE_INTERPOLATED' || place.geometry?.location_type === 'APPROXIMATE') && !hasVerifiedHouseNum;
 
                         let formattedAddr = place.formatted_address || '';
                         let displayName = formattedAddr.split(',')[0] || '';
 
-                        if (queryHouseNum && isRouteOnly) {
+                        if (!hasVerifiedHouseNum && (isRouteOnly || isIntersection)) {
                             const routeComp = place.address_components?.find((c: any) => c.types?.includes('route'));
                             displayName = routeComp?.long_name || displayName.replace(/^\d+[a-zA-Z]?\s+/, '');
                             formattedAddr = formattedAddr.replace(/^\d+[a-zA-Z]?\s+/, '');
@@ -1108,11 +1134,15 @@ export const searchPlacesText = async (
                             brandColor: '#4285F4',
                             description: formattedAddr,
                             address: formattedAddr,
-                            rating: 4.5
+                            rating: 4.5,
+                            houseNumber: hasVerifiedHouseNum ? (streetNumberComp?.long_name || streetNumberComp?.short_name) : undefined,
+                            isRooftop: hasVerifiedHouseNum,
+                            geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : (isIntersection ? 'intersection' : 'street')
                         };
                     });
 
-                    const uniquePlaces = deduplicatePlaces(mappedResults);
+                    const verifiedPlaces = await applyCommunityPinsToPlaces(mappedResults);
+                    const uniquePlaces = deduplicatePlaces(verifiedPlaces);
                     setCachedResults(cacheKey, uniquePlaces);
                     return uniquePlaces;
                 }
@@ -1126,13 +1156,16 @@ export const searchPlacesText = async (
 
     // 2. Fallback: Proxy search via Firebase Functions / OSM if Google key is unavailable or restricted
     const fallbackResults = await searchViaProxy(validLoc, query);
-    const uniqueFallbackPlaces = deduplicatePlaces(fallbackResults);
+    const verifiedFallback = await applyCommunityPinsToPlaces(fallbackResults);
+    const uniqueFallbackPlaces = deduplicatePlaces(verifiedFallback);
 
     if (uniqueFallbackPlaces.length > 0) {
         setCachedResults(cacheKey, uniqueFallbackPlaces);
     }
     return uniqueFallbackPlaces;
 };
+
+export { applyCommunityPinsToPlaces };
 
 // Quick search categories
 export const searchGasStations = (location: { lat: number; lng: number }) =>
@@ -1236,4 +1269,196 @@ export const searchMaintenanceAlongRoute = async (
         console.warn('[PlacesService] Failed to search maintenance along route:', e);
         return [];
     }
+};
+
+/**
+ * Reverse-geocode geographic coordinates into a high-accuracy Place representation
+ * Tier 1: Local community buildings cache (0ms instant lookup)
+ * Tier 2: Google Maps Geocoder (SDK or REST)
+ * Tier 3: Nominatim / Photon OpenStreetMap reverse geocoder fallback
+ */
+export const reverseGeocode = async (
+    coordinates: { lat: number; lng: number }
+): Promise<Place | null> => {
+    if (!coordinates || typeof coordinates.lat !== 'number' || typeof coordinates.lng !== 'number') {
+        return null;
+    }
+
+    const { lat, lng } = coordinates;
+
+    // --- Tier 1: Local Community Buildings Lookup (~25m radius) ---
+    try {
+        const buildings = communityBuildingService.getAllBuildings();
+        let closestBuilding: any = null;
+        let minDistanceMeters = 25; // 25m proximity threshold for building footprints
+
+        for (const b of buildings) {
+            if (b && b.coordinates && typeof b.coordinates.lat === 'number' && typeof b.coordinates.lng === 'number') {
+                const dist = getDistanceMeters(lat, lng, b.coordinates.lat, b.coordinates.lng);
+                if (dist < minDistanceMeters) {
+                    minDistanceMeters = dist;
+                    closestBuilding = b;
+                }
+            }
+        }
+
+        if (closestBuilding) {
+            const hn = closestBuilding.houseNumber || '';
+            const addr = closestBuilding.address || `Building ${hn}`;
+            return {
+                id: `community-${closestBuilding.id || `${lat.toFixed(5)}_${lng.toFixed(5)}`}`,
+                name: addr,
+                address: addr,
+                description: addr,
+                location: closestBuilding.coordinates,
+                houseNumber: hn,
+                isRooftop: true,
+                geocodePrecision: 'rooftop',
+                type: 'search_result',
+                icon: '📍',
+                brandColor: '#6366f1'
+            };
+        }
+    } catch (e) {
+        console.debug('[PlacesService] Tier 1 community reverse geocode error:', e);
+    }
+
+    // --- Tier 2: Google Maps Geocoder (SDK or REST) ---
+    const apiKey = getActiveGoogleKey();
+    if (apiKey && !googleMapsAuthFailed) {
+        try {
+            await ensureGoogleMapsLoaded();
+            if (typeof google !== 'undefined' && google.maps?.Geocoder) {
+                const geocoder = new google.maps.Geocoder();
+                const result = await new Promise<any>((resolve) => {
+                    geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+                        if (status === 'OK' && results && results.length > 0) {
+                            resolve(results[0]);
+                        } else {
+                            resolve(null);
+                        }
+                    });
+                });
+
+                if (result) {
+                    const streetNumberComp = result.address_components?.find((c: any) => c.types?.includes('street_number'));
+                    const routeComp = result.address_components?.find((c: any) => c.types?.includes('route'));
+                    const isRooftop = result.geometry?.location_type === 'ROOFTOP';
+                    const hasVerifiedHouseNum = Boolean(streetNumberComp?.long_name || streetNumberComp?.short_name) && isRooftop;
+                    const resLoc = result.geometry?.location;
+                    const resLat = typeof resLoc.lat === 'function' ? resLoc.lat() : resLoc.lat;
+                    const resLng = typeof resLoc.lng === 'function' ? resLoc.lng() : resLoc.lng;
+
+                    let displayName = result.formatted_address?.split(',')[0] || '';
+                    if (!hasVerifiedHouseNum && routeComp) {
+                        displayName = routeComp.long_name;
+                    }
+
+                    return {
+                        id: `google-rev-${result.place_id || `${lat.toFixed(5)}_${lng.toFixed(5)}`}`,
+                        name: displayName || result.formatted_address,
+                        address: result.formatted_address,
+                        description: result.formatted_address,
+                        location: { lat: resLat, lng: resLng },
+                        houseNumber: hasVerifiedHouseNum ? (streetNumberComp?.long_name || streetNumberComp?.short_name) : undefined,
+                        isRooftop: hasVerifiedHouseNum,
+                        geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : 'street',
+                        type: 'search_result',
+                        icon: '📍',
+                        brandColor: '#4285F4'
+                    };
+                }
+            }
+        } catch (err) {
+            console.debug('[PlacesService] Google SDK reverse geocode error:', err);
+        }
+
+        // REST fallback if SDK failed
+        try {
+            const apiBase = getGoogleApiBase();
+            const url = `${apiBase}/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'OK' && data.results && data.results.length > 0) {
+                    const r = data.results[0];
+                    const streetNumberComp = r.address_components?.find((c: any) => c.types?.includes('street_number'));
+                    const routeComp = r.address_components?.find((c: any) => c.types?.includes('route'));
+                    const isRooftop = r.geometry?.location_type === 'ROOFTOP';
+                    const hasVerifiedHouseNum = Boolean(streetNumberComp?.long_name || streetNumberComp?.short_name) && isRooftop;
+                    const loc = r.geometry?.location || { lat, lng };
+
+                    let displayName = r.formatted_address?.split(',')[0] || '';
+                    if (!hasVerifiedHouseNum && routeComp) {
+                        displayName = routeComp.long_name;
+                    }
+
+                    return {
+                        id: `google-rev-${r.place_id || `${lat.toFixed(5)}_${lng.toFixed(5)}`}`,
+                        name: displayName || r.formatted_address,
+                        address: r.formatted_address,
+                        description: r.formatted_address,
+                        location: { lat: loc.lat, lng: loc.lng },
+                        houseNumber: hasVerifiedHouseNum ? (streetNumberComp?.long_name || streetNumberComp?.short_name) : undefined,
+                        isRooftop: hasVerifiedHouseNum,
+                        geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : 'street',
+                        type: 'search_result',
+                        icon: '📍',
+                        brandColor: '#4285F4'
+                    };
+                }
+            }
+        } catch (err) {
+            console.debug('[PlacesService] Google REST reverse geocode error:', err);
+        }
+    }
+
+    // --- Tier 3: Nominatim / Photon Fallback ---
+    try {
+        const nomUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`;
+        const nomRes = await fetch(nomUrl, { 
+            headers: { 'Accept': 'application/json', 'User-Agent': 'MyWay-GPS/1.0' },
+            signal: AbortSignal.timeout(3500)
+        });
+        if (nomRes.ok) {
+            const nomData = await nomRes.json();
+            if (nomData && nomData.address) {
+                const addr = nomData.address;
+                const hn = addr.house_number;
+                const road = addr.road || addr.pedestrian || addr.suburb || '';
+                const cleanName = hn && road ? `${hn} ${road}` : (road || nomData.display_name?.split(',')[0] || 'Unknown Location');
+
+                return {
+                    id: `nominatim-rev-${nomData.place_id || `${lat.toFixed(5)}_${lng.toFixed(5)}`}`,
+                    name: cleanName,
+                    address: nomData.display_name,
+                    description: nomData.display_name,
+                    location: {
+                        lat: parseFloat(nomData.lat) || lat,
+                        lng: parseFloat(nomData.lon) || lng
+                    },
+                    houseNumber: hn || undefined,
+                    isRooftop: Boolean(hn),
+                    geocodePrecision: hn ? 'rooftop' : 'street',
+                    type: 'search_result',
+                    icon: '📍',
+                    brandColor: '#6366f1'
+                };
+            }
+        }
+    } catch (e) {
+        console.debug('[PlacesService] Nominatim reverse geocode error:', e);
+    }
+
+    // Fallback: Return a coordinate-derived generic place
+    return {
+        id: `coord-${lat.toFixed(5)}_${lng.toFixed(5)}`,
+        name: `Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+        address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        description: `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        location: { lat, lng },
+        type: 'search_result',
+        icon: '📍',
+        brandColor: '#6366f1'
+    };
 };

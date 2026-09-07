@@ -155,6 +155,8 @@ export interface FamilyMember {
   signalQuality?: 'excellent' | 'good' | 'poor';
   heading?: number;
   battery: number;
+  batteryLevel?: number;
+  isCharging?: boolean;
   speed: number;
   lastUpdated: string;
   status: 'Moving' | 'Stationary' | 'Driving' | 'Walking' | 'Offline' | 'Arrived';
@@ -168,6 +170,10 @@ export interface FamilyMember {
   privacyMode?: PrivacyMode;
   blurredRadiusMeters?: number;
   sosActive?: boolean;
+  isSOSActive?: boolean;
+  isStationary?: boolean;
+  atSavedPlace?: boolean;
+  isDriving?: boolean;
   impact?: CrashImpactMetadata;
   locationStale?: boolean; // Audit Fix: Flag for E2EE key exchange pending (shows last known location)
   membershipTier: 'free' | 'gold' | 'platinum';
@@ -179,15 +185,34 @@ export interface FamilyMember {
 
 export type EntranceType = 'drive_thru' | 'parking' | 'main_door' | 'curbside' | 'general' | 'driveway' | 'front_door';
 
+export interface EntranceBox {
+  widthMeters: number; // Width of driveway/parking zone (e.g. 10m - 15m)
+  lengthMeters: number; // Length along driveway (e.g. 20m - 25m)
+  rotationDeg: number; // Orientation angle in degrees (0-360) to align with driveway
+}
+
+export interface EntrancePrecision {
+  location: Location;
+  radius: number; // in meters (e.g. 15m for driveway/front_door, 25m for parking)
+  box?: EntranceBox; // Rectangular/square footprint to prevent false-positive triggers from the street
+  polygon?: ({ lat: number; lng: number } | [number, number])[]; // Custom polygonal geofence / driveway zone
+  drivewayPolygon?: ({ lat: number; lng: number } | [number, number])[]; // Specific driveway polygon ring
+}
+
 export interface Place {
   id: string;
   name: string;
   location: Location;
   radius: number;
-  type: 'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result' | 'sponsored' | 'maintenance' | 'mechanic' | 'emergency' | 'hospital' | 'police' | 'fire_station' | 'pharmacy' | 'grocery';
+  departureRadius?: number; // Geofence departure radius in meters (e.g. 15m, 50m, 150m, 1000m, 2000m)
+  polygon?: ({ lat: number; lng: number } | [number, number])[]; // Custom polygonal geofence (e.g. driveway, parcel boundary)
+  drivewayPolygon?: ({ lat: number; lng: number } | [number, number])[]; // Specific driveway polygon ring
+  type: 'home' | 'residential' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other' | 'search_result' | 'sponsored' | 'maintenance' | 'mechanic' | 'emergency' | 'hospital' | 'police' | 'fire_station' | 'pharmacy' | 'grocery' | 'parked_vehicle';
+  category?: string;
   icon: string;
   brandColor?: string;
   isAmbient?: boolean; // Ambient community always-visible POI on map (gas, fire, hospital, police, etc.)
+  isSaved?: boolean; // True for saved user/circle geofenced places, false for temporary search results or discovered POIs
   deal?: string;
   description?: string; // Full address string (e.g., "123 Main St, City, State, USA")
   address?: string; // Optional alias for address string
@@ -198,8 +223,10 @@ export interface Place {
   imageUrl?: string; // Storefront / entrance photo URL or Data URI
   isCorrected?: boolean; // User-verified / corrected entrance location
   entranceLocation?: Location; // Driveway curb-cut or entrance coordinate for micro-geofencing
+  entrancePin?: Location; // Precision entrance pin coordinates
   entranceType?: EntranceType; // Specific entrance category (drive-thru, parking, main door, curbside, driveway, front_door)
   entranceNotes?: string; // e.g. "East side drive-thru entrance"
+  entrancePrecision?: EntrancePrecision; // High-precision entrance coordinates & arrival radius
   correctedAt?: number; // Timestamp of the correction
   submitterId?: string; // Member ID who verified the pin
   submitterName?: string; // Display name (e.g. "Mom", "Alex")
@@ -207,6 +234,18 @@ export interface Place {
   helpfulCount?: number; // Total "Helpful" upvotes
   helpfulUserIds?: string[]; // IDs of members who upvoted
   originalLocation?: Location; // Location prior to correction
+  houseNumber?: string; // Extracted or verified building/rooftop house number
+  isRooftop?: boolean; // True only if geocoder resolved strictly to a verified rooftop building
+  geocodePrecision?: 'rooftop' | 'interpolated' | 'street' | 'intersection' | 'approximate'; // Accuracy tier
+  isCommunityVerified?: boolean; // True when destination coordinates are verified by the global community_pins collection
+}
+
+export interface ParkedVehiclePlace extends Place {
+  type: 'parked_vehicle';
+  parkedAt: number;
+  hasWalkedAway: boolean;
+  hasReturned?: boolean;
+  nearestAddress?: string;
 }
 
 export interface ArrivalTripData {

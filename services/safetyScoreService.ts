@@ -201,21 +201,21 @@ export const calculateFamilyLeaderboard = (
             trend: avgScore >= 90 ? 'improving' : 'stable'
         };
     } else {
-        // Fallback if user has not completed trips yet this week
+        // Empty state: user has not completed trips yet this week
         selfStats = {
             memberId: currentUserId || 'current_user',
             name: selfMember?.name || 'You',
             avatar: selfMember?.avatar || '',
             role: selfMember?.role || 'Primary',
-            safetyScore: 98,
-            totalMiles: 42.6,
-            totalTrips: 8,
-            driveMinutes: 68,
+            safetyScore: 0,
+            totalMiles: 0,
+            totalTrips: 0,
+            driveMinutes: 0,
             hardBrakes: 0,
-            rapidAccels: 1,
+            rapidAccels: 0,
             speedingEvents: 0,
-            ecoScore: 96,
-            trend: 'improving'
+            ecoScore: 0,
+            trend: 'stable'
         };
     }
 
@@ -238,8 +238,13 @@ export const calculateFamilyLeaderboard = (
         }
     });
 
-    // 3. Sort by Safety Score descending (Tie-breaker: totalMiles)
+    // 3. Sort by Safety Score descending (Active drivers first, tie-breaker: totalMiles)
     allMemberStats.sort((a, b) => {
+        const aDrove = a.totalTrips > 0;
+        const bDrove = b.totalTrips > 0;
+        if (aDrove !== bDrove) {
+            return aDrove ? -1 : 1;
+        }
         if (b.safetyScore !== a.safetyScore) {
             return b.safetyScore - a.safetyScore;
         }
@@ -247,38 +252,45 @@ export const calculateFamilyLeaderboard = (
     });
 
     // 4. Award Badges
-    // Find winners for each category
-    let smoothOperatorWinner = allMemberStats[0];
-    let minBrakes = Infinity;
-    allMemberStats.forEach(m => {
-        if (m.hardBrakes < minBrakes) {
-            minBrakes = m.hardBrakes;
-            smoothOperatorWinner = m;
-        }
-    });
+    const MIN_AWARD_MILES = 1;
+    const activeDrivers = allMemberStats.filter(m => m.totalTrips > 0 && m.totalMiles >= MIN_AWARD_MILES);
 
-    let roadWarriorWinner = allMemberStats[0];
-    let maxMiles = -1;
-    allMemberStats.forEach(m => {
-        if (m.totalMiles > maxMiles) {
-            maxMiles = m.totalMiles;
-            roadWarriorWinner = m;
-        }
-    });
+    // Find winners for each category among active qualifying drivers
+    let smoothOperatorWinner: typeof allMemberStats[0] | undefined;
+    let roadWarriorWinner: typeof allMemberStats[0] | undefined;
+    let ecoCruiserWinner: typeof allMemberStats[0] | undefined;
 
-    let ecoCruiserWinner = allMemberStats[0];
-    let maxEco = -1;
-    allMemberStats.forEach(m => {
-        if (m.ecoScore > maxEco) {
-            maxEco = m.ecoScore;
-            ecoCruiserWinner = m;
-        }
-    });
+    if (activeDrivers.length > 0) {
+        let minBrakes = Infinity;
+        activeDrivers.forEach(m => {
+            if (m.hardBrakes < minBrakes) {
+                minBrakes = m.hardBrakes;
+                smoothOperatorWinner = m;
+            }
+        });
+
+        let maxMiles = -1;
+        activeDrivers.forEach(m => {
+            if (m.totalMiles > maxMiles) {
+                maxMiles = m.totalMiles;
+                roadWarriorWinner = m;
+            }
+        });
+
+        let maxEco = -1;
+        activeDrivers.forEach(m => {
+            if (m.ecoScore > maxEco) {
+                maxEco = m.ecoScore;
+                ecoCruiserWinner = m;
+            }
+        });
+    }
 
     const finalMembers: MemberDrivingStats[] = allMemberStats.map((m, index) => {
         const memberBadges: SafetyBadge[] = [];
+        const hasQualifyingDrives = m.totalTrips > 0 && m.totalMiles >= MIN_AWARD_MILES;
 
-        if (m.memberId === smoothOperatorWinner.memberId && m.hardBrakes === 0) {
+        if (hasQualifyingDrives && smoothOperatorWinner && m.memberId === smoothOperatorWinner.memberId && m.hardBrakes === 0) {
             memberBadges.push({
                 ...SAFETY_BADGE_DEFINITIONS.smooth_operator,
                 winnerId: m.memberId,
@@ -289,7 +301,7 @@ export const calculateFamilyLeaderboard = (
             });
         }
 
-        if (m.memberId === roadWarriorWinner.memberId) {
+        if (hasQualifyingDrives && roadWarriorWinner && m.memberId === roadWarriorWinner.memberId) {
             memberBadges.push({
                 ...SAFETY_BADGE_DEFINITIONS.road_warrior,
                 winnerId: m.memberId,
@@ -300,7 +312,7 @@ export const calculateFamilyLeaderboard = (
             });
         }
 
-        if (m.memberId === ecoCruiserWinner.memberId) {
+        if (hasQualifyingDrives && m.ecoScore > 0 && ecoCruiserWinner && m.memberId === ecoCruiserWinner.memberId) {
             memberBadges.push({
                 ...SAFETY_BADGE_DEFINITIONS.eco_cruiser,
                 winnerId: m.memberId,
@@ -311,7 +323,7 @@ export const calculateFamilyLeaderboard = (
             });
         }
 
-        if (m.safetyScore >= 95) {
+        if (hasQualifyingDrives && m.safetyScore >= 95) {
             memberBadges.push({
                 ...SAFETY_BADGE_DEFINITIONS.defensive_master,
                 winnerId: m.memberId,
@@ -322,7 +334,7 @@ export const calculateFamilyLeaderboard = (
             });
         }
 
-        if (m.speedingEvents === 0) {
+        if (hasQualifyingDrives && m.speedingEvents === 0) {
             memberBadges.push({
                 ...SAFETY_BADGE_DEFINITIONS.pacing_prodigy,
                 winnerId: m.memberId,
@@ -344,32 +356,35 @@ export const calculateFamilyLeaderboard = (
     const featuredAwards: SafetyBadge[] = [
         {
             ...SAFETY_BADGE_DEFINITIONS.smooth_operator,
-            winnerId: smoothOperatorWinner.memberId,
-            winnerName: smoothOperatorWinner.name,
-            winnerAvatar: smoothOperatorWinner.avatar,
+            winnerId: smoothOperatorWinner?.memberId || '',
+            winnerName: smoothOperatorWinner?.name || '',
+            winnerAvatar: smoothOperatorWinner?.avatar || '',
             metricLabel: 'Hard Brakes',
-            metricValue: `${smoothOperatorWinner.hardBrakes} Events`
+            metricValue: smoothOperatorWinner ? `${smoothOperatorWinner.hardBrakes} Events` : 'Unclaimed'
         },
         {
             ...SAFETY_BADGE_DEFINITIONS.road_warrior,
-            winnerId: roadWarriorWinner.memberId,
-            winnerName: roadWarriorWinner.name,
-            winnerAvatar: roadWarriorWinner.avatar,
+            winnerId: roadWarriorWinner?.memberId || '',
+            winnerName: roadWarriorWinner?.name || '',
+            winnerAvatar: roadWarriorWinner?.avatar || '',
             metricLabel: 'Miles Driven',
-            metricValue: `${roadWarriorWinner.totalMiles} mi`
+            metricValue: roadWarriorWinner ? `${roadWarriorWinner.totalMiles} mi` : 'Unclaimed'
         },
         {
             ...SAFETY_BADGE_DEFINITIONS.eco_cruiser,
-            winnerId: ecoCruiserWinner.memberId,
-            winnerName: ecoCruiserWinner.name,
-            winnerAvatar: ecoCruiserWinner.avatar,
+            winnerId: ecoCruiserWinner?.memberId || '',
+            winnerName: ecoCruiserWinner?.name || '',
+            winnerAvatar: ecoCruiserWinner?.avatar || '',
             metricLabel: 'Efficiency',
-            metricValue: `${ecoCruiserWinner.ecoScore}%`
+            metricValue: ecoCruiserWinner ? `${ecoCruiserWinner.ecoScore}%` : 'Unclaimed'
         }
     ];
 
     const totalGroupMiles = Math.round(finalMembers.reduce((sum, m) => sum + m.totalMiles, 0) * 10) / 10;
-    const avgGroupScore = Math.round(finalMembers.reduce((sum, m) => sum + m.safetyScore, 0) / (finalMembers.length || 1));
+    const activeMembers = finalMembers.filter(m => m.totalTrips > 0);
+    const avgGroupScore = activeMembers.length > 0
+        ? Math.round(activeMembers.reduce((sum, m) => sum + m.safetyScore, 0) / activeMembers.length)
+        : 0;
 
     // Formatted date range (e.g., "Aug 25 – Sep 1")
     const d1 = new Date(weekAgo);
