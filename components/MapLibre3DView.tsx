@@ -1633,17 +1633,86 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         const primaryRouteColor = isCarbonAmber 
             ? '#00f2fe' // Vibrant Electric Cyan — maximum contrast against amber/orange roads
-            : isLightSkin 
-                ? '#00d2ff' // High-contrast Vivid Electric Cyan on light maps
-                : '#00f2fe';
+            : theme === 'dark'
+                ? '#38bdf8' // Luminous Electric Blue in Dark Mode
+                : '#2563eb'; // Vibrant Modern Electric Blue in Daylight
 
         const glowColor = isCarbonAmber 
             ? '#06b6d4' // Electric cyan luminous underglow accent
-            : isLightSkin 
+            : theme === 'dark'
                 ? '#38bdf8' 
-                : '#06b6d4';
+                : '#60a5fa'; // Soft radiant electric blue halo
 
-        const casingColor = '#000000'; // Pure black high-contrast outer border casing
+        const casingColor = isCarbonAmber
+            ? '#082f49'
+            : theme === 'dark'
+                ? '#0c4a6e'
+                : '#1d4ed8'; // Refined royal navy casing — subtle contrast without harsh black
+
+        // ZOOM-INTERPOLATED PROPORTIONAL LINE WIDTHS & BLUR
+        // Proportional across zooms: clean and non-dominant when zoomed out, crisp and native when zoomed in
+        const activeRouteLineWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 3,
+            15, 6,
+            18, 10
+        ];
+
+        const activeRouteCasingWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 5,
+            15, 9,
+            18, 14
+        ];
+
+        const activeRouteGlowWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 8,
+            15, 14,
+            18, 22
+        ];
+
+        const activeRouteGlowBlur = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 2,
+            15, 3.5,
+            18, 5
+        ];
+
+        const activeRouteChevronWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 1.2,
+            15, 2.5,
+            18, 4
+        ];
+
+        const completedRouteWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 2.5,
+            15, 5,
+            18, 8
+        ];
+
+        const altLineWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 2.5,
+            15, 5,
+            18, 8
+        ];
+
+        const altCasingWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 4.5,
+            15, 7.5,
+            18, 11
+        ];
+
+        const altHitboxWidth = [
+            'interpolate', ['linear'], ['zoom'],
+            10, 16,
+            15, 24,
+            18, 32
+        ];
 
         try {
             // 0. COMPLETED ROUTE LAYER (Rendered underneath active route)
@@ -1665,10 +1734,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': theme === 'dark' ? '#475569' : '#94a3b8',
-                        'line-width': 6,
+                        'line-width': completedRouteWidth as any,
                         'line-opacity': 0.45
                     }
                 });
+            } else {
+                map.current.setPaintProperty(completedId, 'line-color', theme === 'dark' ? '#475569' : '#94a3b8');
+                map.current.setPaintProperty(completedId, 'line-width', completedRouteWidth as any);
+                map.current.setPaintProperty(completedId, 'line-opacity', 0.45);
             }
 
             // 0b. ALTERNATIVE ROUTES (SECONDARY PATHS IN MUTED SLATE/SILVER)
@@ -1718,8 +1791,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 });
             }
 
-            const altCasingColor = theme === 'dark' ? '#0f172a' : '#1e293b';
-            const altLineColor = isCarbonAmber ? '#64748b' : theme === 'dark' ? '#475569' : '#94a3b8';
+            const altCasingColor = theme === 'dark' ? '#1e293b' : '#cbd5e1';
+            const altLineColor = isCarbonAmber ? '#64748b' : theme === 'dark' ? '#64748b' : '#94a3b8';
 
             // Alternative casing layer
             if (!map.current.getLayer(altCasingLayerId)) {
@@ -1730,14 +1803,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': altCasingColor,
-                        'line-width': 10,
-                        'line-opacity': 0.7
+                        'line-width': altCasingWidth as any,
+                        'line-opacity': 0.65,
+                        'line-blur': 0.5
                     }
                 });
             } else {
                 map.current.setPaintProperty(altCasingLayerId, 'line-color', altCasingColor);
-                map.current.setPaintProperty(altCasingLayerId, 'line-width', 10);
-                map.current.setPaintProperty(altCasingLayerId, 'line-opacity', 0.7);
+                map.current.setPaintProperty(altCasingLayerId, 'line-width', altCasingWidth as any);
+                map.current.setPaintProperty(altCasingLayerId, 'line-opacity', 0.65);
+                map.current.setPaintProperty(altCasingLayerId, 'line-blur', 0.5);
             }
 
             // Alternative line layer
@@ -1749,14 +1824,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': altLineColor,
-                        'line-width': 6,
-                        'line-opacity': 0.85
+                        'line-width': altLineWidth as any,
+                        'line-opacity': 0.8
                     }
                 });
             } else {
                 map.current.setPaintProperty(altLineLayerId, 'line-color', altLineColor);
-                map.current.setPaintProperty(altLineLayerId, 'line-width', 6);
-                map.current.setPaintProperty(altLineLayerId, 'line-opacity', 0.85);
+                map.current.setPaintProperty(altLineLayerId, 'line-width', altLineWidth as any);
+                map.current.setPaintProperty(altLineLayerId, 'line-opacity', 0.8);
             }
 
             // Alternative hitbox layer (wide transparent line for touch & click)
@@ -1768,10 +1843,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': '#000000',
-                        'line-width': 28,
+                        'line-width': altHitboxWidth as any,
                         'line-opacity': 0.001
                     }
                 });
+            } else {
+                map.current.setPaintProperty(altHitboxLayerId, 'line-width', altHitboxWidth as any);
             }
 
             // 1. UPDATE OR ADD ACTIVE ROUTE SOURCE
@@ -1785,7 +1862,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 });
             }
 
-            // 2. ADD / UPDATE GLOW LAYER (Bottom glow layer)
+            // 2. ADD / UPDATE GLOW LAYER (Bottom glow layer with soft blur)
             if (!map.current.getLayer(`${routeId}-glow`)) {
                 map.current.addLayer({
                     id: `${routeId}-glow`,
@@ -1794,17 +1871,19 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': glowColor,
-                        'line-width': 18,
+                        'line-width': activeRouteGlowWidth as any,
+                        'line-blur': activeRouteGlowBlur as any,
                         'line-opacity': 0.45
                     }
                 });
             } else {
                 map.current.setPaintProperty(`${routeId}-glow`, 'line-color', glowColor);
-                map.current.setPaintProperty(`${routeId}-glow`, 'line-width', 18);
+                map.current.setPaintProperty(`${routeId}-glow`, 'line-width', activeRouteGlowWidth as any);
+                map.current.setPaintProperty(`${routeId}-glow`, 'line-blur', activeRouteGlowBlur as any);
                 map.current.setPaintProperty(`${routeId}-glow`, 'line-opacity', 0.45);
             }
 
-            // 3. ADD / UPDATE CASING LAYER (Solid 2px pure black border on both sides of 8px guideline)
+            // 3. ADD / UPDATE CASING LAYER (Subtle contrasting casing with softened edge)
             if (!map.current.getLayer(`${routeId}-casing`)) {
                 map.current.addLayer({
                     id: `${routeId}-casing`,
@@ -1813,17 +1892,19 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': casingColor,
-                        'line-width': 12,
-                        'line-opacity': 1.0
+                        'line-width': activeRouteCasingWidth as any,
+                        'line-opacity': 0.85,
+                        'line-blur': 0.5
                     }
                 });
             } else {
                 map.current.setPaintProperty(`${routeId}-casing`, 'line-color', casingColor);
-                map.current.setPaintProperty(`${routeId}-casing`, 'line-width', 12);
-                map.current.setPaintProperty(`${routeId}-casing`, 'line-opacity', 1.0);
+                map.current.setPaintProperty(`${routeId}-casing`, 'line-width', activeRouteCasingWidth as any);
+                map.current.setPaintProperty(`${routeId}-casing`, 'line-opacity', 0.85);
+                map.current.setPaintProperty(`${routeId}-casing`, 'line-blur', 0.5);
             }
 
-            // 4. ADD / UPDATE MAIN GUIDELINE LAYER (8px Electric Cyan guideline)
+            // 4. ADD / UPDATE MAIN GUIDELINE LAYER (Zoom-interpolated Electric Blue guideline)
             if (!map.current.getLayer(routeId)) {
                 map.current.addLayer({
                     id: routeId,
@@ -1832,17 +1913,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': primaryRouteColor,
-                        'line-width': 8,
-                        'line-opacity': 1.0
+                        'line-width': activeRouteLineWidth as any,
+                        'line-opacity': 0.98
                     }
                 });
             } else {
                 map.current.setPaintProperty(routeId, 'line-color', primaryRouteColor);
-                map.current.setPaintProperty(routeId, 'line-width', 8);
-                map.current.setPaintProperty(routeId, 'line-opacity', 1.0);
+                map.current.setPaintProperty(routeId, 'line-width', activeRouteLineWidth as any);
+                map.current.setPaintProperty(routeId, 'line-opacity', 0.98);
             }
 
-            // 4b. ADD / UPDATE DIRECTIONAL CHEVRON ACCENT LAYER (White/Cyan turn flow on center line)
+            // 4b. ADD / UPDATE DIRECTIONAL CHEVRON ACCENT LAYER (White turn flow on center line)
             if (!map.current.getLayer(`${routeId}-chevrons`)) {
                 map.current.addLayer({
                     id: `${routeId}-chevrons`,
@@ -1851,17 +1932,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: {
                         'line-color': '#ffffff',
-                        'line-width': 3,
+                        'line-width': activeRouteChevronWidth as any,
                         'line-dasharray': [0.4, 2.6],
                         'line-opacity': 0.85
                     }
                 });
             } else {
                 map.current.setPaintProperty(`${routeId}-chevrons`, 'line-color', '#ffffff');
-                map.current.setPaintProperty(`${routeId}-chevrons`, 'line-width', 3);
+                map.current.setPaintProperty(`${routeId}-chevrons`, 'line-width', activeRouteChevronWidth as any);
                 map.current.setPaintProperty(`${routeId}-chevrons`, 'line-dasharray', [0.4, 2.6]);
                 map.current.setPaintProperty(`${routeId}-chevrons`, 'line-opacity', 0.85);
             }
+
 
             // 5. PROMINENT Z-ORDERING: Move active route guideline layers to the top of line stack
             try {
