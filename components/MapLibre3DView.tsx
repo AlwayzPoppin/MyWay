@@ -1132,19 +1132,33 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }
 
-            // Enhanced Railroad & Train Track Styling
+            // Enhanced Railroad & Train Track Styling (Subtle authentic tracks, never harsh black roads)
             if (layer.id.includes('rail') || layer.id.includes('railway') || layer.id.includes('train')) {
                 try {
                     map.current!.setLayoutProperty(layer.id, 'visibility', 'visible');
                     if (layer.type === 'line') {
-                        map.current!.setPaintProperty(layer.id, 'line-color', isWarmLightSkin ? '#475569' : '#94a3b8');
-                        map.current!.setPaintProperty(layer.id, 'line-opacity', 0.9);
-                        map.current!.setPaintProperty(layer.id, 'line-width', [
-                            'interpolate', ['linear'], ['zoom'],
-                            10, 1.5,
-                            14, 3.5,
-                            17, 6
-                        ]);
+                        const isDash = layer.id.includes('dash');
+                        if (isWarmLightSkin) {
+                            // Light Mode: Clean subtle light slate track with crisp white ties — eliminates black road appearance
+                            map.current!.setPaintProperty(layer.id, 'line-color', isDash ? '#ffffff' : '#cbd5e1');
+                            map.current!.setPaintProperty(layer.id, 'line-opacity', isDash ? 0.65 : 0.35);
+                            map.current!.setPaintProperty(layer.id, 'line-width', [
+                                'interpolate', ['linear'], ['zoom'],
+                                10, 0.75,
+                                14, 1.2,
+                                17, 1.8
+                            ]);
+                        } else {
+                            // Dark / Carbon Amber Mode: Muted slate tracks with subtle contrast
+                            map.current!.setPaintProperty(layer.id, 'line-color', isDash ? '#334155' : '#1e293b');
+                            map.current!.setPaintProperty(layer.id, 'line-opacity', isDash ? 0.5 : 0.4);
+                            map.current!.setPaintProperty(layer.id, 'line-width', [
+                                'interpolate', ['linear'], ['zoom'],
+                                10, 0.75,
+                                14, 1.2,
+                                17, 1.8
+                            ]);
+                        }
                     }
                 } catch (e) {}
             }
