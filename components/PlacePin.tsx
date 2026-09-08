@@ -36,7 +36,7 @@ export function isHomePlace(place: Partial<Place> | null | undefined): boolean {
         catLower === 'residential' ||
         nameLower === 'home' ||
         nameLower === 'my home' ||
-        Boolean(place.tags?.some(t => t.toLowerCase() === 'home')) ||
+        Boolean((place as any).tags?.some((t: string) => t.toLowerCase() === 'home')) ||
         iconLower === '🏠' ||
         iconLower === 'home'
     );

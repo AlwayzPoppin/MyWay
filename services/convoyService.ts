@@ -368,8 +368,7 @@ class ConvoyService {
 
             // If convoy is active, only include convoy members; otherwise check nearby circle members (within 15 miles)
             const isMemberInConvoy = activeSession?.memberIds.includes(member.id);
-            const distStr = getDistanceMiles(userLocation, member.location);
-            const distNum = parseFloat(distStr || '999');
+            const distNum = getDistanceMiles(userLocation, member.location) ?? 999;
 
             // Include if in convoy session OR within 15 miles while driving
             if (isConvoyOn && !isMemberInConvoy) return;
@@ -378,8 +377,8 @@ class ConvoyService {
             // Determine if member is ahead or behind based on coordinates relative to destination or speed
             let isAhead = false;
             if (activeSession?.destinationLocation) {
-                const userDistToDest = parseFloat(getDistanceMiles(userLocation, activeSession.destinationLocation) || '0');
-                const memberDistToDest = parseFloat(getDistanceMiles(member.location, activeSession.destinationLocation) || '0');
+                const userDistToDest = getDistanceMiles(userLocation, activeSession.destinationLocation) ?? 0;
+                const memberDistToDest = getDistanceMiles(member.location, activeSession.destinationLocation) ?? 0;
                 isAhead = memberDistToDest < userDistToDest;
             } else {
                 isAhead = member.speed >= userSpeed;

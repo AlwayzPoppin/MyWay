@@ -1203,7 +1203,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
                 {/* Version */}
                 <div className={`pt-6 pb-2 text-center border-t ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} `}>
-                    <p className="text-xs text-slate-500">My Way v1.0.0</p>
+                    <p className="text-xs text-slate-500">My Way v1.0.13</p>
                 </div>
             </div>
 

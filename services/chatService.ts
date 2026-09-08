@@ -84,6 +84,8 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
         messages.reverse();
 
         callback(messages as ChatMessage[]);
+    }, (error) => {
+        console.warn('💬 [ChatService] Firestore listener notice (offline / sync pending):', error?.message || error);
     });
 };
 

@@ -875,7 +875,7 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
         console.log('[Routing] ✅ Route via Valhalla with real OSM traffic infrastructure:', {
             steps: steps.length,
             geometryNodes: decodedShape.length,
-            realControls: realControls.length,
+            realControls: fallbackRoute.trafficControls?.length || 0,
             distance: fallbackRoute.totalDistance
         });
 

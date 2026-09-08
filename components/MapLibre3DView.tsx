@@ -5452,7 +5452,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     useEffect(() => {
         if (map.current && members.length > 0 && !selectedMemberId && !center && !isNavigating) {
             const you = members.find(m => (m.id === 'demo-you' || m.id === members[0].id) && !(m.location.lat === 0 && m.location.lng === 0));
-            if (you) map.current.flyTo({ center: [you.location.lng, you.location.lat], zoom: 17, pitch: is3DMode ? 60 : 0, duration: 1500 });
+            if (you) map.current.easeTo({ center: [you.location.lng, you.location.lat], zoom: 16.5, pitch: is3DMode ? 60 : 0, duration: 600 });
         }
     }, [members.length > 0]);
 
@@ -5464,24 +5464,63 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         const lng = (member.location as any).longitude ?? member.location.lng;
         // Guard: skip flying to Null Island (0, 0) for members without a valid location broadcast
         if (typeof lat !== 'number' || typeof lng !== 'number' || (lat === 0 && lng === 0) || isNaN(lat) || isNaN(lng)) return;
-        map.current.flyTo({ center: [lng, lat], zoom: 15, pitch: is3DMode ? 60 : 0, duration: 1500, essential: true });
-    }, [selectedMemberId, members, is3DMode]);
+        const currentCenter = map.current.getCenter();
+        const dist = Math.hypot(currentCenter.lng - lng, currentCenter.lat - lat);
+        if (dist > 0.0001) {
+            const curZoom = map.current.getZoom();
+            const targetZoom = Math.max(16, curZoom);
+            if (dist > 0.25) {
+                map.current.flyTo({ center: [lng, lat], zoom: targetZoom, pitch: is3DMode ? 60 : 0, speed: 2.5, curve: 1.0, maxDuration: 850, essential: true });
+            } else {
+                map.current.easeTo({ center: [lng, lat], zoom: targetZoom, pitch: is3DMode ? 60 : 0, duration: 550, essential: true });
+            }
+        }
+    }, [selectedMemberId, is3DMode]);
+
+    const lastAnimatedCenterRef = useRef<{ lng: number; lat: number } | null>(null);
+    const centerLng = center ? center[0] : null;
+    const centerLat = center ? center[1] : null;
 
     useEffect(() => {
-        if (!map.current || !center || isNavigating) return; // Don't override nav camera
-        const currentCenter = map.current.getCenter();
-        const dist = Math.sqrt(Math.pow(currentCenter.lng - center[0], 2) + Math.pow(currentCenter.lat - center[1], 2));
-        if (dist > 0.0001) {
-            map.current.flyTo({
-                center: center,
-                zoom: 15,
-                pitch: is3DMode ? 60 : 0,
-                duration: 1500,
-                essential: true,
-                padding: isMobile ? { top: 0, bottom: 250, left: 0, right: 0 } : { top: 0, bottom: 0, left: 0, right: 0 }
-            });
+        if (!map.current || typeof centerLng !== 'number' || typeof centerLat !== 'number' || isNavigating) return; // Don't override nav camera
+
+        // Guard: if we already animated to this coordinate target, skip to prevent animation restart loops
+        if (lastAnimatedCenterRef.current &&
+            Math.abs(lastAnimatedCenterRef.current.lng - centerLng) < 0.00005 &&
+            Math.abs(lastAnimatedCenterRef.current.lat - centerLat) < 0.00005) {
+            return;
         }
-    }, [center, isNavigating, isMobile, is3DMode]);
+
+        const currentCenter = map.current.getCenter();
+        const dist = Math.hypot(currentCenter.lng - centerLng, currentCenter.lat - centerLat);
+        if (dist > 0.0001) {
+            lastAnimatedCenterRef.current = { lng: centerLng, lat: centerLat };
+            const padding = isMobile ? { top: 0, bottom: 200, left: 0, right: 0 } : { top: 0, bottom: 0, left: 0, right: 0 };
+            const curZoom = map.current.getZoom();
+            const targetZoom = Math.max(16, curZoom);
+            if (dist > 0.25) {
+                map.current.flyTo({
+                    center: [centerLng, centerLat],
+                    zoom: targetZoom,
+                    pitch: is3DMode ? 60 : 0,
+                    speed: 2.5,
+                    curve: 1.0,
+                    maxDuration: 850,
+                    essential: true,
+                    padding
+                });
+            } else {
+                map.current.easeTo({
+                    center: [centerLng, centerLat],
+                    zoom: targetZoom,
+                    pitch: is3DMode ? 60 : 0,
+                    duration: 550,
+                    essential: true,
+                    padding
+                });
+            }
+        }
+    }, [centerLng, centerLat, isNavigating, isMobile, is3DMode]);
 
     // Consolidated Map Style & 3D Mode Handlers
     const [showStylePicker, setShowStylePicker] = React.useState(false);

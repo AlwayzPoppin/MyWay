@@ -30,6 +30,9 @@ export const createCheckoutSession = async (priceId: string) => {
                     resolve(url);
                 }
             }
+        }, (err) => {
+            unsubscribe();
+            reject(err);
         });
     });
 };

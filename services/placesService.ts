@@ -9,6 +9,13 @@ import { contributionService, applyCommunityPinsToPlaces } from './contributionS
 
 // Mapbox Geocoding Access Token for rooftop-accurate address search & autocomplete
 // Google Places & Geocoding API Configuration for rooftop-accurate address search & autocomplete
+declare const google: any;
+
+export const getGoogleApiBase = (): string =>
+    typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? '/maps-api'
+        : 'https://maps.googleapis.com';
+
 export const getActiveGoogleKey = (): string => {
     const envKey =
         (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) ||
@@ -80,6 +87,12 @@ export const loadGoogleMapsSDK = (apiKey: string): Promise<boolean> => {
     });
 
     return googleMapsLoaderPromise;
+};
+
+export const ensureGoogleMapsLoaded = async (): Promise<boolean> => {
+    const key = getActiveGoogleKey();
+    if (!key) return false;
+    return loadGoogleMapsSDK(key);
 };
 
 interface PlaceResult {
@@ -1311,6 +1324,7 @@ export const reverseGeocode = async (
                 address: addr,
                 description: addr,
                 location: closestBuilding.coordinates,
+                radius: 0.15,
                 houseNumber: hn,
                 isRooftop: true,
                 geocodePrecision: 'rooftop',
@@ -1360,6 +1374,7 @@ export const reverseGeocode = async (
                         address: result.formatted_address,
                         description: result.formatted_address,
                         location: { lat: resLat, lng: resLng },
+                        radius: 0.15,
                         houseNumber: hasVerifiedHouseNum ? (streetNumberComp?.long_name || streetNumberComp?.short_name) : undefined,
                         isRooftop: hasVerifiedHouseNum,
                         geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : 'street',
@@ -1399,6 +1414,7 @@ export const reverseGeocode = async (
                         address: r.formatted_address,
                         description: r.formatted_address,
                         location: { lat: loc.lat, lng: loc.lng },
+                        radius: 0.15,
                         houseNumber: hasVerifiedHouseNum ? (streetNumberComp?.long_name || streetNumberComp?.short_name) : undefined,
                         isRooftop: hasVerifiedHouseNum,
                         geocodePrecision: hasVerifiedHouseNum ? 'rooftop' : 'street',
@@ -1437,6 +1453,7 @@ export const reverseGeocode = async (
                         lat: parseFloat(nomData.lat) || lat,
                         lng: parseFloat(nomData.lon) || lng
                     },
+                    radius: 0.15,
                     houseNumber: hn || undefined,
                     isRooftop: Boolean(hn),
                     geocodePrecision: hn ? 'rooftop' : 'street',
@@ -1457,6 +1474,7 @@ export const reverseGeocode = async (
         address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
         description: `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
         location: { lat, lng },
+        radius: 0.15,
         type: 'search_result',
         icon: '📍',
         brandColor: '#6366f1'

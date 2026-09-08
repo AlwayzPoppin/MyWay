@@ -1,12 +1,15 @@
 {
   "name": "myway",
   "private": true,
-  "version": "1.0.12",
+  "version": "1.0.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "build:android": "vite build && npx cap sync android",
+    "build:bundle": "powershell -ExecutionPolicy Bypass -File ./build_bundle.ps1",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
@@ -31,10 +34,12 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-basic-ssl": "^2.1.3",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.23",
+    "jsdom": "^30.0.1",
     "playwright": "^1.57.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",

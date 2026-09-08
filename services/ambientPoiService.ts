@@ -50,7 +50,7 @@ class AmbientPoiService {
     }
 
     private purgeLegacyCaches(): void {
-        if (typeof window === 'undefined' || !window.localStorage) return [];
+        if (typeof window === 'undefined' || !window.localStorage) return;
         try {
             const keysToRemove: string[] = [];
             for (let i = 0; i < localStorage.length; i++) {

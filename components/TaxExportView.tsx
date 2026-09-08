@@ -94,7 +94,7 @@ export const TaxExportView: React.FC<TaxExportViewProps> = ({
     }, [filteredExpenses]);
 
     const totalItemizedExpenses = useMemo(() => {
-        return Object.values(itemizedByCategory).reduce((sum, val) => sum + val, 0);
+        return (Object.values(itemizedByCategory) as number[]).reduce((sum, val) => sum + Number(val || 0), 0);
     }, [itemizedByCategory]);
 
     // Non-operating deductible expenses that can potentially be added to standard mileage

@@ -10,20 +10,60 @@ interface PermissionGuardProps {
 }
 
 /**
+ * Checks if the application is running in development mode, an iframe,
+ * or a web preview environment where native hardware permissions should be bypassed.
+ */
+export const isDevOrPreviewEnvironment = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    try {
+        const isIframe = window.self !== window.top;
+        const isDev = Boolean((import.meta as any).env?.DEV);
+        const isWeb = !Capacitor.isNativePlatform();
+        const hostname = window.location.hostname;
+        const isPreviewHost =
+            hostname.includes('run.app') ||
+            hostname.includes('web.app') ||
+            hostname.includes('firebaseapp.com') ||
+            hostname === 'localhost' ||
+            hostname === '127.0.0.1';
+
+        return isIframe || isDev || (isWeb && isPreviewHost);
+    } catch {
+        return true;
+    }
+};
+
+/**
  * Audit #5: Permission Recovery Flow
  * High-fidelity guard that ensures critical safety permissions are granted.
- * If permissions are missing, it blocks the app with a recovery UI.
+ * Automatically bypassed when running in web preview or development environments
+ * so the map and UI can be tested without native hardware restrictions.
  */
 const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) => {
+    const isDevOrPreview = isDevOrPreviewEnvironment();
+    const [manualBypass, setManualBypass] = useState<boolean>(() => {
+        if (isDevOrPreview) return true;
+        try {
+            return localStorage.getItem('myway_bypass_permissions') === 'true';
+        } catch {
+            return false;
+        }
+    });
+
     const [status, setStatus] = useState<{
         location: PermissionState | 'loading';
         notifications: PermissionState | 'loading';
     }>({
-        location: 'loading',
-        notifications: 'loading',
+        location: (isDevOrPreview || manualBypass) ? 'granted' : 'loading',
+        notifications: (isDevOrPreview || manualBypass) ? 'granted' : 'loading',
     });
 
     const checkPermissions = useCallback(async () => {
+        if (isDevOrPreview || manualBypass) {
+            setStatus({ location: 'granted', notifications: 'granted' });
+            return;
+        }
+
         try {
             const locPerm = await Geolocation.checkPermissions();
             const notifPerm = await LocalNotifications.checkPermissions();
@@ -33,11 +73,17 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
                 notifications: notifPerm.display,
             });
         } catch (err) {
-            console.error('Permission check failed:', err);
+            console.warn('Permission check failed, applying graceful fallback:', err);
+            // In web environments, default to granted rather than permanently locking the screen
+            if (!Capacitor.isNativePlatform()) {
+                setStatus({ location: 'granted', notifications: 'granted' });
+            }
         }
-    }, []);
+    }, [isDevOrPreview, manualBypass]);
 
     useEffect(() => {
+        if (isDevOrPreview || manualBypass) return;
+
         checkPermissions();
 
         // Re-check when app returns from background (user coming back from settings)
@@ -48,7 +94,7 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
         return () => {
             sub.then(s => s.remove());
         };
-    }, [checkPermissions]);
+    }, [checkPermissions, isDevOrPreview, manualBypass]);
 
     const requestLocation = async () => {
         try {
@@ -86,6 +132,19 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
         checkPermissions();
     };
 
+    const handleBypass = () => {
+        try {
+            localStorage.setItem('myway_bypass_permissions', 'true');
+        } catch {}
+        setManualBypass(true);
+        setStatus({ location: 'granted', notifications: 'granted' });
+    };
+
+    // Fast-path bypass for dev, preview, or manually bypassed mode
+    if (isDevOrPreview || manualBypass) {
+        return <>{children}</>;
+    }
+
     const isAllGranted = status.location === 'granted' && status.notifications === 'granted';
 
     if (status.location === 'loading' || status.notifications === 'loading') {
@@ -116,7 +175,7 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
                     {status.location !== 'granted' && (
                         <button
                             onClick={requestLocation}
-                            className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold text-lg shadow-lg transition-all active:scale-95"
+                            className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold text-lg shadow-lg transition-all active:scale-95 cursor-pointer"
                         >
                             Enable Precise Location
                         </button>
@@ -125,11 +184,18 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
                     {status.notifications !== 'granted' && (
                         <button
                             onClick={requestNotifications}
-                            className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-bold text-lg shadow-lg transition-all active:scale-95 border border-white/10"
+                            className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-bold text-lg shadow-lg transition-all active:scale-95 border border-white/10 cursor-pointer"
                         >
                             Enable Notifications
                         </button>
                     )}
+
+                    <button
+                        onClick={handleBypass}
+                        className="w-full py-3 text-xs tracking-wider uppercase font-semibold text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+                    >
+                        Skip & Continue in Web Preview Mode
+                    </button>
                 </div>
 
                 <p className="mt-12 text-sm opacity-60">

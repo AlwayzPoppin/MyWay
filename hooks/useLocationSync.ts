@@ -92,12 +92,17 @@ export const useLocationSync = (
     const currentCircleIdRef = useRef(currentCircleId);
     const onTransitionRef = useRef(onTransition);
 
+    const geofencesRef = useRef(geofences);
+    const userCirclesRef = useRef(userCircles);
+
     useEffect(() => {
         userRef.current = user;
         profileRef.current = profile;
         currentCircleIdRef.current = currentCircleId;
         onTransitionRef.current = onTransition;
-    }, [user, profile, currentCircleId, onTransition]);
+        geofencesRef.current = geofences;
+        userCirclesRef.current = userCircles;
+    }, [user, profile, currentCircleId, onTransition, geofences, userCircles]);
 
     // Haversine distance — delegated to shared utils/geo.ts
     const getDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) =>
@@ -158,6 +163,11 @@ export const useLocationSync = (
     }, [user?.uid, currentCircleId]);
 
     // 1. WATCH POSITION (GPS) & UPLOAD
+    // Register geofences for background evaluation without restarting GPS watch
+    useEffect(() => {
+        geolocationService.setBackgroundGeofences(geofences, onTransitionRef.current);
+    }, [geofences]);
+
     useEffect(() => {
         if (!geolocationService.isSupported()) {
             setLocationError('GPS not supported on this device');
@@ -168,11 +178,12 @@ export const useLocationSync = (
         const targetId = user?.uid || 'local-user';
 
         // Register geofences for background evaluation and native notifications
-        geolocationService.setBackgroundGeofences(geofences, onTransition);
+        geolocationService.setBackgroundGeofences(geofencesRef.current, onTransitionRef.current);
 
         geolocationService.watchPosition((location) => {
             // Geofence Detection with Strict Accuracy Filtering, Dynamic Hysteresis Buffer & 45-Second PENDING_EXIT Debounce
-            geofences.forEach(gf => {
+            const activeGfs = geofencesRef.current || [];
+            activeGfs.forEach(gf => {
                 // 0. Granular Entrance Arrival Check (Driveway / Parking pin with rectangular footprint)
                 const entranceLoc = gf.entrancePrecision?.location || gf.entranceLocation;
                 if (gf.entranceType && entranceLoc) {
@@ -623,6 +634,14 @@ export const useLocationSync = (
             }
 
             // 5. DEBOUNCE CHECK FOR FIREBASE SYNC (Adaptive Network Thresholds)
+            const DIST_THRESHOLD = isLowDataMode ? 30 : 15;
+            const TIME_THRESHOLD = isLowDataMode ? 60000 : 30000;
+            const distMoved = lastSyncRef.current.lat ? getDistanceMeters(
+                lastSyncRef.current.lat, lastSyncRef.current.lng,
+                currentCoords.lat, currentCoords.lng
+            ) : 999;
+            const timeElapsed = Date.now() - lastSyncRef.current.time;
+
             if (lastSyncRef.current.lat !== 0 && distMoved < DIST_THRESHOLD && timeElapsed < TIME_THRESHOLD) {
                 return; // Skip network sync
             }
@@ -746,7 +765,7 @@ export const useLocationSync = (
             pendingExitDebounceRef.current.clear();
             pendingArrivalFixesRef.current.clear();
         };
-    }, [user, currentCircleId, userCircles, profile, geofences]);
+    }, [user?.uid, currentCircleId]);
 
     // Track geofence status per member ID -> Set<geofenceId>
     const memberInsideGeofencesRef = useRef<Map<string, Set<string>>>(new Map());
@@ -881,7 +900,7 @@ export const useLocationSync = (
                                         ...m,
                                         name,
                                         avatar,
-                                        role: userProfile.role || m.role
+                                        role: (userProfile as any).role || m.role
                                     };
                                 }
                                 return m;
@@ -951,7 +970,8 @@ export const useLocationSync = (
 
                 // Circle Member Geofence Arrival / Departure Tracking with 2-Fix Confirmation Window
                 let memberPlaceName: string | undefined = undefined;
-                if (geofences && geofences.length > 0 && lat && lng && lat !== 0) {
+                const currentGeofences = geofencesRef.current || [];
+                if (currentGeofences.length > 0 && lat && lng && lat !== 0) {
                     let currentInside = memberInsideGeofencesRef.current.get(member.id);
                     const isFirstTracking = !currentInside;
                     if (!currentInside) {
@@ -965,7 +985,7 @@ export const useLocationSync = (
                         memberGeofencePendingFixesRef.current.set(member.id, memberPendingMap);
                     }
 
-                    geofences.forEach((gf) => {
+                    currentGeofences.forEach((gf) => {
                         const gfLat = gf?.entranceLocation?.lat ?? gf?.location?.lat ?? (gf as any)?.lat;
                         const gfLng = gf?.entranceLocation?.lng ?? gf?.location?.lng ?? (gf as any)?.lng;
                         if (typeof gfLat === 'number' && typeof gfLng === 'number') {
@@ -1084,11 +1104,29 @@ export const useLocationSync = (
                 };
             }));
 
-            setMembers(updatedMembers);
+            setMembers(prev => {
+                if (prev.length === updatedMembers.length && prev.every((m, idx) => {
+                    const u = updatedMembers[idx];
+                    return m.id === u.id &&
+                           m.location.lat === u.location.lat &&
+                           m.location.lng === u.location.lng &&
+                           m.batteryLevel === u.batteryLevel &&
+                           m.isCharging === u.isCharging &&
+                           m.speed === u.speed &&
+                           m.status === u.status &&
+                           m.privacyMode === u.privacyMode &&
+                           m.sosActive === u.sosActive &&
+                           m.name === u.name &&
+                           m.avatar === u.avatar;
+                })) {
+                    return prev;
+                }
+                return updatedMembers;
+            });
         });
 
         return () => unsubscribe();
-    }, [currentCircleId, user, geofences, userCircles, activeFilterCircleId]);
+    }, [currentCircleId, user?.uid, activeFilterCircleId, (userCircles || []).map(c => c.id).sort().join(',')]);
 
     // 3. SYNC PROFILE CHANGES TO LOCAL SELF
     useEffect(() => {

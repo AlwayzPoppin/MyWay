@@ -1,10 +1,10 @@
 /**
  * Android Auto Bridge Service
- * Syncs MyWay's navigation telemetry, saved places, and session state
- * to the native NativeAndroidAuto Capacitor plugin for projection onto
- * vehicle infotainment displays.
+ * Syncs MyWay's navigation telemetry, turn-by-turn guidance, arrival geofence states,
+ * saved places, and session lifecycle to the native NativeAndroidAuto Capacitor plugin
+ * for projection onto vehicle infotainment displays.
  */
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core';
 
 interface NativeAndroidAutoPlugin {
   updateNavigationState(options: {
@@ -14,7 +14,10 @@ interface NativeAndroidAutoPlugin {
     currentInstruction: string;
     speedMph: number;
     speedLimit: number;
+    isArrived?: boolean;
   }): Promise<{ success: boolean; isCarConnected: boolean }>;
+
+  notifyArrival(options?: { destinationName?: string }): Promise<{ success: boolean }>;
 
   stopNavigation(): Promise<{ success: boolean }>;
 
@@ -29,6 +32,16 @@ interface NativeAndroidAutoPlugin {
   }): Promise<{ success: boolean; count: number }>;
 
   isCarConnected(): Promise<{ connected: boolean }>;
+
+  addListener(
+    eventName: 'carNavigationCancelled',
+    listenerFunc: (data: { source: string; timestamp: number }) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'carSessionStateChanged',
+    listenerFunc: (data: { connected: boolean }) => void
+  ): Promise<PluginListenerHandle>;
 }
 
 const NativeAndroidAuto = registerPlugin<NativeAndroidAutoPlugin>('NativeAndroidAuto');
@@ -54,7 +67,7 @@ export async function isCarConnected(): Promise<boolean> {
 }
 
 /**
- * Push current navigation telemetry to the Android Auto display.
+ * Push current navigation telemetry and turn-by-turn step to the Android Auto display.
  * Call this on every navigation tick to keep the car dashboard in sync.
  */
 export async function syncNavigationTelemetry(data: {
@@ -64,6 +77,7 @@ export async function syncNavigationTelemetry(data: {
   currentInstruction: string;
   speedMph: number;
   speedLimit?: number;
+  isArrived?: boolean;
 }): Promise<void> {
   if (!isAndroidAutoAvailable()) return;
   try {
@@ -74,9 +88,31 @@ export async function syncNavigationTelemetry(data: {
       currentInstruction: data.currentInstruction,
       speedMph: data.speedMph,
       speedLimit: data.speedLimit || 0,
+      isArrived: data.isArrived || false,
     });
   } catch (err) {
     console.warn('[AndroidAuto] Failed to sync navigation telemetry:', err);
+  }
+}
+
+/**
+ * Notify the vehicle infotainment system that the destination has been reached.
+ * Updates the screen's text to "Arrived!" and displays destination arrival celebration.
+ */
+export async function notifyArrival(destinationName: string = 'Destination'): Promise<void> {
+  if (!isAndroidAutoAvailable()) return;
+  try {
+    await NativeAndroidAuto.updateNavigationState({
+      destinationName,
+      eta: '0 min',
+      remainingDistance: '0 ft',
+      currentInstruction: 'Arrived!',
+      speedMph: 0,
+      speedLimit: 25,
+      isArrived: true,
+    });
+  } catch (err) {
+    console.warn('[AndroidAuto] Failed to notify car arrival:', err);
   }
 }
 
@@ -90,6 +126,50 @@ export async function clearNavigation(): Promise<void> {
   } catch (err) {
     console.warn('[AndroidAuto] Failed to clear navigation:', err);
   }
+}
+
+/**
+ * Listen for trip cancellation initiated from the vehicle's red "X" Action Strip button.
+ */
+export function onCarNavigationCancelled(callback: () => void): () => void {
+  if (!isAndroidAutoAvailable()) return () => {};
+
+  let listenerPromise: Promise<PluginListenerHandle> | null = null;
+  try {
+    listenerPromise = NativeAndroidAuto.addListener('carNavigationCancelled', () => {
+      callback();
+    });
+  } catch (err) {
+    console.warn('[AndroidAuto] Failed to bind cancellation listener:', err);
+  }
+
+  return () => {
+    if (listenerPromise) {
+      listenerPromise.then(handle => handle.remove()).catch(() => {});
+    }
+  };
+}
+
+/**
+ * Listen for car head unit connection / disconnection events.
+ */
+export function onCarSessionStateChanged(callback: (connected: boolean) => void): () => void {
+  if (!isAndroidAutoAvailable()) return () => {};
+
+  let listenerPromise: Promise<PluginListenerHandle> | null = null;
+  try {
+    listenerPromise = NativeAndroidAuto.addListener('carSessionStateChanged', (data) => {
+      callback(data.connected);
+    });
+  } catch (err) {
+    console.warn('[AndroidAuto] Failed to bind session state listener:', err);
+  }
+
+  return () => {
+    if (listenerPromise) {
+      listenerPromise.then(handle => handle.remove()).catch(() => {});
+    }
+  };
 }
 
 /**

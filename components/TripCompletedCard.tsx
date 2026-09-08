@@ -288,13 +288,13 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
                 name: arrivalData.destinationName,
                 location: currentCoords,
                 address: arrivalData.destinationName,
-                type: placeType === 'business' ? 'restaurant' : 'home'
+                type: placeType === 'business' ? 'food' : 'home'
             };
 
             const updatedPlace: Place = {
                 ...destPlace,
                 location: currentCoords,
-                type: placeType === 'business' ? (destPlace.type || 'restaurant') : 'home',
+                type: placeType === 'business' ? (destPlace.type || 'food') : 'home',
                 imageUrl: photoPreview || destPlace.imageUrl
             };
 
@@ -305,7 +305,7 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
                 correctedName: arrivalData.destinationName,
                 category: placeType === 'business' ? 'business' : 'residential',
                 entranceType: entranceType,
-                submittedBy: userId || 'driver',
+                userId: userId || 'driver',
                 submitterName: userName || 'Driver',
                 imageUrl: photoPreview || undefined
             });

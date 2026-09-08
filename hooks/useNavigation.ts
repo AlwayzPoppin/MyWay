@@ -18,7 +18,7 @@ import { convoyService } from '../services/convoyService';
 import { maintenanceAlertService, VehicleHealthItem } from '../services/maintenanceAlertService';
 import { findDeadZonesIntersectingRoute, syncDeadZoneTiles } from '../services/offlineLocationBuffer';
 import { placeCorrectionService } from '../services/placeCorrectionService';
-import { syncNavigationTelemetry, clearNavigation } from '../services/androidAutoService';
+import { syncNavigationTelemetry, clearNavigation, onCarNavigationCancelled, notifyArrival } from '../services/androidAutoService';
 
 export interface BetterRouteSuggestion {
     route: NavigationRoute;
@@ -218,8 +218,8 @@ export const useNavigation = (
             // Stale route protection: If a precomputed route is provided, verify that the vehicle has not moved
             // away from the preview origin. If offset by > 40m, purge precomputed route to prevent routing from stale position.
             let route: NavigationRoute | null = null;
-            if (precomputedRoute && precomputedRoute.originLoc) {
-                const distFromPreviewOrigin = getDistanceMeters(liveOrigin, precomputedRoute.originLoc);
+            if (precomputedRoute && precomputedRoute.startLoc) {
+                const distFromPreviewOrigin = getDistanceMeters(liveOrigin, precomputedRoute.startLoc);
                 if (distFromPreviewOrigin <= 40) {
                     route = precomputedRoute;
                 } else {
@@ -517,7 +517,11 @@ export const useNavigation = (
                 // Reset speech maneuver locks to re-prompt first turn cleanly
                 const firstStep = freshRoute.steps[0];
                 if (firstStep) {
-                    const ft = Math.round((freshRoute.steps[0].distance || 0) * 3.28084);
+                    const rawDist = freshRoute.steps[0].distance || '0';
+                    const distValue = parseFloat(rawDist.replace(/[^0-9.]/g, '')) || 0;
+                    const isKm = rawDist.toLowerCase().includes('km');
+                    const meters = isKm ? distValue * 1000 : (rawDist.toLowerCase().includes('mi') ? distValue * 1609.34 : distValue * 0.3048);
+                    const ft = Math.round(meters * 3.28084);
                     const rerouteStages = new Set<ManeuverProximity>();
                     if (ft <= 1200) rerouteStages.add('preparatory');
                     if (ft <= 300) rerouteStages.add('mid');
@@ -672,7 +676,7 @@ export const useNavigation = (
             if (results.length === 0) {
                 try {
                     const query = type === 'gas' ? 'gas station' : type === 'coffee' ? 'coffee shop' : type === 'food' ? 'restaurant' : 'grocery store';
-                    results = await searchPlacesOnMap(query, location);
+                    results = await searchPlacesText(query, location);
                     console.log(`⛽ [QuickSearch] Gemini fallback returned ${results.length} results (pre-filter)`);
 
                     // CRITICAL: Filter Gemini results to 5km radius — Gemini returns city-wide results
@@ -981,23 +985,34 @@ export const useNavigation = (
             const hasReachedPinpoint = newNavState.hasArrived && (distToFinalDestination <= 20 || !activeRoute.destinationLoc);
             const canArrive = hasMetGeofencedHeuristic || hasReachedPinpoint;
 
+            const isArrived = newNavState.hasArrived || isInsideArrivalRadius || canArrive;
+
             if (canArrive && !currentNavState.hasArrived) {
+                notifyArrival(activeRoute.destinationName || 'Destination');
                 onTripCompleted(userLocation || undefined, false);
             }
 
-            // Sync navigation telemetry to Android Auto head unit
-            const remainDistStr = currentStep
-                ? (distToStep > 1000
-                    ? `${(distToStep / 1609.34).toFixed(1)} mi`
-                    : `${Math.round(distToStep * 3.28084)} ft`)
-                : (activeRoute.totalDistance || '');
+            // Sync navigation telemetry & turn-by-turn instruction to Android Auto head unit
+            const remainDistStr = isArrived
+                ? '0 ft'
+                : (currentStep
+                    ? (distToStep > 1000
+                        ? `${(distToStep / 1609.34).toFixed(1)} mi`
+                        : `${Math.round(distToStep * 3.28084)} ft`)
+                    : (activeRoute.totalDistance || ''));
+
+            const instructionText = isArrived
+                ? 'Arrived!'
+                : (currentStep?.instruction || 'Follow highlighted route');
+
             syncNavigationTelemetry({
                 destinationName: activeRoute.destinationName || 'Destination',
-                eta: activeRoute.totalTime || '',
+                eta: isArrived ? '0 min' : (activeRoute.totalTime || ''),
                 remainingDistance: remainDistStr,
-                currentInstruction: currentStep?.instruction || 'Follow highlighted route',
+                currentInstruction: instructionText,
                 speedMph: Math.round(selfSpeedMph),
-                speedLimit: currentStep?.speedLimit || 35
+                speedLimit: currentStep?.speedLimit || 35,
+                isArrived: isArrived
             });
 
             setNavState(newNavState);
@@ -1166,6 +1181,15 @@ export const useNavigation = (
             updateMemberTrip(profile.familyCircleId, user.uid, null).catch(() => {});
         }
     }, [activeRoute, userLocation, onTripCompleted, setDriveMode, setEtaSharing, profile?.familyCircleId, user?.uid, clearLeaderPromptTimer]);
+
+    // Android Auto Integration: Sync cancellation initiated from vehicle head unit Action Strip (red "X" button)
+    useEffect(() => {
+        const unsubscribe = onCarNavigationCancelled(() => {
+            console.log('[AndroidAuto] Navigation cancelled via vehicle Action Strip (red X button)');
+            handleCancelNavigation();
+        });
+        return unsubscribe;
+    }, [handleCancelNavigation]);
 
     // Rerouting logic - triggered strictly when off-route state transitions to true
     useEffect(() => {

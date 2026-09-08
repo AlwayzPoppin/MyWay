@@ -161,6 +161,9 @@ class GeolocationService {
     private velocitySmoother = new VelocitySmoother();
     private headingSmoother = new HeadingSmoother();
 
+    private subscribers = new Set<LocationCallback>();
+    private errorSubscribers = new Set<ErrorCallback>();
+
     // Background Headless Execution State
     private backgroundGeofences: Geofence[] = [];
     private onGeofenceTransitionCallback: ((transition: GeofenceTransition) => void) | null = null;
@@ -396,22 +399,57 @@ class GeolocationService {
         });
     }
 
-    watchPosition(onLocation: LocationCallback, onError?: ErrorCallback): void {
-        if (!this.isSupported()) {
-            onError?.({ code: 0, message: 'Geolocation not supported' });
-            return;
-        }
-
-        this.isWatching = true;
-
-        if (Capacitor.isNativePlatform()) {
-            this.startNativeBackgroundWatch(onLocation, onError);
-        } else {
-            this.startWebWatch(onLocation, onError);
-        }
+    private notifySubscribers(state: GeolocationState): void {
+        this.subscribers.forEach(cb => {
+            try {
+                cb(state);
+            } catch (e) {
+                console.error('[GeolocationService] Subscriber error:', e);
+            }
+        });
     }
 
-    private async startNativeBackgroundWatch(onLocation: LocationCallback, onError?: ErrorCallback): Promise<void> {
+    private notifyErrorSubscribers(error: GeolocationError): void {
+        this.errorSubscribers.forEach(cb => {
+            try {
+                cb(error);
+            } catch (e) {
+                console.error('[GeolocationService] Error subscriber callback failure:', e);
+            }
+        });
+    }
+
+    watchPosition(onLocation: LocationCallback, onError?: ErrorCallback): () => void {
+        this.subscribers.add(onLocation);
+        if (onError) this.errorSubscribers.add(onError);
+
+        // If simulation or cached telemetry is already active, immediately prime the new subscriber
+        if (this.lastTelemetryState) {
+            try {
+                onLocation(this.lastTelemetryState);
+            } catch {}
+        }
+
+        if (!this.isWatching) {
+            this.isWatching = true;
+            if (this.isSupported()) {
+                if (Capacitor.isNativePlatform()) {
+                    this.startNativeBackgroundWatch();
+                } else {
+                    this.startWebWatch();
+                }
+            } else {
+                this.notifyErrorSubscribers({ code: 0, message: 'Geolocation not supported' });
+            }
+        }
+
+        return () => {
+            this.subscribers.delete(onLocation);
+            if (onError) this.errorSubscribers.delete(onError);
+        };
+    }
+
+    private async startNativeBackgroundWatch(): Promise<void> {
         await this.stopNativeWatch();
 
         if (!this.isWatching) return;
@@ -431,7 +469,7 @@ class GeolocationService {
                 (location, error) => {
                     if (error) {
                         console.error('📡 Background Geolocation Error:', error);
-                        onError?.({
+                        this.notifyErrorSubscribers({
                             code: error.code ? parseInt(error.code, 10) || 2 : 2,
                             message: error.message || 'Background location error'
                         });
@@ -447,9 +485,9 @@ class GeolocationService {
                             location.speed,
                             location.time || Date.now()
                         );
-                        this.updateAdaptiveTier(parsed.speed || 0, onLocation, onError);
+                        this.updateAdaptiveTier(parsed.speed || 0);
                         this.evaluateBackgroundHeadless(parsed);
-                        onLocation(parsed);
+                        this.notifySubscribers(parsed);
                     }
                 }
             );
@@ -465,14 +503,14 @@ class GeolocationService {
         } catch (err: any) {
             console.error('❌ Failed to initialize Native Background Geolocation, falling back to web watch:', err);
             if (this.isWatching) {
-                this.startWebWatch(onLocation, onError);
+                this.startWebWatch();
             }
         }
     }
 
-    private startWebWatch(onLocation: LocationCallback, onError?: ErrorCallback): void {
+    private startWebWatch(): void {
         if (typeof navigator === 'undefined' || !navigator.geolocation) {
-            onError?.({ code: 0, message: 'Geolocation not supported' });
+            this.notifyErrorSubscribers({ code: 0, message: 'Geolocation not supported' });
             return;
         }
 
@@ -492,12 +530,12 @@ class GeolocationService {
                     position.coords.speed,
                     position.timestamp
                 );
-                this.updateAdaptiveTier(parsed.speed || 0, onLocation, onError);
+                this.updateAdaptiveTier(parsed.speed || 0);
                 this.evaluateBackgroundHeadless(parsed);
-                onLocation(parsed);
+                this.notifySubscribers(parsed);
             },
             (error) => {
-                onError?.(this.parseError(error));
+                this.notifyErrorSubscribers(this.parseError(error));
             },
             {
                 enableHighAccuracy: !isDwelling,
@@ -508,7 +546,7 @@ class GeolocationService {
     }
 
     /** Dynamically adjusts power/frequency tiers based on movement */
-    private updateAdaptiveTier(speedMph: number, onLocation: LocationCallback, onError?: ErrorCallback): void {
+    private updateAdaptiveTier(speedMph: number): void {
         this.lastSpeed = speedMph;
 
         if (speedMph >= 15) {
@@ -578,7 +616,7 @@ class GeolocationService {
                         }
 
                         if (!Capacitor.isNativePlatform()) {
-                            this.startWebWatch(onLocation, onError);
+                            this.startWebWatch();
                         }
                     }
                     this.stationaryTimeout = null;

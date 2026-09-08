@@ -1,5 +1,5 @@
 // Auth Context - React Context for authentication and multi-circle state
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react';
 import { User } from 'firebase/auth';
 import {
     onAuthChange,
@@ -11,6 +11,7 @@ import {
     completeEmailLinkSignIn,
     signOut,
     getUserProfile,
+    updateUserProfile,
     UserProfile,
     FamilyCircle,
     createFamilyCircle,
@@ -77,30 +78,51 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [error, setError] = useState<string | null>(null);
     const [emailLinkSent, setEmailLinkSent] = useState(false);
 
+    const isRefreshingRef = useRef(false);
+    const userRef = useRef(user);
+    userRef.current = user;
+    const profileRef = useRef(profile);
+    profileRef.current = profile;
+
     const refreshCircles = useCallback(async () => {
-        if (!user) {
-            setUserCircles([]);
+        const currentUser = userRef.current;
+        if (!currentUser) {
+            setUserCircles(prev => prev.length === 0 ? prev : []);
             setCurrentCircle(null);
             return;
         }
+        if (isRefreshingRef.current) return;
+        isRefreshingRef.current = true;
         try {
-            const circles = await getUserCircles(user.uid);
-            setUserCircles(circles);
+            const circles = await getUserCircles(currentUser.uid);
+            setUserCircles(prev => {
+                if (prev.length === circles.length && prev.every((c, i) => c.id === circles[i].id && c.name === circles[i].name && c.color === circles[i].color)) {
+                    return prev;
+                }
+                return circles;
+            });
 
-            if (profile?.familyCircleId) {
-                const active = circles.find(c => c.id === profile.familyCircleId) || await getFamilyCircle(profile.familyCircleId);
-                setCurrentCircle(active);
+            const currentProf = profileRef.current;
+            if (currentProf?.familyCircleId) {
+                const active = circles.find(c => c.id === currentProf.familyCircleId) || await getFamilyCircle(currentProf.familyCircleId);
+                setCurrentCircle(prev => {
+                    if (prev?.id === active?.id && prev?.name === active?.name && prev?.color === active?.color) {
+                        return prev;
+                    }
+                    return active;
+                });
             } else if (circles.length > 0) {
-                await switchActiveCircle(user.uid, circles[0].id);
-                setCurrentCircle(circles[0]);
-                setProfile(prev => prev ? { ...prev, familyCircleId: circles[0].id } : prev);
+                await switchActiveCircle(currentUser.uid, circles[0].id);
+                setCurrentCircle(prev => prev?.id === circles[0].id ? prev : circles[0]);
             } else {
                 setCurrentCircle(null);
             }
         } catch (e) {
             console.warn('⚠️ Error refreshing circles:', e);
+        } finally {
+            isRefreshingRef.current = false;
         }
-    }, [user, profile?.familyCircleId]);
+    }, []);
 
     useEffect(() => {
         // Check if returning from email link sign-in
@@ -130,7 +152,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             } else {
                 setProfile(null);
                 setCurrentCircle(null);
-                setUserCircles([]);
+                setUserCircles(prev => prev.length === 0 ? prev : []);
             }
             setLoading(false);
         });
@@ -141,9 +163,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         };
     }, []);
 
+    const lastSyncedUidRef = useRef<string | null>(null);
+    const lastSyncedCircleIdRef = useRef<string | null>(null);
+
     useEffect(() => {
-        refreshCircles();
-    }, [refreshCircles]);
+        if (!user?.uid) {
+            lastSyncedUidRef.current = null;
+            lastSyncedCircleIdRef.current = null;
+            setUserCircles(prev => prev.length === 0 ? prev : []);
+            setCurrentCircle(null);
+            return;
+        }
+
+        const circleId = profile?.familyCircleId || null;
+        if (lastSyncedUidRef.current !== user.uid || lastSyncedCircleIdRef.current !== circleId) {
+            lastSyncedUidRef.current = user.uid;
+            lastSyncedCircleIdRef.current = circleId;
+            refreshCircles();
+        }
+    }, [user?.uid, profile?.familyCircleId, refreshCircles]);
  
     // Side Effect: Auto-join circle from pending invite
     useEffect(() => {
@@ -252,7 +290,7 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
             setError(null);
             await signOut();
             setCurrentCircle(null);
-            setUserCircles([]);
+            setUserCircles(prev => prev.length === 0 ? prev : []);
         } catch (err: any) {
             setError(err.message || 'Failed to sign out');
         }
@@ -340,7 +378,7 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
         setUserCircles([]);
     };
 
-    const value: AuthContextType = {
+    const value: AuthContextType = useMemo(() => ({
         user,
         profile,
         currentCircle,
@@ -365,7 +403,16 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
         deleteCircle: handleDeleteCircle,
         deleteUserAccount: handleDeleteUserAccount,
         refreshCircles
-    };
+    }), [
+        user,
+        profile,
+        currentCircle,
+        userCircles,
+        loading,
+        error,
+        emailLinkSent,
+        refreshCircles
+    ]);
 
     return (
         <AuthContext.Provider value={value}>

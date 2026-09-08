@@ -102,10 +102,9 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
         if (!file) return;
 
         try {
-            const compressed = await compressImageFile(file, 600, 600, 0.85);
-            setAvatarFile(compressed);
-            const objectUrl = URL.createObjectURL(compressed);
-            setAvatarPreview(objectUrl);
+            const compressed = await compressImageFile(file, 600, 0.85);
+            setAvatarPreview(compressed);
+            setAvatarFile(file);
             hapticTick();
         } catch (err) {
             console.error('Failed to compress avatar:', err);
@@ -183,6 +182,9 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                 lat: userLocation.lat,
                 lng: userLocation.lng
             },
+            radius: 0.15,
+            type: 'home',
+            icon: '🏠',
             category: 'home'
         };
         setSelectedHomePlace(currentPlace);
@@ -391,7 +393,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                         isCorrected: true,
                         houseNumber: extractedHN,
                         entranceNotes: 'Precision front door / driveway routing pin',
-                        tags: ['Verified Precision Pin', 'home']
+                        createdBy: user.uid
                     },
                     user.uid
                 );
@@ -412,8 +414,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                     icon: 'home',
                     radius: 150,
                     isCorrected: true,
-                    houseNumber: extractedHN,
-                    tags: ['Verified Precision Pin', 'home']
+                    houseNumber: extractedHN
                 };
             }
 

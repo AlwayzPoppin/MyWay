@@ -143,7 +143,7 @@ export const signInWithGoogle = async (): Promise<User> => {
                 }
             });
 
-            const idToken = loginRes.result?.idToken;
+            const idToken = (loginRes.result as any)?.idToken;
             if (!idToken) {
                 throw new Error('Google Sign-In did not return an identity token.');
             }
@@ -644,7 +644,7 @@ export const deleteAccount = async (userId?: string, circleId?: string, password
                                 provider: 'google',
                                 options: { scopes: ['email', 'profile'] }
                             });
-                            const idToken = loginRes.result?.idToken;
+                            const idToken = (loginRes.result as any)?.idToken;
                             if (!idToken) throw new Error('Google re-authentication was cancelled.');
                             const { GoogleAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
                             const cred = GoogleAuthProvider.credential(idToken);

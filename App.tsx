@@ -555,11 +555,11 @@ const App: React.FC = () => {
   }, [isNavigating, isDriveMode]);
 
   // Ensure isPlaceDetailOpen is synchronized with selectedPlace: if selectedPlace is set, force isPlaceDetailOpen to true
-  useEffect(() => {
+  /* useEffect(() => {
     if (selectedPlace && !isPlaceDetailOpen && !correctingPlace) {
       setIsPlaceDetailOpen(true);
     }
-  }, [selectedPlace, isPlaceDetailOpen, correctingPlace]);
+  }, [selectedPlace, isPlaceDetailOpen, correctingPlace]); */
 
   // Listen for real-time Convoy & Caravan invites
   useEffect(() => {
@@ -741,18 +741,26 @@ const App: React.FC = () => {
   }, [currentCircle?.ownerId, user?.uid]);
 
   // Places Sync across all circles and personal storage
+  const userCircleIdsKey = useMemo(() => userCircles.map(c => c.id).sort().join(','), [userCircles]);
+
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) return;
     const targetCircleIds = Array.from(new Set([
       ...(userCircles.map(c => c.id)),
       ...(profile?.familyCircleId ? [profile.familyCircleId] : [])
     ].filter(Boolean)));
 
     const unsubscribe = subscribeToUserPlacesMulti(targetCircleIds, user.uid, (places) => {
-      setUserPlaces(places || []);
+      setUserPlaces(prev => {
+        const next = places || [];
+        if (prev.length === next.length && prev.every((p, i) => p.id === next[i].id && p.name === next[i].name)) {
+          return prev;
+        }
+        return next;
+      });
     });
     return () => unsubscribe();
-  }, [user?.uid, profile?.familyCircleId, userCircles]);
+  }, [user?.uid, profile?.familyCircleId, userCircleIdsKey]);
 
   // Synchronize userPlaces with discoveredPlaces without blowing away search results
   useEffect(() => {
@@ -764,7 +772,11 @@ const App: React.FC = () => {
       // Only keep search/discovered places — don't blindly re-inject all userPlaces.
       // The allDisplayPlaces memo already combines userPlaces + discoveredPlaces for map display.
       // Re-merging all userPlaces here would undo query-relevant filtering in handleDiscovery.
-      return prev.filter(p => p.type === 'search_result' || p.id.startsWith('photon-') || p.id.startsWith('nominatim-') || p.id.startsWith('overpass-'));
+      const filtered = prev.filter(p => p.type === 'search_result' || p.id.startsWith('photon-') || p.id.startsWith('nominatim-') || p.id.startsWith('overpass-'));
+      if (filtered.length === prev.length && filtered.every((p, idx) => p.id === prev[idx]?.id)) {
+        return prev;
+      }
+      return filtered;
     });
   }, [userPlaces]);
 
@@ -1231,7 +1243,7 @@ const App: React.FC = () => {
         homeAddress: ''
       }));
       if (user?.uid) {
-        updateUserProfile(user.uid, { preciseHomeLocation: null as any, homeAddress: '' as any }).catch(err => {
+        updateUserProfile(user.uid, { preciseHomeLocation: null as any }).catch(err => {
           console.warn('⚠️ Could not clear preciseHomeLocation in DB:', err);
         });
       }
@@ -1331,29 +1343,130 @@ const App: React.FC = () => {
     setUserPlaces(prev => prev.map(p => p.id === placeId ? { ...p, ...updates } : p));
   }, []);
 
+  const handleSearchResultsChange = useCallback((results: Place[]) => {
+    setSearchResultPlaces(prev => {
+      if (prev.length === results.length && prev.every((p, idx) => p.id === results[idx]?.id)) {
+        return prev;
+      }
+      return results;
+    });
+  }, []);
+
+  const mapboxCenter = useMemo<[number, number] | undefined>(() => {
+    return mapCenter ? [mapCenter[1], mapCenter[0]] : undefined;
+  }, [mapCenter?.[0], mapCenter?.[1]]);
+
+  const handleBoundsChange = useCallback((b: { north: number; south: number; east: number; west: number }) => {
+    setMapBounds(prev => {
+      if (!prev) return b;
+      if (
+        Math.abs(prev.north - b.north) < 0.0005 &&
+        Math.abs(prev.south - b.south) < 0.0005 &&
+        Math.abs(prev.east - b.east) < 0.0005 &&
+        Math.abs(prev.west - b.west) < 0.0005
+      ) {
+        return prev;
+      }
+      return b;
+    });
+  }, []);
+
+  const handleLocateSelf = useCallback(() => {
+    // Dismiss Place Detail / search input if open
+    setSelectedPlace(null);
+    setIsPlaceDetailOpen(false);
+    setSearchText('');
+    setSearchResultPlaces([]);
+    setSelectedMemberId(null);
+    setIsMemberDetailOpen(false);
+
+    // Get current user location
+    const selfMember = members.find(m => m.id === user?.uid || m.id === 'demo-you' || m.id === 'current_user' || m.id === 'local-user');
+    const loc = userLocation || selfMember?.location;
+    const lat = loc ? ((loc as any).latitude ?? loc.lat) : undefined;
+    const lng = loc ? ((loc as any).longitude ?? loc.lng) : undefined;
+
+    if (typeof lat !== 'number' || typeof lng !== 'number' || (lat === 0 && lng === 0) || isNaN(lat) || isNaN(lng)) {
+      showNotification('Waiting for GPS signal...', 3000);
+      return;
+    }
+
+    const mapInstance = (window as any).mywayMap;
+    if (mapInstance) {
+      const curCenter = typeof mapInstance.getCenter === 'function' ? mapInstance.getCenter() : null;
+      const curZoom = typeof mapInstance.getZoom === 'function' ? mapInstance.getZoom() : 16.5;
+      const dist = curCenter ? Math.hypot(curCenter.lng - lng, curCenter.lat - lat) : 0;
+      const targetZoom = Math.max(16.5, curZoom);
+      const padding = isMobile ? { top: 0, bottom: 200, left: 0, right: 0 } : { top: 0, bottom: 0, left: 0, right: 0 };
+
+      // Snappy, butter-smooth camera glide: 550ms easeTo if nearby (< 25km), 850ms flyTo if far
+      if (dist > 0.25 && typeof mapInstance.flyTo === 'function') {
+        mapInstance.flyTo({
+          center: [lng, lat],
+          zoom: targetZoom,
+          pitch: is3DMode ? 60 : 0,
+          speed: 2.5,
+          curve: 1.0,
+          maxDuration: 850,
+          essential: true,
+          padding
+        });
+      } else if (typeof mapInstance.easeTo === 'function') {
+        mapInstance.easeTo({
+          center: [lng, lat],
+          zoom: targetZoom,
+          pitch: is3DMode ? 60 : 0,
+          duration: 550,
+          essential: true,
+          padding
+        });
+      }
+    }
+    setMapCenter([lat, lng]);
+    showNotification("📍 Centered on your location", 2000);
+  }, [user?.uid, userLocation, members, is3DMode, isMobile, showNotification]);
+
   const handleSelectMember = useCallback((id: string) => {
     const member = members.find(m => m.id === id);
     const lat = member?.location ? ((member.location as any).latitude ?? member.location.lat) : undefined;
     const lng = member?.location ? ((member.location as any).longitude ?? member.location.lng) : undefined;
 
     // Handle Missing Locations:
-    // Guard clause: If the member's location is unavailable (e.g., offline or location paused),
-    // display a brief toast notification like "Location unavailable" instead of attempting to move the map to [0,0].
     if (!member || typeof lat !== 'number' || typeof lng !== 'number' || (lat === 0 && lng === 0) || isNaN(lat) || isNaN(lng)) {
       showNotification('Location unavailable', 3000);
       return;
     }
 
-    // Trigger Map Camera Animation:
-    // Access MapLibre instance and call map.flyTo({ center: [longitude, latitude], zoom: 15, essential: true })
+    // Trigger Fast & Smooth Map Camera Animation:
     const mapInstance = (window as any).mywayMap;
-    if (mapInstance && typeof mapInstance.flyTo === 'function') {
-      mapInstance.flyTo({
-        center: [lng, lat],
-        zoom: 15,
-        essential: true,
-        duration: 1500
-      });
+    if (mapInstance) {
+      const curCenter = typeof mapInstance.getCenter === 'function' ? mapInstance.getCenter() : null;
+      const curZoom = typeof mapInstance.getZoom === 'function' ? mapInstance.getZoom() : 16;
+      const dist = curCenter ? Math.hypot(curCenter.lng - lng, curCenter.lat - lat) : 0;
+      const targetZoom = Math.max(16, curZoom);
+      const padding = isMobile ? { top: 0, bottom: 200, left: 0, right: 0 } : { top: 0, bottom: 0, left: 0, right: 0 };
+
+      if (dist > 0.25 && typeof mapInstance.flyTo === 'function') {
+        mapInstance.flyTo({
+          center: [lng, lat],
+          zoom: targetZoom,
+          pitch: is3DMode ? 60 : 0,
+          speed: 2.5,
+          curve: 1.0,
+          maxDuration: 850,
+          essential: true,
+          padding
+        });
+      } else if (typeof mapInstance.easeTo === 'function') {
+        mapInstance.easeTo({
+          center: [lng, lat],
+          zoom: targetZoom,
+          pitch: is3DMode ? 60 : 0,
+          duration: 550,
+          essential: true,
+          padding
+        });
+      }
     }
     setMapCenter([lat, lng]);
 
@@ -1374,7 +1487,7 @@ const App: React.FC = () => {
     // Dismiss conflicting place selection
     setSelectedPlace(null);
     setIsPlaceDetailOpen(false);
-  }, [user?.uid, members, showNotification]);
+  }, [user?.uid, members, is3DMode, isMobile, showNotification]);
 
   const handleZoomChange = useCallback((zoom: number) => {
     setMapZoom(zoom);
@@ -1652,7 +1765,7 @@ const App: React.FC = () => {
               showTrafficControls={userSettings.showTrafficControls}
               selectedMemberId={selectedMemberId}
               selectedPlaceId={selectedPlace?.id || null}
-              center={mapCenter ? [mapCenter[1], mapCenter[0]] : undefined}
+              center={mapboxCenter}
               zoom={mapZoom}
               onZoomChange={handleZoomChange}
               onUserInteraction={handleMapInteraction}
@@ -1673,7 +1786,7 @@ const App: React.FC = () => {
               onSelectPlace={handleSelectPlace}
               onSelectMember={handleSelectMember}
               onSelectIncident={setSelectedIncident}
-              onBoundsChange={setMapBounds}
+              onBoundsChange={handleBoundsChange}
               mapStyle={userSettings.mapStyle}
               isMobile={isMobile}
               isCameraFree={isCameraFree}
@@ -2070,14 +2183,10 @@ const App: React.FC = () => {
                   <div className="w-full pointer-events-auto">
                     <SearchBox
                       onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
-                      onSearchResultsChange={setSearchResultPlaces}
+                      onSearchResultsChange={handleSearchResultsChange}
                       onNavigate={handleStartNavigation}
                       onCategorySearch={handleQuickSearch}
-                      onLocate={() => {
-                        const targetId = user?.uid || 'demo-you';
-                        handleSelectMember(targetId);
-                        showNotification("📍 Centered on your location", 2000);
-                      }}
+                      onLocate={handleLocateSelf}
                       onQuickStop={() => setActiveModal('quickstop')}
                       onOpenMessages={() => {
                         setMessagingRecipientId(null);
@@ -2693,14 +2802,10 @@ const App: React.FC = () => {
               <div className="w-full pointer-events-auto">
                 <SearchBox
                   onSearch={(q) => handleDiscovery(q, handleSelectPlace)}
-                  onSearchResultsChange={setSearchResultPlaces}
+                  onSearchResultsChange={handleSearchResultsChange}
                   onNavigate={handleStartNavigation}
                   onCategorySearch={handleQuickSearch}
-                  onLocate={() => {
-                    const targetId = user?.uid || 'demo-you';
-                    handleSelectMember(targetId);
-                    showNotification("📍 Centered on your location", 2000);
-                  }}
+                  onLocate={handleLocateSelf}
                   onQuickStop={() => setActiveModal('quickstop')}
                   onOpenMessages={() => {
                     setMessagingRecipientId(null);

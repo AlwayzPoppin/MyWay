@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Shared thread-safe repository holding navigation state and saved places
- * synced between the MyWay Capacitor web application and Android Auto.
+ * Shared thread-safe repository holding navigation state, arrival flags,
+ * and saved places synced between the MyWay Capacitor web application and Android Auto.
  */
 public class CarStateRepository {
     private static volatile CarStateRepository instance;
@@ -34,6 +34,7 @@ public class CarStateRepository {
     }
 
     private boolean isNavigating = false;
+    private boolean isArrived = false;
     private String destinationName = "";
     private String eta = "";
     private String remainingDistance = "";
@@ -74,7 +75,8 @@ public class CarStateRepository {
             String remainingDistance,
             String currentInstruction,
             int speedMph,
-            int speedLimit
+            int speedLimit,
+            boolean isArrived
     ) {
         this.isNavigating = true;
         this.destinationName = (destinationName != null && !destinationName.trim().isEmpty())
@@ -87,11 +89,34 @@ public class CarStateRepository {
                 : "Follow highlighted route";
         this.speedMph = Math.max(0, speedMph);
         this.speedLimit = Math.max(0, speedLimit);
+        this.isArrived = isArrived || "Arrived!".equalsIgnoreCase(this.currentInstruction);
+        notifyNavigationChanged();
+    }
+
+    public synchronized void updateNavigation(
+            String destinationName,
+            String eta,
+            String remainingDistance,
+            String currentInstruction,
+            int speedMph,
+            int speedLimit
+    ) {
+        updateNavigation(destinationName, eta, remainingDistance, currentInstruction, speedMph, speedLimit, false);
+    }
+
+    public synchronized void setArrived(boolean arrived) {
+        this.isArrived = arrived;
+        if (arrived) {
+            this.currentInstruction = "Arrived!";
+            this.remainingDistance = "0 ft";
+            this.eta = "0 min";
+        }
         notifyNavigationChanged();
     }
 
     public synchronized void stopNavigation() {
         this.isNavigating = false;
+        this.isArrived = false;
         this.destinationName = "";
         this.eta = "";
         this.remainingDistance = "";
@@ -126,6 +151,7 @@ public class CarStateRepository {
     }
 
     public synchronized boolean isNavigating() { return isNavigating; }
+    public synchronized boolean isArrived() { return isArrived; }
     public synchronized String getDestinationName() { return destinationName; }
     public synchronized String getEta() { return eta; }
     public synchronized String getRemainingDistance() { return remainingDistance; }

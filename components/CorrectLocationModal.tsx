@@ -8,7 +8,7 @@ import { publicMapReportService } from '../services/publicMapReportService';
 import { communityBuildingService } from '../services/communityBuildingService';
 import { extractHouseNumber } from '../utils/addressUtils';
 import { getDistanceMeters, getBearing } from '../utils/geo';
-import { hapticSuccess, hapticError } from '../utils/haptics';
+import { hapticSuccess, hapticError, hapticTick } from '../utils/haptics';
 import {
     FileEdit,
     MapPin,

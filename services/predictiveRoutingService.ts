@@ -72,7 +72,7 @@ class PredictiveRoutingService {
 
             // Distance check: If already within 200m of this place, don't predict it
             if (userLocation) {
-                const dist = parseFloat(getDistanceMiles(userLocation, p.location) || '0');
+                const dist = getDistanceMiles(userLocation, p.location) ?? 0;
                 if (dist < 0.15) return; // Already there
             }
 

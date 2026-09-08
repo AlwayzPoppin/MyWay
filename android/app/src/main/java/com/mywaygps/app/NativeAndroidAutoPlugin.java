@@ -20,13 +20,39 @@ import java.util.List;
 @CapacitorPlugin(name = "NativeAndroidAuto")
 public class NativeAndroidAutoPlugin extends Plugin {
     private static volatile boolean isCarSessionActive = false;
+    private static volatile NativeAndroidAutoPlugin activeInstance;
+
+    @Override
+    public void load() {
+        super.load();
+        activeInstance = this;
+    }
 
     public static void setCarSessionActive(boolean active) {
         isCarSessionActive = active;
+        if (activeInstance != null) {
+            JSObject ret = new JSObject();
+            ret.put("connected", active);
+            activeInstance.notifyListeners("carSessionStateChanged", ret);
+        }
     }
 
     public static boolean isCarSessionActive() {
         return isCarSessionActive;
+    }
+
+    /**
+     * Called when the driver presses the red "X" cancel action on the car's NavigationTemplate.
+     * Emits event back to React so useNavigation stops active routing on the phone.
+     */
+    public static void notifyNavigationCancelledFromCar() {
+        CarStateRepository.getInstance().stopNavigation();
+        if (activeInstance != null) {
+            JSObject data = new JSObject();
+            data.put("source", "car_action_strip");
+            data.put("timestamp", System.currentTimeMillis());
+            activeInstance.notifyListeners("carNavigationCancelled", data);
+        }
     }
 
     @PluginMethod
@@ -38,6 +64,11 @@ public class NativeAndroidAutoPlugin extends Plugin {
             String currentInstruction = call.getString("currentInstruction", "");
             int speedMph = call.getInt("speedMph", 0);
             int speedLimit = call.getInt("speedLimit", 0);
+            boolean isArrived = call.getBoolean("isArrived", false);
+
+            if ("Arrived!".equalsIgnoreCase(currentInstruction)) {
+                isArrived = true;
+            }
 
             CarStateRepository.getInstance().updateNavigation(
                     destinationName,
@@ -45,7 +76,8 @@ public class NativeAndroidAutoPlugin extends Plugin {
                     remainingDistance,
                     currentInstruction,
                     speedMph,
-                    speedLimit
+                    speedLimit,
+                    isArrived
             );
 
             JSObject ret = new JSObject();
@@ -54,6 +86,18 @@ public class NativeAndroidAutoPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Failed to update car navigation state: " + e.getMessage(), e);
+        }
+    }
+
+    @PluginMethod
+    public void notifyArrival(PluginCall call) {
+        try {
+            CarStateRepository.getInstance().setArrived(true);
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to set arrival state: " + e.getMessage(), e);
         }
     }
 

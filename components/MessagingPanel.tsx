@@ -107,6 +107,16 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     }, [selectedRecipientId, members, currentUserId, isGroupCircle]);
 
     // Explicit Type Guard & Condition:
+    const otherMembers = useMemo(() => {
+        return members.filter(m => m.id !== currentUserId);
+    }, [members, currentUserId]);
+
+    // Active circle object for the selected channel
+    const activeChannelCircle = useMemo(() => {
+        if (selectedChannelId === 'all') return null;
+        return userCircles.find(c => c.id === selectedChannelId) || null;
+    }, [selectedChannelId, userCircles]);
+
     // A conversation is strictly a group chat if viewing all groups feed, or a circle channel,
     // or if the recipient evaluates to a group/circle context, or if recipient ID is missing or self.
     const isGroupChat = Boolean(
@@ -127,16 +137,6 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
         selectedRecipientId !== currentUserId &&
         !isGroupCircle(selectedRecipientId)
     );
-
-    const otherMembers = useMemo(() => {
-        return members.filter(m => m.id !== currentUserId);
-    }, [members, currentUserId]);
-
-    // Active circle object for the selected channel
-    const activeChannelCircle = useMemo(() => {
-        if (selectedChannelId === 'all') return null;
-        return userCircles.find(c => c.id === selectedChannelId) || null;
-    }, [selectedChannelId, userCircles]);
 
     // Effective circle ID to write messages into
     const effectiveCircleId = useMemo(() => {

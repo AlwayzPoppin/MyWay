@@ -1,8 +1,11 @@
 {
-  "name": "MyWay",
-  "description": "AI-powered family GPS with real-time community navigation and precision family safety, featuring Gemini Live for hands-free co-piloting.",
+  "name": "Remix MyWay",
+  "description": "My Way: Shared GPS Navigation - Real-time family circle tracking, precision turn-by-turn navigation, and live road safety.",
   "requestFramePermissions": [
     "geolocation",
     "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

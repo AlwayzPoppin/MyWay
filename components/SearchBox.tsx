@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Place } from '../types';
 import { searchHistoryService, RecentSearchItem } from '../services/searchHistoryService';
 import { searchPlacesText } from '../services/placesService';
@@ -183,6 +183,39 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   const [showDrawer, setShowDrawer] = useState(false);
   const prevSelectedPlaceRef = useRef<Place | null | undefined>(selectedPlace);
 
+  const [activeTab, setActiveTab] = useState<'suggestions' | 'recent' | 'categories' | 'saved'>('recent');
+  const [history, setHistory] = useState<RecentSearchItem[]>([]);
+  const [suggestions, setSuggestions] = useState<Place[]>([]);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequestIdRef = useRef(0);
+
+  // Result ID hash cache to prevent infinite update depth loop
+  const lastEmittedResultIdsRef = useRef<string>('');
+  const onSearchResultsChangeRef = useRef(onSearchResultsChange);
+  useEffect(() => {
+    onSearchResultsChangeRef.current = onSearchResultsChange;
+  });
+
+  const onSearchTextChangeRef = useRef(onSearchTextChange);
+  useEffect(() => {
+    onSearchTextChangeRef.current = onSearchTextChange;
+  });
+
+  const mapCenterRef = useRef(mapCenter);
+  useEffect(() => {
+    mapCenterRef.current = mapCenter;
+  });
+
+  const safeEmitSearchResults = useCallback((results: Place[]) => {
+    if (!onSearchResultsChangeRef.current) return;
+    const key = results.map(r => r.id || `${r.location?.lat}_${r.location?.lng}_${r.name}`).join(',');
+    if (lastEmittedResultIdsRef.current === key) return;
+    lastEmittedResultIdsRef.current = key;
+    onSearchResultsChangeRef.current(results);
+  }, []);
+
   // Synchronize with selectedPlace changes
   useEffect(() => {
     if (selectedPlace && !isFocused) {
@@ -191,32 +224,25 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     } else if (!selectedPlace && prevSelectedPlaceRef.current) {
       // User or panel closed the selected place -> reset search box text and suggestions
       setQuery('');
-      setSuggestions([]);
+      setSuggestions(prev => prev.length === 0 ? prev : []);
       setShowDrawer(false);
-      onSearchResultsChange?.([]);
-      onSearchTextChange?.('');
+      safeEmitSearchResults([]);
+      onSearchTextChangeRef.current?.('');
     }
     prevSelectedPlaceRef.current = selectedPlace;
-  }, [selectedPlace, isFocused, onSearchResultsChange, onSearchTextChange]);
+  }, [selectedPlace, isFocused, safeEmitSearchResults]);
 
   // Synchronize when parent explicitly updates searchText (e.g. setSearchText('') on panel close)
   useEffect(() => {
     if (searchText !== undefined && searchText !== query) {
       setQuery(searchText);
       if (!searchText) {
-        setSuggestions([]);
+        setSuggestions(prev => prev.length === 0 ? prev : []);
         setShowDrawer(false);
-        onSearchResultsChange?.([]);
+        safeEmitSearchResults([]);
       }
     }
-  }, [searchText]);
-  const [activeTab, setActiveTab] = useState<'suggestions' | 'recent' | 'categories' | 'saved'>('recent');
-  const [history, setHistory] = useState<RecentSearchItem[]>([]);
-  const [suggestions, setSuggestions] = useState<Place[]>([]);
-  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchRequestIdRef = useRef(0);
+  }, [searchText, query, safeEmitSearchResults]);
 
   const userLocationRef = useRef(userLocation);
   useEffect(() => {
@@ -264,11 +290,18 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       clearTimeout(searchDebounceRef.current);
     }
 
+    // Guard: If a place is selected and user is not actively editing/focusing the search input,
+    // do NOT run active search or broadcast search results to prevent infinite state loops
+    if (selectedPlace && !isFocused) {
+      setIsLoadingSuggestions(false);
+      return;
+    }
+
     const trimmed = query.trim().toLowerCase();
     if (trimmed.length < 1) {
-      setSuggestions([]);
-      onSearchResultsChange?.([]);
-      setIsLoadingSuggestions(false);
+      setSuggestions(prev => prev.length === 0 ? prev : []);
+      safeEmitSearchResults([]);
+      setIsLoadingSuggestions(prev => prev ? false : prev);
       if (activeTab === 'suggestions') setActiveTab('recent');
       return;
     }
@@ -316,13 +349,13 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     // immediately display the saved place(s) and skip external commercial API calls so other places don't clutter the map!
     if (hasExactSavedMatch) {
       setIsLoadingSuggestions(false);
-      onSearchResultsChange?.(matchingSaved);
+      safeEmitSearchResults(matchingSaved);
       return;
     }
 
     if (trimmed.length < 2) {
       setIsLoadingSuggestions(false);
-      onSearchResultsChange?.(matchingSaved);
+      safeEmitSearchResults(matchingSaved);
       return;
     }
 
@@ -333,11 +366,12 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       try {
         // Spatial focus location from mapCenter (current viewport center) or user's GPS location
         let focusLoc: { lat: number; lng: number } | undefined = undefined;
-        if (mapCenter) {
-          if (Array.isArray(mapCenter) && typeof mapCenter[0] === 'number' && typeof mapCenter[1] === 'number') {
-            focusLoc = { lat: mapCenter[0], lng: mapCenter[1] };
-          } else if (typeof (mapCenter as any).lat === 'number' && typeof (mapCenter as any).lng === 'number') {
-            focusLoc = mapCenter as { lat: number; lng: number };
+        const currentMapCenter = mapCenterRef.current;
+        if (currentMapCenter) {
+          if (Array.isArray(currentMapCenter) && typeof currentMapCenter[0] === 'number' && typeof currentMapCenter[1] === 'number') {
+            focusLoc = { lat: currentMapCenter[0], lng: currentMapCenter[1] };
+          } else if (typeof (currentMapCenter as any).lat === 'number' && typeof (currentMapCenter as any).lng === 'number') {
+            focusLoc = currentMapCenter as { lat: number; lng: number };
           }
         }
         if (!focusLoc && userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && userLocation.lat !== 0 && userLocation.lng !== 0) {
@@ -407,7 +441,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         });
 
         setSuggestions(combined);
-        onSearchResultsChange?.(combined);
+        safeEmitSearchResults(combined);
         if (combined.length > 0) {
           setActiveTab('suggestions');
         }
@@ -449,7 +483,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
-  }, [query, mapCenter]);
+  }, [query, selectedPlace, isFocused, safeEmitSearchResults]);
 
   const filteredHistory = useMemo(() => {
     if (!query.trim()) return history.slice(0, 8);
@@ -481,7 +515,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       type: place.type,
       icon: place.icon
     });
-    onSearchResultsChange?.([]);
+    safeEmitSearchResults([]);
     if (onSelectPlace) {
       onSelectPlace(place);
     } else {
@@ -501,7 +535,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
       type: place.type,
       icon: place.icon
     });
-    onSearchResultsChange?.([place]);
+    safeEmitSearchResults([place]);
     if (onNavigate) {
       onNavigate(place.name, place.location);
     } else if (onSelectPlace) {
@@ -515,7 +549,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     const textToSearch = item.name || item.query;
     setQuery(textToSearch);
     searchHistoryService.addItem(item);
-    onSearchResultsChange?.([]);
+    safeEmitSearchResults([]);
     if (item.location && onSelectPlace) {
       onSelectPlace({
         id: item.id,
@@ -603,7 +637,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
             setShowDrawer(prev => {
               const next = !prev;
               if (next && suggestions.length > 0) {
-                onSearchResultsChange?.(suggestions);
+                safeEmitSearchResults(suggestions);
               }
               return next;
             });
@@ -633,7 +667,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               setIsFocused(true);
               setShowDrawer(true);
               if (suggestions.length > 0) {
-                onSearchResultsChange?.(suggestions);
+                safeEmitSearchResults(suggestions);
               }
             }}
             placeholder="Where to? (e.g. Main St, Starbucks, Airport)"
@@ -652,7 +686,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                 setQuery('');
                 onSearchTextChange?.('');
                 setSuggestions([]);
-                onSearchResultsChange?.([]);
+                safeEmitSearchResults([]);
                 setActiveTab('recent');
                 setShowDrawer(false);
                 setIsFocused(false);

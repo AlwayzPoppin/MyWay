@@ -375,7 +375,8 @@ export const syncDeadZoneTiles = async (deadZone: DeadZoneRecord): Promise<boole
         const area = await offlineMapService.downloadArea(
             `Dead Zone (${deadZone.center.lat.toFixed(2)}, ${deadZone.center.lng.toFixed(2)})`,
             bounds,
-            { min: 10, max: 14 }
+            10,
+            14
         );
 
         if (area) {
