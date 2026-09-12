@@ -26,16 +26,19 @@
       --sal: env(safe-area-inset-left);
     }
 
+    html,
+    body,
+    #root {
+      width: 100%;
+      height: var(--myway-viewport-height, 100dvh);
+      min-height: var(--myway-viewport-height, 100dvh);
+    }
+
     body {
       font-family: 'Inter', sans-serif;
       overflow: hidden;
-      height: 100dvh;
       background: #000000;
       /* OLED Black */
-    }
-
-    #root {
-      height: 100%;
     }
 
     .glass {

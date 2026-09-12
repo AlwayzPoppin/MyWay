@@ -6,6 +6,7 @@ import {
     getDocs,
     query,
     where,
+    onSnapshot,
     deleteDoc,
     doc,
     updateDoc
@@ -17,6 +18,7 @@ import {
     deleteObject
 } from 'firebase/storage';
 import { compressImageFile } from './placeCorrectionService';
+import { Place } from '../types';
 
 export interface PlacePhotoContribution {
     id: string;
@@ -29,9 +31,29 @@ export interface PlacePhotoContribution {
     userAvatar?: string;
     caption?: string;
     createdAt: number;
+    /** False when the photo is retained locally and still needs a server retry. */
+    isSynced?: boolean;
 }
 
 const LOCAL_STORAGE_PREFIX = 'myway_place_photos_';
+
+/**
+ * Search providers do not all return the same id for a building.  Use a
+ * repeatable, location-based key for public place photos so a photo added from
+ * one result is found when another circle member opens the same building.
+ * Saved places retain their own id because that id is shared through the
+ * Circle's places store.
+ */
+export const getPlacePhotoKey = (place: Pick<Place, 'id' | 'name' | 'location' | 'isSaved'>): string => {
+    if (place.isSaved || place.id.startsWith('demo-place-')) return place.id;
+    const name = (place.name || 'place')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 70) || 'place';
+    return `community_${name}_${place.location.lat.toFixed(4)}_${place.location.lng.toFixed(4)}`;
+};
 
 class PlacePhotoService {
     private memoryCache = new Map<string, PlacePhotoContribution[]>();
@@ -70,7 +92,8 @@ class PlacePhotoService {
                     userName: data.userName || 'Contributor',
                     userAvatar: data.userAvatar,
                     caption: data.caption || '',
-                    createdAt: data.createdAt || Date.now()
+                    createdAt: data.createdAt || Date.now(),
+                    isSynced: true
                 });
             });
 
@@ -87,6 +110,52 @@ class PlacePhotoService {
             this.memoryCache.set(placeId, cached);
             return cached;
         }
+    }
+
+    /**
+     * Keep an open place panel current when another Circle/community member
+     * contributes a photo. The local cache remains the fallback when Firestore
+     * is unavailable, so opening a place never depends on a push arriving.
+     */
+    public subscribeToPhotosForPlace(
+        placeId: string,
+        callback: (photos: PlacePhotoContribution[]) => void
+    ): () => void {
+        if (!placeId) {
+            callback([]);
+            return () => undefined;
+        }
+
+        const cached = this.memoryCache.get(placeId) || this.loadLocalCache(placeId);
+        if (cached.length > 0) callback(cached);
+
+        const photoQuery = query(collection(db, 'photos'), where('placeId', '==', placeId));
+        return onSnapshot(photoQuery, (snapshot) => {
+            const serverPhotos: PlacePhotoContribution[] = [];
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                serverPhotos.push({
+                    id: docSnap.id,
+                    placeId: data.placeId,
+                    placeName: data.placeName || '',
+                    url: data.url,
+                    storagePath: data.storagePath,
+                    userId: data.userId || 'anonymous',
+                    userName: data.userName || 'Contributor',
+                    userAvatar: data.userAvatar,
+                    caption: data.caption || '',
+                    createdAt: data.createdAt || Date.now(),
+                    isSynced: true
+                });
+            });
+            const merged = this.mergeWithLocal(placeId, serverPhotos, this.loadLocalCache(placeId));
+            this.memoryCache.set(placeId, merged);
+            this.saveLocalCache(placeId, merged);
+            callback(merged);
+        }, (error) => {
+            console.warn('[PlacePhotoService] Realtime photo subscription unavailable:', error);
+            callback(cached);
+        });
     }
 
     /**
@@ -139,6 +208,7 @@ class PlacePhotoService {
 
         // 3. Save metadata record to Firestore 'photos' collection
         let firestoreDocId = `local_${timestamp}_${randId}`;
+        let isSynced = false;
         try {
             const docRef = await addDoc(collection(db, 'photos'), {
                 placeId,
@@ -152,6 +222,7 @@ class PlacePhotoService {
                 createdAt: timestamp
             });
             firestoreDocId = docRef.id;
+            isSynced = true;
         } catch (firestoreErr) {
             console.warn('[PlacePhotoService] Firestore save failed, storing locally:', firestoreErr);
         }
@@ -166,7 +237,8 @@ class PlacePhotoService {
             userName: userName || 'Contributor',
             userAvatar,
             caption: caption || '',
-            createdAt: timestamp
+            createdAt: timestamp,
+            isSynced
         };
 
         // 4. Update memory & local caches immediately

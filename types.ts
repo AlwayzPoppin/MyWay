@@ -47,7 +47,17 @@ export interface RouteStep {
   trafficControl?: TrafficControlType; // Stop sign, traffic light, railroad crossing, etc.
 }
 
-export type IncidentType = 'police' | 'hazard' | 'shoulder' | 'construction' | 'traffic' | 'safety_alert';
+/** Temporary traffic alerts plus verified long-lived road features. */
+export type IncidentType =
+  | 'police'
+  | 'hazard'
+  | 'shoulder'
+  | 'construction'
+  | 'traffic'
+  | 'safety_alert'
+  | 'road_closed'
+  | 'signal_out'
+  | 'speed_bump';
 
 export interface IncidentReport {
   id: string;
@@ -64,6 +74,8 @@ export interface IncidentReport {
   downvoterIds?: string[];
   expiresAt?: number;
   verified?: boolean;
+  /** Road features are retained until the community marks them removed. */
+  isPermanent?: boolean;
 }
 
 export interface RouteWaypoint {
@@ -94,6 +106,7 @@ export interface NavigationRoute {
   totalTime: string;
   durationMinutes?: number;
   totalDurationSec?: number;
+  staticDurationSec?: number;
   distanceMeters?: number;
   routeType?: 'fastest' | 'shortest' | 'eco' | 'toll_free' | 'scenic';
   routeLabel?: string; // e.g. "Fastest Route", "Toll-Free (Save $50.60)", "Shortest Distance", "Eco Fuel Saver"
@@ -167,6 +180,8 @@ export interface FamilyMember {
   destination?: string;
   currentTrip?: CurrentTrip | null;
   isGhostMode?: boolean;
+  isSharingLocation?: boolean;
+  locationSharing?: boolean;
   privacyMode?: PrivacyMode;
   blurredRadiusMeters?: number;
   sosActive?: boolean;
@@ -181,6 +196,11 @@ export interface FamilyMember {
   circleName?: string;
   circleColor?: string;
   circleBadges?: { id: string; name: string; color: string }[];
+  isSelf?: boolean;
+  companionDeviceLabel?: string;
+  /** Last companion session reported by this member (for example, Windows browser). */
+  activeViewerDeviceLabel?: string;
+  activeViewerDevicePlatform?: string;
 }
 
 export type EntranceType = 'drive_thru' | 'parking' | 'main_door' | 'curbside' | 'general' | 'driveway' | 'front_door';
@@ -238,6 +258,37 @@ export interface Place {
   isRooftop?: boolean; // True only if geocoder resolved strictly to a verified rooftop building
   geocodePrecision?: 'rooftop' | 'interpolated' | 'street' | 'intersection' | 'approximate'; // Accuracy tier
   isCommunityVerified?: boolean; // True when destination coordinates are verified by the global community_pins collection
+  accessPoints?: DestinationAccessPoint[];
+}
+
+export type AccessPointType = 
+  | 'main_entrance' 
+  | 'curbside' 
+  | 'auto_care' 
+  | 'pharmacy_drive_thru' 
+  | 'emergency_dropoff' 
+  | 'contractor_lumber' 
+  | 'drive_thru' 
+  | 'parking';
+
+export interface DestinationAccessPoint {
+  id: string;
+  placeId?: string;
+  placeName?: string;
+  placeLocation?: Location;
+  name: string;
+  type: AccessPointType;
+  location: Location;
+  entranceType?: EntranceType;
+  notes?: string;
+  imageUrl?: string;
+  source?: 'community' | 'official' | 'system' | 'user' | 'osm';
+  confidence?: 'low' | 'medium' | 'high';
+  verifiedCount?: number;
+  status?: 'pending' | 'approved' | 'rejected';
+  submittedBy?: string;
+  submittedAt?: number;
+  updatedAt?: number;
 }
 
 export interface ParkedVehiclePlace extends Place {

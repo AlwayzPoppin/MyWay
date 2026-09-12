@@ -1,7 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">MyWay</string>
-    <string name="title_activity_main">MyWay</string>
+    <string name="app_name">My Way</string>
+    <string name="title_activity_main">My Way</string>
     <string name="package_name">com.mywaygps.app</string>
     <string name="custom_url_scheme">com.mywaygps.app</string>
+    <string name="default_notification_channel_id">myway_safety</string>
 </resources>

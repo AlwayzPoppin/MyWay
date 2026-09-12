@@ -124,8 +124,11 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
     useEffect(() => {
         if (!isOpen || !place || !mapContainerRef.current) return;
 
-        const initialLat = currentCoords.lat || place.location?.lat || 35.105;
-        const initialLng = currentCoords.lng || place.location?.lng || -78.966;
+        // A correction dialog can open consecutively for different search
+        // results. Always seed its map from the place being edited, never from
+        // the previous dialog's retained center-pin state.
+        const initialLat = place.location?.lat || currentCoords.lat || 35.105;
+        const initialLng = place.location?.lng || currentCoords.lng || -78.966;
 
         const mapStyleUrl = isDark
             ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
@@ -211,11 +214,13 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
             map.remove();
             mapInstanceRef.current = null;
         };
-    }, [isOpen, place?.id, isDark]);
+    }, [isOpen, place?.id, place?.location?.lat, place?.location?.lng, isDark]);
 
     if (!isOpen || !place) return null;
 
-    const originalLoc = place.originalLocation || place.location || { lat: 35.105, lng: -78.966 };
+    // Reset returns to the selected place's current search/result pin. Its
+    // historical originalLocation is for audit data, not this edit target.
+    const originalLoc = place.location || place.originalLocation || { lat: 35.105, lng: -78.966 };
     const distanceMeters = getDistanceMeters(originalLoc, currentCoords);
     const distanceFeet = Math.round(distanceMeters * 3.28084);
     const bearing = getBearing(originalLoc, currentCoords);
@@ -378,6 +383,8 @@ const CorrectLocationModal: React.FC<CorrectLocationModalProps> = ({
                 } : undefined,
                 imageUrl: finalPhotoUrl || place.imageUrl,
                 isCorrected: true,
+                isCommunityVerified: isPublicReport,
+                visibility: visibility,
                 correctedAt: Date.now(),
                 submitterId: isPublicReport ? 'community' : userId,
                 submitterName: publicDisplayName,

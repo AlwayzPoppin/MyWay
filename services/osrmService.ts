@@ -6,6 +6,7 @@ import { vehicleFuelService } from './vehicleFuelService';
 import { computeRouteTrafficSegments } from './trafficService';
 import { osmTrafficService } from './osmTrafficService';
 import { contributionService } from './contributionService';
+import { fetchGoogleTrafficRouteOptions } from './googleTrafficRoutingService';
 
 // ROUTING PROVIDERS: Multi-provider failover chain for production reliability
 // Configure VITE_OSRM_URL for your primary provider (self-hosted, Mapbox, etc.)
@@ -339,13 +340,15 @@ async function fetchRouteFromProvider(
         heading?: number;
         continueStraight?: boolean;
         isReroute?: boolean;
+        snapRadiusMeters?: number;
     }
 ): Promise<OSRMResponse> {
     if (isOffline()) throw new Error('Device is offline');
     const canDoAlternatives = alternatives && points.length === 2;
     const altParam = canDoAlternatives ? '&alternatives=3' : '';
     const coordsStr = points.map(p => `${Number(p.lng.toFixed(6))},${Number(p.lat.toFixed(6))}`).join(';');
-    const radiusesStr = points.map(() => '500').join(';');
+    const snapRadiusMeters = Math.max(50, Math.min(2000, routingOpts?.snapRadiusMeters || 500));
+    const radiusesStr = points.map(() => String(snapRadiusMeters)).join(';');
 
     // Bearings / Travel Direction Constraint:
     // When heading is available (e.g. vehicle moving forward), constrain start waypoint to road segments
@@ -493,6 +496,7 @@ function parseOSRMRoute(
         totalDistance: formatDistance(route.distance),
         totalTime: formatDuration(route.duration),
         durationMinutes: durMinutes,
+        totalDurationSec: route.duration,
         distanceMeters: route.distance,
         summary,
         fuelEstimateGal: parseFloat(fuelGal.toFixed(2)),
@@ -547,7 +551,16 @@ export async function fetchRouteOptions(
 
     const parsedRoutes: NavigationRoute[] = [];
 
-    for (let i = 0; i < ROUTING_PROVIDERS.length; i++) {
+    // Prefer traffic-aware routes during active online use. The Cloud Function
+    // safely falls back to null until the Google Routes API is enabled.
+    if (waypoints.length === 0) {
+        const liveTrafficRoutes = await fetchGoogleTrafficRouteOptions(start, endName, endLocation);
+        if (liveTrafficRoutes?.length) {
+            parsedRoutes.push(...liveTrafficRoutes);
+        }
+    }
+
+    for (let i = 0; i < ROUTING_PROVIDERS.length && parsedRoutes.length === 0; i++) {
         if (isOffline()) break;
         const provider = ROUTING_PROVIDERS[i];
         try {
@@ -560,7 +573,7 @@ export async function fetchRouteOptions(
             }
 
             // 2. Multi-corridor discovery if < 2 routes returned and single-segment (query concurrently)
-            if (waypoints.length === 0 && parsedRoutes.length < 3 && straightLineDist > 25000) {
+            if (waypoints.length === 0 && parsedRoutes.length < 3 && straightLineDist > 900) {
                 const corridors = generateAlternativeCorridors(start, endLocation);
                 const corridorPromises = corridors.map(async (corridor) => {
                     try {
@@ -588,10 +601,20 @@ export async function fetchRouteOptions(
                 for (const item of settledCorridors) {
                     if (item.status === 'fulfilled' && item.value) {
                         const { cRoute, corridor } = item.value;
-                        const isDup = parsedRoutes.some(p => Math.abs((p.distanceMeters || 0) - (cRoute.distanceMeters || 0)) < 1500 && Math.abs((p.durationMinutes || 0) - (cRoute.durationMinutes || 0)) < 5);
+                        const isDup = parsedRoutes.some(p => {
+                            const distanceDelta = Math.abs((p.distanceMeters || 0) - (cRoute.distanceMeters || 0));
+                            const comparableDistance = Math.max(1, Math.min(p.distanceMeters || 1, cRoute.distanceMeters || 1));
+                            const durationDelta = Math.abs((p.durationMinutes || 0) - (cRoute.durationMinutes || 0));
+                            // Keep meaningful city alternatives. The old 1.5 km / 5 min
+                            // rule discarded nearly every short-trip route choice.
+                            return distanceDelta < Math.max(120, comparableDistance * 0.06) && durationDelta < 1;
+                        });
                         if (!isDup) {
                             cRoute.routeType = corridor.type as any;
-                            cRoute.summary = corridor.name;
+                            // Keep the routing engine's leg summary (for example,
+                            // "via Santa Fe Drive / Yadkin Road").  Replacing it
+                            // with an internal corridor label made the route picker
+                            // impossible to evaluate before switching.
                             parsedRoutes.push(cRoute);
                         }
                     }
@@ -601,6 +624,28 @@ export async function fetchRouteOptions(
             if (parsedRoutes.length > 0) break; // Found routes from primary provider
         } catch (e) {
             console.warn(`[OSRM Provider ${i+1}] Alternative routes failed:`, e);
+        }
+    }
+
+    // A map tap commonly lands at a building entrance or parcel center rather
+    // than directly on a road. Retry the normal providers with a wider snap
+    // radius before declaring that a place has no route.
+    if (parsedRoutes.length === 0 && straightLineDist >= 300) {
+        for (const provider of ROUTING_PROVIDERS) {
+            try {
+                const data = await fetchRouteFromProvider(provider, allPoints, waypoints.length === 0, {
+                    ...options,
+                    snapRadiusMeters: 1500
+                });
+                if (data.code === 'Ok' && data.routes?.length) {
+                    data.routes.forEach((route, idx) => {
+                        parsedRoutes.push(parseOSRMRoute(route, endName, endLocation, start, idx, waypoints));
+                    });
+                    break;
+                }
+            } catch (error) {
+                console.warn('[OSRM] Wider map-pin snap retry failed:', error);
+            }
         }
     }
 

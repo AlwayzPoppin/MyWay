@@ -1,7 +1,9 @@
 // Place Correction Service - High-Precision Pin Relocation & Storefront Photo Crowdsourcing
-import { Place, Location, EntranceType, EntrancePrecision } from '../types';
+import { Place, Location, EntranceType, EntrancePrecision, DestinationAccessPoint, AccessPointType } from '../types';
 import { database, storage } from './firebase';
+import { functions } from './firebase';
 import { ref, set, get, onValue, off } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getDistanceMeters } from '../utils/geo';
 
@@ -28,6 +30,7 @@ export interface PlaceCorrection {
 }
 
 const STORAGE_KEY = 'myway_place_corrections';
+const STORAGE_KEY_ACCESS_POINTS = 'myway_destination_access_points';
 
 /**
  * Normalizes a place name, description, and coordinate into a reliable lookup key
@@ -91,8 +94,39 @@ export async function compressImageFile(file: File, maxDimension: number = 1200,
 
 class PlaceCorrectionService {
     private correctionsMap = new Map<string, PlaceCorrection>();
+    private accessPointsMap = new Map<string, DestinationAccessPoint[]>();
     private isInitialized = false;
     private listeners = new Set<(corrections: Map<string, PlaceCorrection>) => void>();
+
+    private getAccessPointKey(place: Place): string {
+        const anchor = place.originalLocation || place.location;
+        return normalizePlaceKey(place.name, place.description, anchor);
+    }
+
+    private accessPointId(type: AccessPointType, location: Location): string {
+        const lat = location.lat.toFixed(5).replace('-', 'm').replace('.', '_');
+        const lng = location.lng.toFixed(5).replace('-', 'm').replace('.', '_');
+        return `ap_${type}_${lat}_${lng}`;
+    }
+
+    private dedupeAccessPoints(points: DestinationAccessPoint[]): DestinationAccessPoint[] {
+        const sorted = [...points].sort((a, b) => {
+            const confidenceRank = { high: 3, medium: 2, low: 1 };
+            const confidenceDelta = confidenceRank[b.confidence] - confidenceRank[a.confidence];
+            if (confidenceDelta !== 0) return confidenceDelta;
+            const verificationDelta = (b.verifiedCount || 0) - (a.verifiedCount || 0);
+            if (verificationDelta !== 0) return verificationDelta;
+            return (b.updatedAt || 0) - (a.updatedAt || 0);
+        });
+
+        return sorted.reduce<DestinationAccessPoint[]>((unique, point) => {
+            const duplicate = unique.some(existing =>
+                existing.type === point.type && getDistanceMeters(existing.location, point.location) < 12
+            );
+            if (!duplicate) unique.push(point);
+            return unique;
+        }, []);
+    }
 
     constructor() {
         this.loadLocalCache();
@@ -131,6 +165,20 @@ class PlaceCorrectionService {
         } catch (e) {
             console.warn('[PlaceCorrectionService] Local cache load failed:', e);
         }
+
+        try {
+            const rawAp = localStorage.getItem(STORAGE_KEY_ACCESS_POINTS);
+            if (rawAp) {
+                const parsedAp: Record<string, DestinationAccessPoint[]> = JSON.parse(rawAp);
+                Object.entries(parsedAp).forEach(([k, list]) => {
+                    if (Array.isArray(list)) {
+                        this.accessPointsMap.set(k, list);
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn('[PlaceCorrectionService] Local access points cache load failed:', e);
+        }
     }
 
     private saveLocalCache(): void {
@@ -140,6 +188,16 @@ class PlaceCorrectionService {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
         } catch (e) {
             console.warn('[PlaceCorrectionService] Local cache save failed:', e);
+        }
+
+        try {
+            const apObj: Record<string, DestinationAccessPoint[]> = {};
+            this.accessPointsMap.forEach((list, k) => {
+                apObj[k] = list;
+            });
+            localStorage.setItem(STORAGE_KEY_ACCESS_POINTS, JSON.stringify(apObj));
+        } catch (e) {
+            console.warn('[PlaceCorrectionService] Local access points cache save failed:', e);
         }
     }
 
@@ -164,6 +222,7 @@ class PlaceCorrectionService {
             console.warn('[PlaceCorrectionService] Realtime DB sync unavailable, using local store:', err);
             this.isInitialized = true;
         }
+
     }
 
     /**
@@ -290,6 +349,178 @@ class PlaceCorrectionService {
     }
 
     /**
+     * Get verified access points for a place.
+     * Guaranteed to never return simulated or guessed coordinates.
+     */
+    public getAccessPoints(place: Place): DestinationAccessPoint[] {
+        const key = this.getAccessPointKey(place);
+        
+        let storedPoints: DestinationAccessPoint[] = [];
+
+        if (this.accessPointsMap.has(key)) {
+            storedPoints = [...this.accessPointsMap.get(key)!];
+        } else if (place.id && this.accessPointsMap.has(place.id)) {
+            storedPoints = [...this.accessPointsMap.get(place.id)!];
+        } else {
+            // Proximity lookup within 400m for matching place name
+            const cleanTarget = (place.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            for (const [k, list] of this.accessPointsMap.entries()) {
+                const parts = k.split('_');
+                if (parts[0] === cleanTarget && list.length > 0) {
+                    const dist = getDistanceMeters(place.location, list[0].location);
+                    if (dist < 400) {
+                        storedPoints = [...list];
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Also incorporate any verified entrance from single-pin PlaceCorrection
+        const correction = this.getCorrection(place);
+        if (correction && correction.correctedLocation) {
+            const cType = correction.entranceType || place.entranceType || 'main_door';
+            const apType: AccessPointType = 
+                cType === 'curbside' ? 'curbside' :
+                cType === 'drive_thru' ? (place.category === 'Pharmacy' ? 'pharmacy_drive_thru' : 'drive_thru') :
+                (correction.entranceNotes?.toLowerCase().includes('auto') || correction.entranceNotes?.toLowerCase().includes('tire')) ? 'auto_care' :
+                (correction.entranceNotes?.toLowerCase().includes('emergency') || correction.entranceNotes?.toLowerCase().includes('er')) ? 'emergency_dropoff' :
+                (cType === 'parking' && (place.name.toLowerCase().includes('walmart') || place.name.toLowerCase().includes('hospital'))) ? 'parking' :
+                'main_entrance';
+
+            const apName = 
+                apType === 'curbside' ? 'Curbside pickup' :
+                apType === 'auto_care' ? 'Auto care' :
+                apType === 'pharmacy_drive_thru' ? 'Pharmacy drive-thru' :
+                apType === 'emergency_dropoff' ? 'Emergency drop-off' :
+                apType === 'drive_thru' ? 'Drive-thru' :
+                'Main entrance';
+
+            const alreadyExists = storedPoints.some(p => p.type === apType || (Math.abs(p.location.lat - correction.correctedLocation.lat) < 0.0001 && Math.abs(p.location.lng - correction.correctedLocation.lng) < 0.0001));
+            if (!alreadyExists) {
+                storedPoints.push({
+                    id: `ap_corr_${correction.normalizedKey}_${apType}`,
+                    placeId: place.id,
+                    name: apName,
+                    type: apType,
+                    location: correction.correctedLocation,
+                    entranceType: cType,
+                    notes: correction.entranceNotes,
+                    imageUrl: correction.imageUrl,
+                    source: 'community',
+                    confidence: 'high',
+                    verifiedCount: correction.helpfulCount || 1,
+                    updatedAt: correction.timestamp
+                });
+            }
+        }
+
+        // A place-center pin is useful for routing, but must never be presented
+        // as a verified entrance unless we have an explicit corrected entrance.
+        const hasMain = storedPoints.some(p => p.type === 'main_entrance');
+        if (!hasMain) {
+            const hasVerifiedMainEntrance = Boolean(
+                place.isCorrected && (place.entranceLocation || place.entrancePin || place.entrancePrecision?.location)
+            );
+            const mainLoc = hasVerifiedMainEntrance
+                ? (place.entranceLocation || place.entrancePin || place.entrancePrecision!.location)
+                : place.location;
+            storedPoints.unshift({
+                id: `ap_main_${place.id || 'default'}`,
+                placeId: place.id,
+                name: hasVerifiedMainEntrance ? 'Main entrance' : 'Main place pin',
+                type: 'main_entrance',
+                location: mainLoc,
+                entranceType: 'main_door',
+                notes: place.entranceNotes,
+                source: hasVerifiedMainEntrance ? 'community' : 'osm',
+                confidence: hasVerifiedMainEntrance ? 'high' : 'low'
+            });
+        }
+
+        return this.dedupeAccessPoints(storedPoints);
+    }
+
+    /** Subscribe only to the current place's access points instead of the full community dataset. */
+    public subscribeAccessPoints(place: Place, listener: (points: DestinationAccessPoint[]) => void): () => void {
+        const key = this.getAccessPointKey(place);
+        listener(this.getAccessPoints(place));
+
+        try {
+            const accessPointsRef = ref(database, `destination_access_points/${key}`);
+            return onValue(accessPointsRef, (snapshot) => {
+                const raw = snapshot.val();
+                const approvedPoints = raw && typeof raw === 'object'
+                    ? this.dedupeAccessPoints(Object.values(raw) as DestinationAccessPoint[])
+                    : [];
+                const localPendingPoints = (this.accessPointsMap.get(key) || []).filter(point => point.status === 'pending');
+                const points = this.dedupeAccessPoints([...approvedPoints, ...localPendingPoints]);
+                this.accessPointsMap.set(key, points);
+                if (place.id) this.accessPointsMap.set(place.id, points);
+                this.saveLocalCache();
+                listener(this.getAccessPoints(place));
+            }, (error) => {
+                console.warn('[PlaceCorrectionService] Access point sync unavailable:', error);
+                listener(this.getAccessPoints(place));
+            });
+        } catch (error) {
+            console.warn('[PlaceCorrectionService] Access point subscription failed:', error);
+            return () => undefined;
+        }
+    }
+
+    /**
+     * Save a verified Destination Access Point
+     */
+    public async saveAccessPoint(place: Place, ap: Omit<DestinationAccessPoint, 'id'>): Promise<DestinationAccessPoint> {
+        const key = this.getAccessPointKey(place);
+
+        const newPoint: DestinationAccessPoint = {
+            ...ap,
+            id: this.accessPointId(ap.type, ap.location),
+            placeId: place.id,
+            status: 'pending',
+            updatedAt: Date.now()
+        };
+
+        const existingList = this.accessPointsMap.get(key) || [];
+        const filtered = existingList.filter(p => p.id !== newPoint.id);
+        filtered.push(newPoint);
+
+        const merged = this.dedupeAccessPoints(filtered);
+        this.accessPointsMap.set(key, merged);
+        if (place.id) this.accessPointsMap.set(place.id, merged);
+
+        this.saveLocalCache();
+        this.notifyListeners();
+
+        try {
+            const result = await httpsCallable<
+                { normalizedKey: string; accessPoint: DestinationAccessPoint & { placeName?: string; placeLocation?: Location } },
+                { id: string; status: 'pending' | 'approved'; autoApproved?: boolean; verifiedCount?: number }
+            >(functions, 'submitDestinationAccessPoint')({
+                normalizedKey: key,
+                accessPoint: {
+                    ...newPoint,
+                    placeName: place.name,
+                    placeLocation: place.location
+                }
+            });
+            if (result.data.status === 'approved') {
+                newPoint.status = 'approved';
+                newPoint.confidence = 'high';
+                newPoint.verifiedCount = result.data.verifiedCount || newPoint.verifiedCount;
+                this.saveLocalCache();
+                this.notifyListeners();
+            }
+        } catch (err) {
+            console.warn('[PlaceCorrectionService] Access point submission queued locally:', err);
+        }
+
+        return newPoint;
+    }
+
+    /**
      * Augments a list of places (search results or POIs) with any recorded user corrections.
      * Swaps in the corrected coordinates, photo, entrance notes, and verified status.
      */
@@ -298,7 +529,14 @@ class PlaceCorrectionService {
 
         return places.map(p => {
             const correction = this.getCorrection(p);
-            if (!correction) return p;
+            const accessPoints = this.getAccessPoints(p);
+
+            if (!correction) {
+                return {
+                    ...p,
+                    accessPoints
+                };
+            }
 
             return {
                 ...p,
@@ -313,6 +551,7 @@ class PlaceCorrectionService {
                 entranceNotes: correction.entranceNotes || p.entranceNotes,
                 entranceLocation: correction.entrancePrecision?.location || p.entranceLocation,
                 entrancePrecision: correction.entrancePrecision || p.entrancePrecision,
+                accessPoints,
                 correctedAt: correction.timestamp,
                 submitterId: correction.submittedBy,
                 submitterName: correction.submitterName,

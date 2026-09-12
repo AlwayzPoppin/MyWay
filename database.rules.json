@@ -1,6 +1,32 @@
 {
   "rules": {
-    ".read": "auth != null",
-    ".write": "auth != null"
+    ".read": false,
+    ".write": false,
+    "users": { ".read": "auth != null", "$uid": { ".write": "auth != null && auth.uid === $uid" } },
+    "userDevices": { "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" } },
+    "userDeviceControls": { "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" } },
+    "circles": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "locations": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "keys": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "geofences": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "places": { ".read": "auth != null", "$scope": { ".write": "auth != null" } },
+    "circle_events": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "safetyEvents": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "convoys": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "familyCircles": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
+    "community_buildings": { ".read": "auth != null", "$id": { ".write": "auth != null" } },
+    "public_map_reports": { ".read": "auth != null", "$id": { ".write": "auth != null" } },
+    "place_corrections": { ".read": "auth != null", "$key": { ".write": "auth != null" } },
+    "destination_access_points": { "$normalizedKey": { ".read": "auth != null", ".write": false } },
+    "destination_access_point_submissions": {
+      "$normalizedKey": {
+        "$accessPointId": {
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": false
+          }
+        }
+      }
+    }
   }
 }

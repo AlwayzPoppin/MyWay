@@ -16,6 +16,7 @@ import { reverseGeocode } from './placesService';
 import { broadcastGeofencePushAlert } from './pushNotificationService';
 import { sendMessage } from './chatService';
 import { updateUserStatusInFirestore } from './authService';
+import { isCurrentLocationPublisher } from './deviceSessionService';
 
 export const PARKED_GEOFENCE_RADIUS_METERS = 25; // 25 meters ≈ 82 feet (within 50–100 ft requirement)
 const STORAGE_KEY = 'myway_parked_vehicle';
@@ -24,9 +25,12 @@ export interface ParkingTelemetryParams {
     userLocation: Location;
     speedMph: number;
     status: 'Driving' | 'Walking' | 'Stationary';
+    /** Parking must only be inferred from a recent, reasonably precise GPS fix. */
+    accuracy?: number;
+    gpsTimestamp?: number;
     places: Place[];
     user?: { uid: string; displayName?: string | null } | null;
-    profile?: { displayName?: string; familyCircleId?: string } | null;
+    profile?: { displayName?: string; familyCircleId?: string; activeLocationDeviceId?: string | null } | null;
     circleId?: string;
     showNotification?: (message: string, duration?: number) => void;
     logActivity?: (type: any, title: string, message: string, icon: string, memberId?: string) => void;
@@ -38,6 +42,8 @@ class ParkingService {
     private wasDriving: boolean = false;
     private isDrivewayParked: boolean = false;
     private sustainedDrivingFixes: number = 0;
+    private confirmedDrivingFixes: number = 0;
+    private parkingCandidate: { location: Location; firstSeenAt: number; lastSeenAt: number; fixes: number } | null = null;
     private lastEvaluationTime: number = 0;
     private isProcessing: boolean = false;
     private alertHandlers?: {
@@ -61,6 +67,8 @@ class ParkingService {
         this.wasDriving = false;
         this.isDrivewayParked = false;
         this.sustainedDrivingFixes = 0;
+        this.confirmedDrivingFixes = 0;
+        this.parkingCandidate = null;
         this.lastEvaluationTime = 0;
         this.isProcessing = false;
         this.saveToStorage();
@@ -69,6 +77,23 @@ class ParkingService {
 
     public isParkedInDriveway(): boolean {
         return this.isDrivewayParked;
+    }
+
+    /**
+     * A parking label is valid only while the user remains inside the original
+     * parked-vehicle zone and has not walked away from it.
+     */
+    public isWithinConfirmedParkedZone(location: Location | null | undefined): boolean {
+        if (!this.parkedVehicle || this.parkedVehicle.hasWalkedAway || !location) {
+            return false;
+        }
+
+        return getDistanceFromCoords(
+            location.lat,
+            location.lng,
+            this.parkedVehicle.location.lat,
+            this.parkedVehicle.location.lng
+        ) <= PARKED_GEOFENCE_RADIUS_METERS;
     }
 
     private loadFromStorage(): void {
@@ -142,7 +167,7 @@ class ParkingService {
      * Main telemetry evaluation loop called on each high-precision GPS update
      */
     public async processTelemetry(params: ParkingTelemetryParams): Promise<void> {
-        const { userLocation, speedMph, status, places, user, profile, circleId, showNotification, logActivity } = params;
+        const { userLocation, speedMph, status, places, user, profile, circleId, showNotification, logActivity, accuracy, gpsTimestamp } = params;
         if (!userLocation || typeof userLocation.lat !== 'number' || typeof userLocation.lng !== 'number') {
             return;
         }
@@ -151,6 +176,16 @@ class ParkingService {
         const log = logActivity || this.alertHandlers?.logActivity;
 
         const now = Date.now();
+        const fixAgeMs = gpsTimestamp ? now - gpsTimestamp : 0;
+        const isRecentFix = !gpsTimestamp || (fixAgeMs >= 0 && fixAgeMs <= 20_000);
+        const isPreciseEnoughToPark = typeof accuracy === 'number' && accuracy <= 50;
+
+        // A stale or broad accuracy circle can be useful as context, but it is
+        // never evidence that a vehicle stopped at that coordinate.
+        if (!isRecentFix || !isPreciseEnoughToPark) {
+            this.parkingCandidate = null;
+            return;
+        }
         // Throttle evaluation to at most once every 1 second
         if (now - this.lastEvaluationTime < 1000) {
             return;
@@ -166,6 +201,11 @@ class ParkingService {
             const isStationary = status === 'Stationary' || speedMph <= 0.6;
             const isWalkingOrStationary = isWalking || isStationary || speedMph <= 1.5;
 
+            this.confirmedDrivingFixes = isDriving ? this.confirmedDrivingFixes + 1 : 0;
+            if (isDriving) {
+                this.parkingCandidate = null;
+            }
+
             // ──────────────────────────────────────────────────────────
             // 0. DRIVEWAY STATUS RESET
             // ──────────────────────────────────────────────────────────
@@ -178,7 +218,7 @@ class ParkingService {
                     this.isDrivewayParked = false;
                     const activeCircleId = circleId || profile?.familyCircleId;
                     const memberId = user?.uid || 'demo-you';
-                    if (activeCircleId) {
+                    if (activeCircleId && isCurrentLocationPublisher(profile?.activeLocationDeviceId)) {
                         const standardStatus = isDriving ? `Driving • ${speedMph} MPH` : 'Walking';
                         updateUserStatusInFirestore(activeCircleId, memberId, standardStatus).catch(e => {});
                     }
@@ -215,7 +255,35 @@ class ParkingService {
             // ──────────────────────────────────────────────────────────
             // Triggered on transition: previous state was driving -> now walking/stationary
             if (this.wasDriving && isWalkingOrStationary && !this.parkedVehicle) {
-                // CONDITIONAL CHECK 1: Check Driveway polygon intersection
+                const candidate = this.parkingCandidate;
+                const isSameStop = candidate && getDistanceFromCoords(
+                    userLocation.lat,
+                    userLocation.lng,
+                    candidate.location.lat,
+                    candidate.location.lng
+                ) <= 35;
+
+                this.parkingCandidate = isSameStop
+                    ? { ...candidate!, location: userLocation, lastSeenAt: now, fixes: candidate!.fixes + 1 }
+                    : { location: userLocation, firstSeenAt: now, lastSeenAt: now, fixes: 1 };
+
+                // A stopped-looking point is not a parked car. Require a real
+                // driving sequence followed by three accurate fixes at the same
+                // stop, which prevents a single bad GPS sample from creating a pin.
+                if (this.parkingCandidate.fixes < 3) {
+                    return;
+                }
+
+                this.parkingCandidate = null;
+                // Home takes priority, including a driveway configured for Home.
+                if (isAtHomePlace(userLocation, places)) {
+                    console.log('🏠 [ParkingService] At Home: skipping parked-vehicle creation.');
+                    this.isDrivewayParked = false;
+                    this.wasDriving = false;
+                    return;
+                }
+
+                // CONDITIONAL CHECK 1: Check a non-Home driveway polygon intersection
                 const drivewayCheck = isPointInDrivewayZone(userLocation, places);
 
                 if (drivewayCheck.isDriveway) {
@@ -224,11 +292,12 @@ class ParkingService {
 
                     const activeCircleId = circleId || profile?.familyCircleId;
                     const memberId = user?.uid || 'demo-you';
-                    const userFullName = profile?.displayName || user?.displayName || 'You';
-                    const userFirstName = userFullName.split(' ')[0] || 'You';
+                    const userFullName = profile?.displayName?.trim() || user?.displayName?.trim() || '';
+                    const userFirstName = userFullName && !/^you$/i.test(userFullName)
+                        ? userFullName.split(/\s+/)[0] : 'A circle member';
 
                     // 1. Update user's live status in Firestore to: "Parked in Driveway"
-                    if (activeCircleId) {
+                    if (activeCircleId && isCurrentLocationPublisher(profile?.activeLocationDeviceId)) {
                         updateUserStatusInFirestore(activeCircleId, memberId, 'Parked in Driveway').catch(e => {
                             console.warn('[ParkingService] Could not update Firestore status to Parked in Driveway:', e);
                         });
@@ -239,13 +308,13 @@ class ParkingService {
                     console.log(`📢 [ParkingService] Circle Notification: ${drivewayNotification}`);
 
                     if (notify) {
-                        notify(`🏠 ${drivewayNotification}`, 6000);
+                        notify('🏠 You parked in the driveway.', 6000);
                     }
 
                     if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                         try {
                             new Notification('Parked in Driveway', {
-                                body: drivewayNotification,
+                                body: 'You parked in the driveway.',
                                 icon: '/icon-192.png'
                             });
                         } catch (e) {}
@@ -264,7 +333,7 @@ class ParkingService {
                     }
 
                     if (log) {
-                        log('arrival', 'Parked in Driveway', drivewayNotification, '🏠', memberId);
+                        log('arrival', 'Parked in Driveway', 'You parked in the driveway.', '🏠', memberId);
                     }
 
                     // Do not create a temporary "Last Parked" map pin or generic radius
@@ -272,16 +341,7 @@ class ParkingService {
                     return;
                 }
 
-                // CONDITIONAL CHECK 2: Compare parking coordinates against saved "Home" place radius
-                const isHome = isAtHomePlace(userLocation, places);
-
-                if (isHome) {
-                    console.log('🏠 [ParkingService] Parked at Home: Home exclusion applied, skipping temporary parked vehicle creation.');
-                    this.wasDriving = false;
-                    return;
-                }
-
-                // CONDITIONAL CHECK 3: Outside Home/Driveway Zones -> Fallback to temporary Last Parked place
+                // CONDITIONAL CHECK 2: Outside Home/Driveway Zones -> Fallback to temporary Last Parked place
                 console.log(`🅿️ [ParkingService] Detected parking transition away from home at ${userLocation.lat.toFixed(5)}, ${userLocation.lng.toFixed(5)}`);
 
                     // Reverse geocode to get nearest address or POI
@@ -333,8 +393,9 @@ class ParkingService {
 
                 const activeCircleId = circleId || profile?.familyCircleId;
                 const memberId = user?.uid || 'demo-you';
-                const userFullName = profile?.displayName || user?.displayName || 'You';
-                const userFirstName = userFullName.split(' ')[0] || 'You';
+                const userFullName = profile?.displayName?.trim() || user?.displayName?.trim() || '';
+                const userFirstName = userFullName && !/^you$/i.test(userFullName)
+                    ? userFullName.split(/\s+/)[0] : 'A circle member';
                 const nearestDesc = this.parkedVehicle.nearestAddress || 'their destination';
 
                 // A. ON EXIT (WALKING AWAY): Live location breaches outer edge of small radius (> 25m)
@@ -382,7 +443,7 @@ class ParkingService {
                         log(
                             'departure',
                             'Vehicle Parked',
-                            broadcastMessage,
+                            `You parked near ${this.parkedVehicle.nearestAddress || 'your destination'}.`,
                             '🚗',
                             memberId
                         );
@@ -401,7 +462,7 @@ class ParkingService {
                     console.log(`📢 [ParkingService] Circle Broadcast: ${returnMessage}`);
 
                     if (notify) {
-                        notify(`🚗 ${returnMessage}`, 5000);
+                        notify('🚗 You returned to your car.', 5000);
                     }
 
                     if (activeCircleId) {
@@ -424,7 +485,7 @@ class ParkingService {
                         log(
                             'arrival',
                             'Returned to Vehicle',
-                            returnMessage,
+                            'You returned to your car.',
                             '🚗',
                             memberId
                         );
@@ -433,7 +494,7 @@ class ParkingService {
             }
 
             // Update wasDriving state for next tick
-            this.wasDriving = isDriving;
+            this.wasDriving = this.confirmedDrivingFixes >= 2;
         } finally {
             this.isProcessing = false;
         }

@@ -42,6 +42,7 @@ export const addNotification = (
     existing.unshift(notification);
     if (existing.length > MAX_NOTIFICATIONS) existing.pop();
     localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(existing));
+    window.dispatchEvent(new Event('myway-notifications-updated'));
 
     return notification;
 };
@@ -92,8 +93,13 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ onClose, onBack
     const isDark = theme === 'dark';
 
     useEffect(() => {
-        setNotifications(getNotifications());
-        markAllRead();
+        const refresh = () => {
+            markAllRead();
+            setNotifications(getNotifications());
+        };
+        refresh();
+        window.addEventListener('myway-notifications-updated', refresh);
+        return () => window.removeEventListener('myway-notifications-updated', refresh);
     }, []);
 
     const filtered = filter === 'all'

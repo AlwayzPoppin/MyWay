@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
-import { ArrivalTripData, Place, Location, EntranceType } from '../types';
+import { ArrivalTripData, Place, Location, EntranceType, AccessPointType } from '../types';
 import { placeCorrectionService } from '../services/placeCorrectionService';
 import { contributionService, TripContributionPayload } from '../services/contributionService';
+import { publicMapReportService } from '../services/publicMapReportService';
 import {
     X,
     ChevronLeft,
@@ -37,6 +38,28 @@ const FEEDBACK_TAGS = [
     { id: 'hazard', label: 'Road hazard on way', icon: '⚠️' },
 ];
 
+const getAccessPointDetails = (entranceType: EntranceType, placeCategory?: string) => {
+    const type: AccessPointType =
+        entranceType === 'curbside' ? 'curbside' :
+        entranceType === 'drive_thru' ? (placeCategory === 'pharmacy' ? 'pharmacy_drive_thru' : 'drive_thru') :
+        entranceType === 'parking' ? 'parking' :
+        entranceType === 'driveway' ? 'contractor_lumber' :
+        'main_entrance';
+
+    const name =
+        type === 'curbside' ? 'Curbside pickup' :
+        type === 'drive_thru' ? 'Drive-thru' :
+        type === 'pharmacy_drive_thru' ? 'Pharmacy drive-thru' :
+        type === 'parking' ? 'Parking lot' :
+        type === 'contractor_lumber' ? 'Driveway / Lumber' :
+        'Main entrance';
+
+    return { type, name };
+};
+
+const shouldCorrectCanonicalPin = (placeCategory: 'residential' | 'business', entranceType: EntranceType) =>
+    placeCategory === 'residential' || entranceType === 'main_door';
+
 export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
     arrivalData,
     isOpen,
@@ -48,8 +71,8 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
     userName,
     userAvatar
 }) => {
-    // Step state: 1 = Rating & Tags, 2 = Place Category, 3 = Pin Accuracy, 4 = Pin Correction
-    const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+    // 1 = Rating, 2 = Category, 3 = Pin accuracy, 4 = Optional photo, 5 = Pin correction
+    const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
     // Step 1 state
     const [rating, setRating] = useState<number>(0);
@@ -62,7 +85,7 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
     // Step 3 state: Pin Accuracy (boolean | null)
     const [isAccurate, setIsAccurate] = useState<boolean | null>(null);
 
-    // Step 4 state: Map Pin Relocation
+    // Shared verification state: optional photo and map pin relocation
     const [currentCoords, setCurrentCoords] = useState<Location>({ lat: 0, lng: 0 });
     const [entranceType, setEntranceType] = useState<EntranceType>('main_door');
     const [isSaving, setIsSaving] = useState(false);
@@ -91,9 +114,9 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
         }
     }, [isOpen, arrivalData?.destinationName]);
 
-    // Initialize MapLibre in Step 4
+    // Initialize MapLibre only for the pin-correction step.
     useEffect(() => {
-        if (step !== 4 || !mapContainerRef.current) return;
+        if (step !== 5 || !mapContainerRef.current) return;
 
         const initialLat = currentCoords.lat || arrivalData?.destinationPlace?.location?.lat || 35.105;
         const initialLng = currentCoords.lng || arrivalData?.destinationPlace?.location?.lng || -78.966;
@@ -192,14 +215,43 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
     };
 
     // Step 3 Pin Accuracy Handlers
-    const handlePinAccurateYes = async () => {
+    const handlePinAccurateYes = () => {
         setIsAccurate(true);
-        saveTripMetadata(true, arrivalData.destinationPlace?.location);
+        // Give every completed trip a chance to add a useful building photo.
+        setStep(4);
+    };
+
+    const handleSaveVerifiedPlace = async () => {
+        setIsSaving(true);
+        const verifiedLocation = arrivalData.destinationPlace?.location || currentCoords || arrivalData.destinationLoc;
+        const reportedCategory = placeType || 'residential';
 
         const destAddress = arrivalData.destinationPlace?.address || 
                              arrivalData.destinationPlace?.description || 
                              arrivalData.destinationName;
         const tripId = arrivalData.arrivedAt ? `trip_${arrivalData.arrivedAt}` : `trip_${Date.now()}`;
+
+        const destPlace: Place = arrivalData.destinationPlace || {
+            id: `place_${Date.now()}`,
+            name: arrivalData.destinationName,
+            location: verifiedLocation,
+            address: destAddress,
+            radius: 50,
+            type: reportedCategory === 'business' ? 'other' : 'residential',
+            icon: '📍'
+        };
+        const updatedPlace: Place = {
+            ...destPlace,
+            location: verifiedLocation,
+            type: reportedCategory === 'residential' ? 'residential' : (destPlace.type === 'home' ? 'other' : destPlace.type),
+            category: reportedCategory,
+            imageUrl: photoPreview || destPlace.imageUrl,
+            isCorrected: true,
+            isCommunityVerified: true,
+                        correctedAt: Date.now(),
+            submitterId: 'community',
+            submitterName: 'MyWay Community'
+        };
 
         const payload: TripContributionPayload = {
             tripId,
@@ -208,8 +260,13 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
             placeId: arrivalData.destinationPlace?.id,
             rating,
             tags: selectedTags,
-            placeType,
+            placeType: reportedCategory,
             isAccurate: true,
+            // Accurate pins must still be published so search can read the category/photo.
+            correctedCoordinates: [verifiedLocation.lng, verifiedLocation.lat],
+            correctedLocation: verifiedLocation,
+            entranceType,
+            imageUrl: photoPreview || undefined,
             type: 'trip_review',
             timestamp: Date.now(),
             userId: userId || 'anonymous',
@@ -219,17 +276,34 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
 
         try {
             await contributionService.recordTripContribution(payload);
+            if (entranceType !== 'main_door') {
+                const accessPoint = getAccessPointDetails(entranceType, reportedCategory);
+                await placeCorrectionService.saveAccessPoint(destPlace, {
+                    placeId: destPlace.id,
+                    name: accessPoint.name,
+                    type: accessPoint.type,
+                    location: verifiedLocation,
+                    entranceType,
+                    source: 'community',
+                    confidence: 'medium',
+                    imageUrl: photoPreview || undefined,
+                    notes: `Confirmed upon arrival by ${userName || 'driver'}`
+                });
+            }
+            saveTripMetadata(true, verifiedLocation);
+            onFixLocation?.(updatedPlace);
         } catch (err) {
-            console.warn('[TripCompletedCard] Failed to record trip review contribution:', err);
+            console.warn('[TripCompletedCard] Failed to save verified place contribution:', err);
+        } finally {
+            setIsSaving(false);
+            onClose();
         }
-
-        onClose();
     };
 
     const handlePinAccurateNo = () => {
         setIsAccurate(false);
-        // Advance to Step 4 for pin relocation
-        setStep(4);
+        // Skip the photo step until the corrected entrance location is chosen.
+        setStep(5);
     };
 
     // Step 4 Map Tools
@@ -279,7 +353,7 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
         }
     };
 
-    // Step 4: Save True Location & Complete Wizard
+    // Step 5: Save True Location & Complete Wizard
     const handleSaveTrueLocation = async () => {
         setIsSaving(true);
         try {
@@ -291,23 +365,66 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
                 type: placeType === 'business' ? 'food' : 'home'
             };
 
+            const reportedCategory = placeType || 'residential';
+            const shouldUpdateCanonicalPin = shouldCorrectCanonicalPin(reportedCategory, entranceType);
             const updatedPlace: Place = {
                 ...destPlace,
-                location: currentCoords,
-                type: placeType === 'business' ? (destPlace.type || 'food') : 'home',
-                imageUrl: photoPreview || destPlace.imageUrl
+                // An access point is not the same thing as the canonical place pin.
+                // Keep large businesses searchable at their original pin unless the
+                // driver explicitly corrected the main entrance.
+                location: shouldUpdateCanonicalPin ? currentCoords : destPlace.location,
+                type: reportedCategory === 'residential' ? 'residential' : (destPlace.type === 'home' ? 'other' : destPlace.type || 'other'),
+                category: reportedCategory,
+                imageUrl: photoPreview || destPlace.imageUrl,
+                isCorrected: true,
+                isCommunityVerified: true,
+                                correctedAt: Date.now(),
+                submitterId: 'community',
+                submitterName: 'MyWay Community'
             };
 
-            // Save community correction to database and local store
-            await placeCorrectionService.saveCorrection({
-                place: updatedPlace,
-                correctedLocation: currentCoords,
-                correctedName: arrivalData.destinationName,
-                category: placeType === 'business' ? 'business' : 'residential',
+            // Save a canonical correction only when the main map pin was actually
+            // wrong. Department/parking/drive-through arrivals stay as access points.
+            if (shouldUpdateCanonicalPin) {
+                await placeCorrectionService.saveCorrection({
+                    place: updatedPlace,
+                    correctedLocation: currentCoords,
+                    correctedName: arrivalData.destinationName,
+                    category: reportedCategory,
+                    entranceType,
+                    userId: userId || 'anonymous',
+                    submitterName: userName || 'MyWay Community',
+                    imageUrl: photoPreview || undefined
+                });
+            }
+
+            // Also register as a verified Destination Access Point for multi-entrance routing
+            const accessPoint = getAccessPointDetails(entranceType, reportedCategory);
+
+            await placeCorrectionService.saveAccessPoint(destPlace, {
+                placeId: destPlace.id,
+                name: accessPoint.name,
+                type: accessPoint.type,
+                location: currentCoords,
                 entranceType: entranceType,
-                userId: userId || 'driver',
-                submitterName: userName || 'Driver',
-                imageUrl: photoPreview || undefined
+                source: 'community',
+                confidence: 'medium',
+                imageUrl: photoPreview || undefined,
+                notes: `Confirmed upon arrival by ${userName || 'driver'}`
+            });
+
+            await publicMapReportService.submitReport({
+                reportType: 'pin_move',
+                coordinates: currentCoords,
+                userId: userId || 'anonymous',
+                userName: 'MyWay Community',
+                placeId: updatedPlace.id,
+                placeName: updatedPlace.name,
+                category: reportedCategory,
+                details: updatedPlace.address || updatedPlace.description,
+                imageUrl: updatedPlace.imageUrl,
+                entranceType,
+                visibility: 'public'
             });
 
             saveTripMetadata(false, currentCoords);
@@ -381,7 +498,7 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
 
                     {/* Step Progress Pill */}
                     <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-black uppercase tracking-wider">
-                        <span>Step {step} of {isAccurate === false || step === 4 ? 4 : 3}</span>
+                        <span>Step {step} of {isAccurate === false ? 5 : 4}</span>
                     </div>
 
                     {/* Persistent Skip Button */}
@@ -674,9 +791,68 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
                 )}
 
                 {/* ========================================================================= */}
-                {/* STEP 4: Pin Correction (Conditional)                                     */}
+                {/* STEP 4: Optional building photo for accurate destinations                 */}
                 {/* ========================================================================= */}
                 {step === 4 && (
+                    <div className="flex flex-col flex-1 relative z-10 p-5 sm:p-6 space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
+                        <div className="text-center space-y-2 pt-2">
+                            <div className="mx-auto w-14 h-14 rounded-2xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                                <Camera className="w-7 h-7" />
+                            </div>
+                            <h2 className={`text-xl sm:text-2xl font-black tracking-tight ${textColor}`}>Add a building photo?</h2>
+                            <p className={`text-sm leading-relaxed ${subTextColor}`}>
+                                Optional. A storefront, front door, or building photo helps drivers recognize this destination.
+                            </p>
+                        </div>
+
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            className="hidden"
+                            onChange={handlePhotoUpload}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className={`min-h-32 rounded-3xl border-2 border-dashed p-5 flex flex-col items-center justify-center gap-3 transition-all cursor-pointer ${
+                                photoPreview
+                                    ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-500'
+                                    : isDark
+                                    ? 'border-white/15 bg-white/5 hover:bg-white/10 text-slate-200'
+                                    : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                            }`}
+                        >
+                            {photoPreview ? (
+                                <img src={photoPreview} alt="Selected building" className="h-28 max-w-full rounded-xl object-cover shadow-md" />
+                            ) : (
+                                <Camera className="w-8 h-8" />
+                            )}
+                            <span className="text-sm font-black">{photoPreview ? 'Photo added — tap to replace' : 'Take or upload a building photo'}</span>
+                        </button>
+
+                        <div className="mt-auto pt-2 flex flex-col gap-2">
+                            <button
+                                type="button"
+                                onClick={handleSaveVerifiedPlace}
+                                disabled={isSaving}
+                                className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm shadow-lg shadow-emerald-600/30 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                            >
+                                <Check className="w-4 h-4" />
+                                <span>{isSaving ? 'Saving contribution...' : 'Share with Community'}</span>
+                            </button>
+                            <button type="button" onClick={handleSaveVerifiedPlace} disabled={isSaving} className={`text-xs font-semibold text-center hover:underline py-1 transition-colors cursor-pointer ${subTextColor}`}>
+                                Skip photo
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* ========================================================================= */}
+                {/* STEP 5: Pin Correction (Conditional)                                     */}
+                {/* ========================================================================= */}
+                {step === 5 && (
                     <div className="flex flex-col flex-1 relative z-10 p-4 sm:p-5 space-y-3 animate-in fade-in slide-in-from-right-4 duration-300">
                         <div className="text-center space-y-0.5">
                             <h2 className={`text-lg sm:text-xl font-black tracking-tight ${textColor}`}>
@@ -761,9 +937,10 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
                         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
                             {[
                                 { id: 'main_door' as const, label: '🚪 Main Door' },
-                                { id: 'driveway' as const, label: '🛣️ Driveway' },
+                                { id: 'curbside' as const, label: '🚗 Curbside' },
+                                { id: 'drive_thru' as const, label: '🥤 Drive-Thru' },
                                 { id: 'parking' as const, label: '🅿️ Parking' },
-                                { id: 'curbside' as const, label: '📦 Curbside' },
+                                { id: 'driveway' as const, label: '🛣️ Driveway' },
                             ].map((opt) => (
                                 <button
                                     key={opt.id}
@@ -807,7 +984,7 @@ export const TripCompletedCard: React.FC<TripCompletedCardProps> = ({
                             </button>
                         </div>
 
-                        {/* Step 4 Footer: "Save True Location" & Skip */}
+                        {/* Step 5 Footer: "Save True Location" & Skip */}
                         <div className="pt-2 flex flex-col gap-2">
                             <button
                                 type="button"

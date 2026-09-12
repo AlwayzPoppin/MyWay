@@ -3,6 +3,7 @@
  * Queues chat messages in IndexedDB when offline and synchronizes them
  * chronologically once connectivity is restored.
  */
+import { registerReliableDeliveryFlusher, requestReliableDeliveryFlush } from './reliableDeliveryService';
 
 export interface BufferedMessage {
     id?: number;
@@ -130,15 +131,16 @@ export const bufferMessage = async (msg: Omit<BufferedMessage, 'id'>): Promise<B
         const request = store.add(msg);
 
         return new Promise<BufferedMessage>((resolve, reject) => {
-            request.onsuccess = () => {
+            tx.oncomplete = () => {
                 const generatedId = request.result as number;
                 resolve({ ...msg, id: generatedId });
             };
-            request.onerror = () => reject(request.error);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('Message could not be saved on this device.'));
         });
     } catch (err) {
         console.error('💬 Failed to buffer offline message:', err);
-        return { ...msg, id: Date.now() };
+        throw err;
     }
 };
 
@@ -186,6 +188,41 @@ export const removeBufferedMessage = async (id: number): Promise<void> => {
     }
 };
 
+/** Remove only the current user's local drafts for a conversation. */
+export const clearBufferedConversation = async ({
+    senderId,
+    circleId,
+    recipientId,
+    allGroupChats = false
+}: {
+    senderId: string;
+    circleId?: string;
+    recipientId?: string | null;
+    allGroupChats?: boolean;
+}): Promise<void> => {
+    const buffered = await getBufferedMessages();
+    const ids = buffered
+        .filter(message => {
+            if (message.senderId !== senderId) return false;
+            if (recipientId) return message.recipientId === recipientId;
+            if (allGroupChats) return !message.recipientId;
+            return !message.recipientId && message.circleId === circleId;
+        })
+        .map(message => message.id)
+        .filter((id): id is number => typeof id === 'number');
+
+    if (ids.length === 0) return;
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    ids.forEach(id => store.delete(id));
+    await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Could not clear queued messages.'));
+    });
+};
+
 /**
  * Clear all buffered messages
  */
@@ -216,7 +253,8 @@ export const clearMessageBuffer = async (circleId?: string): Promise<void> => {
  * Flush all buffered messages via a sync callback
  */
 export const flushMessageBuffer = async (
-    syncFn: (msg: BufferedMessage) => Promise<void>
+    syncFn: (msg: BufferedMessage) => Promise<void>,
+    shouldSync: (msg: BufferedMessage) => boolean = () => true
 ): Promise<number> => {
     await evictStaleMessages();
     const messages = await getBufferedMessages();
@@ -226,20 +264,42 @@ export const flushMessageBuffer = async (
     messages.sort((a, b) => a.timestamp - b.timestamp);
 
     let syncedCount = 0;
+    let skippedCount = 0;
     for (const msg of messages) {
+        // Queues are device-local, so a device can retain drafts from a
+        // previous account after someone signs out. Never attempt to deliver
+        // those messages as the current person; preserve them for the owner
+        // of that account instead of presenting a false sync failure.
+        if (!shouldSync(msg)) {
+            skippedCount++;
+            continue;
+        }
         try {
             await syncFn(msg);
             if (msg.id) {
                 await removeBufferedMessage(msg.id);
             }
             syncedCount++;
+            window.dispatchEvent(new Event('myway-chat-queue-updated'));
         } catch (err) {
             console.error(`💬 Message sync failed for ${msg.clientMessageId}, pausing flush:`, err);
+            window.dispatchEvent(new CustomEvent('myway-chat-send-error', {
+                detail: { senderId: msg.senderId, code: (err as { code?: string }).code }
+            }));
             break; // Stop on first network error to avoid out-of-order delivery
         }
     }
 
-    console.log(`💬 ✅ Successfully synced ${syncedCount}/${messages.length} offline messages`);
+    if (skippedCount > 0) {
+        console.info(`💬 Kept ${skippedCount} buffered message${skippedCount === 1 ? '' : 's'} for a different signed-in account.`);
+    }
+    if (syncedCount > 0) {
+        console.log(`💬 ✅ Successfully synced ${syncedCount}/${messages.length - skippedCount} eligible offline messages`);
+    } else if (skippedCount === messages.length) {
+        console.info('💬 No buffered messages belong to the current account; nothing was sent.');
+    } else {
+        console.log(`💬 No eligible offline messages were synced (${messages.length - skippedCount} attempted).`);
+    }
     return syncedCount;
 };
 
@@ -247,13 +307,17 @@ export const flushMessageBuffer = async (
  * Auto-flush messages when network reconnects
  */
 export const setupMessageAutoFlush = (
-    syncFn: (msg: BufferedMessage) => Promise<void>
+    syncFn: (msg: BufferedMessage) => Promise<void>,
+    shouldSync: (msg: BufferedMessage) => boolean = () => true
 ): (() => void) => {
     const handleOnline = async () => {
-        console.log('💬 Network restored — auto-flushing offline chat messages...');
-        await flushMessageBuffer(syncFn);
+        await flushMessageBuffer(syncFn, shouldSync);
     };
-
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
+    const unregister = registerReliableDeliveryFlusher('chat', 50, handleOnline);
+    const retry = () => requestReliableDeliveryFlush();
+    window.addEventListener('myway-chat-retry', retry);
+    return () => {
+        unregister();
+        window.removeEventListener('myway-chat-retry', retry);
+    };
 };

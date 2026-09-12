@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, Users } from 'lucide-react';
+import { Trash2, User, Users } from 'lucide-react';
 import { FamilyMember } from '../types';
 import { FamilyCircle, getCircleColor } from '../services/authService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
@@ -15,6 +15,8 @@ export interface MessageHeaderProps {
     members?: FamilyMember[];
     theme?: 'light' | 'dark';
     onBackToGroup?: () => void;
+    onClearConversation?: () => void;
+    canClearConversation?: boolean;
     onClose?: () => void;
 }
 
@@ -29,6 +31,8 @@ export const MessageHeader: React.FC<MessageHeaderProps> = ({
     members = [],
     theme = 'dark',
     onBackToGroup,
+    onClearConversation,
+    canClearConversation = false,
     onClose,
 }) => {
     // Determine whether this active conversation is a group feed or a 1-on-1 direct message
@@ -206,17 +210,35 @@ export const MessageHeader: React.FC<MessageHeaderProps> = ({
                 )}
             </div>
 
-            {onClose && (
-                <button
-                    onClick={onClose}
-                    className={`p-2 rounded-xl transition-colors cursor-pointer shrink-0 ${
-                        theme === 'dark' ? 'hover:bg-white/10 text-slate-400' : 'hover:bg-slate-100 text-slate-500'
-                    }`}
-                    title="Close Chat"
-                >
-                    ✕
-                </button>
-            )}
+            <div className="flex items-center gap-1 shrink-0">
+                {onClearConversation && (
+                    <button
+                        type="button"
+                        onClick={onClearConversation}
+                        disabled={!canClearConversation}
+                        className={`p-2 rounded-xl transition-colors ${
+                            theme === 'dark' ? 'hover:bg-white/10 text-slate-400' : 'hover:bg-slate-100 text-slate-500'
+                        } disabled:cursor-not-allowed disabled:opacity-35`}
+                        title="Clear conversation from this device"
+                        aria-label="Clear conversation from this device"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                )}
+                {onClose && (
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className={`p-2 rounded-xl transition-colors cursor-pointer ${
+                            theme === 'dark' ? 'hover:bg-white/10 text-slate-400' : 'hover:bg-slate-100 text-slate-500'
+                        }`}
+                        title="Close Chat"
+                        aria-label="Close chat"
+                    >
+                        ✕
+                    </button>
+                )}
+            </div>
         </div>
     );
 };

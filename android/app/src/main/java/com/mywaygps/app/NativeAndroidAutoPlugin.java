@@ -55,6 +55,16 @@ public class NativeAndroidAutoPlugin extends Plugin {
         }
     }
 
+    /** Emits a driver-selected alternate route back to the phone navigation state. */
+    public static void notifyRouteSelectedFromCar(String routeId) {
+        if (activeInstance != null && routeId != null && !routeId.isEmpty()) {
+            JSObject data = new JSObject();
+            data.put("routeId", routeId);
+            data.put("timestamp", System.currentTimeMillis());
+            activeInstance.notifyListeners("carRouteSelected", data);
+        }
+    }
+
     @PluginMethod
     public void updateNavigationState(PluginCall call) {
         try {
@@ -65,6 +75,29 @@ public class NativeAndroidAutoPlugin extends Plugin {
             int speedMph = call.getInt("speedMph", 0);
             int speedLimit = call.getInt("speedLimit", 0);
             boolean isArrived = call.getBoolean("isArrived", false);
+            double currentLatitude = call.getDouble("currentLatitude", Double.NaN);
+            double currentLongitude = call.getDouble("currentLongitude", Double.NaN);
+            double destinationLatitude = call.getDouble("destinationLatitude", Double.NaN);
+            double destinationLongitude = call.getDouble("destinationLongitude", Double.NaN);
+            double fuelGallonsBurned = call.getDouble("fuelGallonsBurned", Double.NaN);
+            double fuelCostSoFar = call.getDouble("fuelCostSoFar", Double.NaN);
+            double fuelGallonsRemaining = call.getDouble("fuelGallonsRemaining", Double.NaN);
+            int fuelPercentRemaining = call.getInt("fuelPercentRemaining", -1);
+            int fuelRangeMiles = call.getInt("fuelRangeMiles", -1);
+            JSArray routeCoordinates = call.getArray("routeCoordinates");
+            List<CarStateRepository.MapPoint> routePoints = new ArrayList<>();
+            if (routeCoordinates != null) {
+                for (int i = 0; i < routeCoordinates.length(); i++) {
+                    try {
+                        JSONObject point = routeCoordinates.getJSONObject(i);
+                        double lat = point.optDouble("lat", Double.NaN);
+                        double lng = point.optDouble("lng", Double.NaN);
+                        if (!Double.isNaN(lat) && !Double.isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                            routePoints.add(new CarStateRepository.MapPoint(lat, lng));
+                        }
+                    } catch (JSONException ignored) { }
+                }
+            }
 
             if ("Arrived!".equalsIgnoreCase(currentInstruction)) {
                 isArrived = true;
@@ -77,7 +110,17 @@ public class NativeAndroidAutoPlugin extends Plugin {
                     currentInstruction,
                     speedMph,
                     speedLimit,
-                    isArrived
+                    isArrived,
+                    currentLatitude,
+                    currentLongitude,
+                    destinationLatitude,
+                    destinationLongitude,
+                    routePoints,
+                    fuelGallonsBurned,
+                    fuelCostSoFar,
+                    fuelGallonsRemaining,
+                    fuelPercentRemaining,
+                    fuelRangeMiles
             );
 
             JSObject ret = new JSObject();
@@ -142,6 +185,37 @@ public class NativeAndroidAutoPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Failed to update car saved places: " + e.getMessage(), e);
+        }
+    }
+
+    @PluginMethod
+    public void updateRouteOptions(PluginCall call) {
+        try {
+            String activeRouteId = call.getString("activeRouteId", "");
+            JSArray routes = call.getArray("routes");
+            List<CarStateRepository.RouteOptionItem> options = new ArrayList<>();
+            if (routes != null) {
+                for (int i = 0; i < routes.length() && i < 3; i++) {
+                    try {
+                        JSONObject route = routes.getJSONObject(i);
+                        String id = route.optString("id", "");
+                        if (!id.isEmpty()) {
+                            options.add(new CarStateRepository.RouteOptionItem(id,
+                                    route.optString("summary", "Route option"),
+                                    route.optString("totalTime", ""),
+                                    route.optString("totalDistance", ""),
+                                    route.optString("tollLabel", "")));
+                        }
+                    } catch (JSONException ignored) { }
+                }
+            }
+            CarStateRepository.getInstance().updateRouteOptions(activeRouteId, options);
+            JSObject result = new JSObject();
+            result.put("success", true);
+            result.put("count", options.size());
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Failed to update car route options: " + e.getMessage(), e);
         }
     }
 

@@ -67,6 +67,14 @@ $rootAab = "$projectRoot\app-release.aab"
 
 if (Test-Path $outputAab) {
     Copy-Item -Path $outputAab -Destination $rootAab -Force
+    # Google Play requires native debug symbol archives to have ABI directories at the root
+    # (e.g. arm64-v8a/libfoo.so) without an enclosing 'lib/' prefix.
+    $nativeLibDirectory = "$projectRoot\android\app\build\intermediates\merged_native_libs\release\mergeReleaseNativeLibs\out\lib"
+    $nativeSymbolsZip = "$projectRoot\native-debug-symbols.zip"
+    if (Test-Path $nativeLibDirectory) {
+        Remove-Item -Path $nativeSymbolsZip -Force -ErrorAction SilentlyContinue
+        tar -a -c -f $nativeSymbolsZip -C $nativeLibDirectory arm64-v8a armeabi-v7a x86 x86_64
+    }
     $fileItem = Get-Item $rootAab
     $sizeMb = [math]::Round($fileItem.Length / 1MB, 2)
     Write-Host "`n=============================================" -ForegroundColor Green
@@ -76,6 +84,9 @@ if (Test-Path $outputAab) {
     Write-Host "Gradle Path:  $outputAab" -ForegroundColor White
     Write-Host "Size:         $sizeMb MB" -ForegroundColor White
     Write-Host "Modified:     $($fileItem.LastWriteTime)" -ForegroundColor White
+    if (Test-Path $nativeSymbolsZip) {
+        Write-Host "Symbols ZIP:  $nativeSymbolsZip" -ForegroundColor White
+    }
     Write-Host "`nYou can now upload '$rootAab' directly to Google Play Console!" -ForegroundColor Green
 } else {
     Write-Host "Could not find generated AAB at: $outputAab" -ForegroundColor Red

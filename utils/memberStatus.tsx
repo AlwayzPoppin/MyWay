@@ -4,8 +4,8 @@ import { Place, FamilyMember } from '../types';
 import {
     checkTier1MicroZone,
     checkTier2SavedPlace,
+    isAtHomePlace,
     shouldExecuteReverseGeocode,
-    formatParkedStatus,
     getKnownPlaces
 } from '../services/locationService';
 
@@ -160,6 +160,26 @@ function formatTime(isoString?: string): string | null {
 }
 
 /**
+ * Format relative elapsed time into human-friendly strings (e.g. 'just now', '5m ago', '21h ago', '2d ago').
+ */
+export function formatRelativeTime(timestamp?: number | string | Date): string {
+    if (!timestamp) return 'recently';
+    const timeMs = typeof timestamp === 'number'
+        ? timestamp
+        : (timestamp instanceof Date ? timestamp.getTime() : Date.parse(timestamp));
+    if (!Number.isFinite(timeMs)) return 'recently';
+    const now = Date.now();
+    const diffMs = Math.max(0, now - timeMs);
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+}
+
+/**
  * Build rich contextual status string based on member telemetry with strict 3-tier priority:
  * - Tier 1: Micro-Zone (e.g. "Parked in Driveway")
  * - Tier 2: Saved Place Address (e.g. "Parked on Carson Drive")
@@ -170,6 +190,40 @@ export function formatMemberStatus(
     reverseLocation?: string | null,
     places?: Place[]
 ): string {
+    // A web session is a companion viewer, not a new GPS source. Surface that
+    // explicitly so it never looks like the browser is reporting a stale or
+    // stationary phone location.
+    if (member.activeViewerDevicePlatform === 'web' && member.activeViewerDeviceLabel) {
+        return `Viewing on ${member.activeViewerDeviceLabel}`;
+    }
+    const lastFixMs = Date.parse(member.lastUpdated || '');
+    const locationAgeMs = Number.isFinite(lastFixMs) ? Math.max(0, Date.now() - lastFixMs) : Infinity;
+    const isStale = member.locationStale === true || locationAgeMs > 90_000;
+    const isOffline = member.status === 'Offline' || locationAgeMs > 180_000;
+
+    // 0. Offline / Stale: Never report active motion or speed for stale historical fixes
+    if (isOffline) {
+        const relativeTime = formatRelativeTime(member.lastUpdated);
+        if (member.currentPlace?.startsWith('At ')) {
+            return `Offline • ${member.currentPlace} (${relativeTime})`;
+        }
+        return `Offline • Seen ${relativeTime}`;
+    }
+
+    if (isStale) {
+        const relativeTime = formatRelativeTime(member.lastUpdated);
+        if (member.currentPlace?.startsWith('At ')) {
+            return `${member.currentPlace} • Seen ${relativeTime}`;
+        }
+        return `Last seen ${relativeTime}`;
+    }
+
+    // Location sync has already applied the shared arrival state. Preserve it
+    // instead of recalculating from a single coordinate in this display helper.
+    if (member.currentPlace?.startsWith('Arriving at ') || member.currentPlace?.startsWith('At ')) {
+        return member.currentPlace;
+    }
+
     const speedMph = Math.round(member.speed || 0);
     const isMoving = member.status === 'Driving' || member.status === 'Moving' || member.status === 'Walking' || speedMph >= 3;
 
@@ -187,20 +241,29 @@ export function formatMemberStatus(
         return speedMph > 0 ? `${activity} • ${speedMph} MPH` : activity;
     }
 
-    // 2. Stationary / Parked Evaluation (3-Tier Priority)
+    // 2. Stationary / confirmed parking evaluation
     if (member.location?.lat != null && member.location?.lng != null) {
         const allPlaces = getKnownPlaces(places);
 
-        // TIER 1: Micro-Zones (Driveway bounding box, parking zone)
-        const microZone = checkTier1MicroZone(member.location, allPlaces);
-        if (microZone) {
-            return microZone.status; // e.g., "Parked in Driveway"
+        if (isAtHomePlace(member.location, allPlaces)) {
+            return 'At Home';
         }
 
-        // TIER 2: Saved Place Address (known street, e.g., "Carson Drive")
+        // Only a status published by the device's parking tracker represents
+        // confirmed parking. Mere lack of movement is Stationary.
+        if (/^parked\b/i.test(member.status || '')) {
+            return member.status;
+        }
+
+        // Micro-zones and saved places describe the member's location.
+        const microZone = checkTier1MicroZone(member.location, allPlaces);
+        if (microZone) {
+            return `At ${microZone.place.name}`;
+        }
+
         const savedPlace = checkTier2SavedPlace(member.location, allPlaces);
         if (savedPlace) {
-            return savedPlace.status; // e.g., "Parked on Carson Drive"
+            return `At ${savedPlace.place.name || savedPlace.streetName}`;
         }
     }
 
@@ -212,8 +275,11 @@ export function formatMemberStatus(
 
     // 4. TIER 3: Raw Reverse-Geocode Fallback (completely outside saved places and micro-zones)
     const streetOrArea = reverseLocation || member.location?.label;
-    if (streetOrArea) {
-        return formatParkedStatus(streetOrArea);
+    // A telemetry label ("Stationary", "Moving", etc.) is not a place name.
+    // Never feed it back into a natural-language location sentence.
+    const isGenericTelemetryLabel = /^(stationary|moving|walking|driving|offline)$/i.test((streetOrArea || '').trim());
+    if (streetOrArea && !isGenericTelemetryLabel) {
+        return `Stationary near ${streetOrArea}`;
     }
 
     if (member.status === 'Offline') {
@@ -221,7 +287,7 @@ export function formatMemberStatus(
         return time ? `Offline • Seen ${time}` : 'Offline';
     }
 
-    return 'Parked';
+    return 'Stationary';
 }
 
 /**
@@ -265,7 +331,12 @@ export const MemberStatusText: React.FC<{
     places?: Place[];
     className?: string;
 }> = ({ member, places, className }) => {
-    const isMoving = member.status === 'Driving' || member.status === 'Moving' || member.status === 'Walking' || (member.speed || 0) >= 3;
+    const lastFixMs = Date.parse(member.lastUpdated || '');
+    const locationAgeMs = Number.isFinite(lastFixMs) ? Math.max(0, Date.now() - lastFixMs) : Infinity;
+    const isStale = member.locationStale === true || locationAgeMs > 90_000;
+    const isOffline = member.status === 'Offline' || locationAgeMs > 180_000;
+
+    const isMoving = !isStale && !isOffline && (member.status === 'Driving' || member.status === 'Moving' || member.status === 'Walking' || (member.speed || 0) >= 3);
 
     // Only resolve raw reverse geocoding if the member is stationary/offline
     // AND completely outside any known saved place or micro-zone (Bypass Geocoder Drift)

@@ -248,7 +248,7 @@ export const VEHICLE_DATABASE: VehicleMakeInfo[] = [
         models: [
             { model: 'Grand Cherokee', fuelType: 'gasoline', mpg: 22, tankCapacityGal: 23.0, bodyType: 'suv' },
             { model: 'Grand Cherokee 4xe (PHEV)', fuelType: 'hybrid', mpg: 56, tankCapacityGal: 19.0, bodyType: 'suv' },
-            { model: 'Wrangler (4-Door)', fuelType: 'gasoline', mpg: 20, tankCapacityGal: 21.5, bodyType: 'suv' },
+            { model: 'Wrangler (4-Door)', fuelType: 'gasoline', mpg: 16, tankCapacityGal: 18.6, bodyType: 'suv' },
             { model: 'Wrangler 4xe (PHEV)', fuelType: 'hybrid', mpg: 49, tankCapacityGal: 17.2, bodyType: 'suv' },
             { model: 'Gladiator', fuelType: 'gasoline', mpg: 19, tankCapacityGal: 22.0, bodyType: 'truck' },
             { model: 'Cherokee', fuelType: 'gasoline', mpg: 24, tankCapacityGal: 15.8, bodyType: 'suv' },

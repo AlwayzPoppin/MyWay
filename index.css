@@ -270,8 +270,99 @@ body.theme-default .glass-card:hover {
 /* Landscape Controls Responsive Separation & Safe-Area Inset Handling */
 @media (orientation: landscape) {
     .map-controls-cluster {
-        bottom: max(6rem, calc(env(safe-area-inset-bottom, 0px) + 5rem)) !important;
+        bottom: max(9rem, calc(env(safe-area-inset-bottom, 0px) + 8rem)) !important;
         top: auto !important;
         right: max(1rem, calc(env(safe-area-inset-right, 0px) + 0.75rem)) !important;
     }
-}
+}
+/* Navigation controls must fit the available width, including phone cutouts. */
+.drive-hud-bottom {
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  display: grid;
+  /* Seven touch targets keep Add Stop separate from end-trip while still
+     giving the fuel gauge two columns for live range information. */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px 4px;
+  max-width: 560px;
+  margin-inline: auto;
+  padding: 6px;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 38px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(16px);
+}
+.drive-hud-bottom > .drive-hud-summary {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+}
+.drive-hud-summary > div { width: 100%; }
+.drive-hud-summary-card {
+  min-height: 48px !important;
+}
+@media (max-width: 1023px) {
+  .drive-hud-bottom > button {
+    width: 100%;
+    height: 56px;
+    min-width: 44px;
+  }
+  .drive-hud-speed-cluster {
+    /* Keep the speed/limit compound gauge compact so every primary drive
+       action stays on one row. */
+    grid-column: span 1;
+    display: flex;
+    align-items: end;
+    gap: 4px;
+    min-width: 0;
+  }
+  .drive-hud-end-trip {
+    grid-column: 7;
+    margin-left: 4px;
+  }
+  .drive-hud-fuel-gauge {
+    grid-column: span 2;
+    min-width: 0;
+  }
+  .drive-hud-bottom > button:not(.drive-hud-end-trip) {
+    grid-column: span 1;
+  }
+  .drive-hud-speed-dial,
+  .drive-hud-speed-dial > div {
+    width: 52px;
+    height: 52px;
+  }
+  .drive-hud-speed-limit {
+    position: relative;
+    display: block;
+    flex: 1;
+    min-width: 0;
+  }
+  .drive-hud-speed-limit > div:first-child {
+    width: 100%;
+    height: 52px;
+  }
+  /* A camera warning sits above the speed-limit tile, never widening the HUD. */
+  .drive-hud-speed-limit > div:nth-child(2) {
+    position: absolute;
+    right: 0;
+    top: -8px;
+    height: 18px;
+    padding: 2px;
+    background: #f59e0b;
+    color: #451a03;
+  }
+  .drive-hud-speed-limit > div:nth-child(2) span { display: none; }
+}
+@media (min-width: 1024px) {
+  .drive-hud-bottom {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    max-width: none;
+    bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+  }
+}

@@ -39,7 +39,9 @@ import {
     ArrowLeft,
     ChevronRight,
     Star,
-    Check
+    Check,
+    Smartphone,
+    Monitor
 } from 'lucide-react';
 import { MapSkinId, MAP_SKINS } from '../services/mapSkinService';
 import { solarService, SolarInfo } from '../services/solarService';
@@ -48,6 +50,18 @@ import { PrivacyMode } from '../types';
 import { useUI } from '../contexts/UIContext';
 import { nativeSettingsService } from '../services/nativeSettingsService';
 import { contributionService, TripContributionPayload } from '../services/contributionService';
+import { APP_VERSION, CIRCLE_SYNC_PROTOCOL_VERSION } from '../services/appVersionService';
+import MapReviewPanel from './MapReviewPanel';
+import { assignAdminRole, getAdminDeletionProtection, getMapReviewAccess } from '../services/mapReviewService';
+import {
+    TrustedDevice,
+    claimLocationSharingForCurrentDevice,
+    getCurrentDeviceId,
+    isCurrentDeviceMobile,
+    revokeTrustedDevice,
+    signOutEverywhere,
+    subscribeToTrustedDevices
+} from '../services/deviceSessionService';
 
 
 export interface UserSettings {
@@ -129,6 +143,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     const [solarInfo, setSolarInfo] = useState<SolarInfo>(() => solarService.getSolarInfo());
     const [isPromptDisabled, setIsPromptDisabled] = useState(() => nativeSettingsService.isPromptDisabledByUser());
     const [isBatteryIgnored, setIsBatteryIgnored] = useState(false);
+    const [trustedDevices, setTrustedDevices] = useState<TrustedDevice[]>([]);
+    const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
+    const [deviceActionPending, setDeviceActionPending] = useState(false);
+    const [isMapAdmin, setIsMapAdmin] = useState(false);
+    const [isMapReviewOpen, setIsMapReviewOpen] = useState(false);
+    const [hasRecoveryAdmin, setHasRecoveryAdmin] = useState(true);
+    const [recoveryAdminEmail, setRecoveryAdminEmail] = useState('');
+    const [isAssigningRecoveryAdmin, setIsAssigningRecoveryAdmin] = useState(false);
+    const [recoveryAdminMessage, setRecoveryAdminMessage] = useState<string | null>(null);
+    const currentDeviceId = getCurrentDeviceId();
+    const currentDeviceIsMobile = isCurrentDeviceMobile();
 
     // Crowdsourced Contribution History State
     const [contributions, setContributions] = useState<TripContributionPayload[]>([]);
@@ -154,6 +179,78 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     useEffect(() => {
         nativeSettingsService.isIgnoringBatteryOptimizations().then(setIsBatteryIgnored);
     }, []);
+
+    useEffect(() => {
+        getMapReviewAccess().then(async access => {
+            setIsMapAdmin(access.isAdmin);
+            if (access.isAdmin) {
+                const protection = await getAdminDeletionProtection();
+                setHasRecoveryAdmin(protection.hasRecoveryAdmin);
+            }
+        }).catch(() => setIsMapAdmin(false));
+    }, []);
+
+    const addRecoveryAdmin = async () => {
+        const email = recoveryAdminEmail.trim();
+        if (!email) return;
+        setIsAssigningRecoveryAdmin(true);
+        setRecoveryAdminMessage(null);
+        try {
+            await assignAdminRole({ email });
+            setRecoveryAdminEmail('');
+            setHasRecoveryAdmin(true);
+            setRecoveryAdminMessage('Recovery admin assigned. They will receive access after their next sign-in.');
+        } catch (error: any) {
+            setRecoveryAdminMessage(error?.message || 'Could not assign that recovery admin.');
+        } finally {
+            setIsAssigningRecoveryAdmin(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!userId) {
+            setTrustedDevices([]);
+            return;
+        }
+        return subscribeToTrustedDevices(userId, setTrustedDevices);
+    }, [userId]);
+
+    const claimThisDeviceForLocation = async () => {
+        setDeviceActionPending(true);
+        setDeviceActionError(null);
+        try {
+            await claimLocationSharingForCurrentDevice();
+        } catch (error: any) {
+            setDeviceActionError(error?.message || 'Could not move location sharing to this device.');
+        } finally {
+            setDeviceActionPending(false);
+        }
+    };
+
+    const revokeOtherDevice = async (deviceId: string) => {
+        setDeviceActionPending(true);
+        setDeviceActionError(null);
+        try {
+            await revokeTrustedDevice(deviceId);
+        } catch (error: any) {
+            setDeviceActionError(error?.message || 'Could not sign out that device.');
+        } finally {
+            setDeviceActionPending(false);
+        }
+    };
+
+    const handleSignOutEverywhere = async () => {
+        setDeviceActionPending(true);
+        setDeviceActionError(null);
+        try {
+            await signOutEverywhere();
+            onSignOut?.();
+        } catch (error: any) {
+            setDeviceActionError(error?.message || 'Could not sign out your devices.');
+        } finally {
+            setDeviceActionPending(false);
+        }
+    };
 
     useEffect(() => {
         return solarService.subscribe(setSolarInfo);
@@ -1029,6 +1126,106 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     subtitle="Circle Locker & Billing"
                 >
                     <div className="space-y-3">
+                        {isMapAdmin && (
+                            <div className="space-y-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsMapReviewOpen(true)}
+                                    className={`w-full flex items-center justify-between rounded-2xl border p-3.5 text-left transition-colors ${theme === 'dark' ? 'bg-violet-500/10 border-violet-400/25 hover:bg-violet-500/15' : 'bg-violet-50 border-violet-200 hover:bg-violet-100'}`}
+                                >
+                                    <span className="flex items-center gap-2.5"><ShieldCheck className="w-5 h-5 text-violet-500" /><span><span className="block text-sm font-black">My Way Operations</span><span className="block text-[11px] text-slate-500">Review exceptional community map submissions</span></span></span>
+                                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                                </button>
+                                {!hasRecoveryAdmin && (
+                                    <div className={`rounded-2xl border p-3 ${theme === 'dark' ? 'bg-amber-500/10 border-amber-400/25' : 'bg-amber-50 border-amber-200'}`}>
+                                        <p className="text-xs font-black text-amber-500">Add a recovery admin</p>
+                                        <p className="mt-1 text-[11px] text-slate-500">Required before this app-admin account can be deleted.</p>
+                                        <div className="mt-2 flex gap-2"><input value={recoveryAdminEmail} onChange={event => setRecoveryAdminEmail(event.target.value)} placeholder="trusted@email.com" type="email" className="min-w-0 flex-1 rounded-xl border border-slate-300/30 bg-white/5 px-3 py-2 text-xs outline-none" /><button type="button" disabled={!recoveryAdminEmail.trim() || isAssigningRecoveryAdmin} onClick={() => void addRecoveryAdmin()} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-black text-slate-950 disabled:opacity-50">{isAssigningRecoveryAdmin ? 'Adding…' : 'Add'}</button></div>
+                                        {recoveryAdminMessage && <p className="mt-2 text-[11px] text-slate-500">{recoveryAdminMessage}</p>}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        <div className={`rounded-2xl border p-3.5 ${theme === 'dark'
+                            ? 'bg-indigo-500/10 border-indigo-400/20'
+                            : 'bg-indigo-50/70 border-indigo-100'
+                            }`}>
+                            <div className="flex items-start justify-between gap-3 mb-3">
+                                <div className="flex gap-2.5">
+                                    <div className="w-8 h-8 rounded-xl bg-indigo-500 text-white flex items-center justify-center shrink-0">
+                                        <Smartphone className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                        <p className={`text-sm font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Your devices</p>
+                                        <p className="text-[11px] leading-relaxed text-slate-500">One device shares live location. Every trusted device can still receive alerts and use chat.</p>
+                                    </div>
+                                </div>
+                                {trustedDevices.length > 0 && (
+                                    <span className="rounded-full bg-indigo-500/15 px-2 py-1 text-[10px] font-black text-indigo-500 whitespace-nowrap">
+                                        {trustedDevices.length} trusted
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className={`mb-2 flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${theme === 'dark' ? 'bg-slate-950/35' : 'bg-white/70'}`}>
+                                <div className="min-w-0">
+                                    <p className={`text-[10px] font-black uppercase tracking-wide ${theme === 'dark' ? 'text-slate-200' : 'text-slate-700'}`}>My Way v{APP_VERSION}</p>
+                                    <p className="text-[10px] text-slate-500">Circle sync protocol {CIRCLE_SYNC_PROTOCOL_VERSION}</p>
+                                </div>
+                                <span className={`rounded-full px-2 py-1 text-[9px] font-black whitespace-nowrap ${currentDeviceIsMobile ? 'bg-emerald-500/15 text-emerald-600' : 'bg-sky-500/15 text-sky-600'}`}>
+                                    {currentDeviceIsMobile ? 'PHONE GPS READY' : 'COMPANION SCREEN'}
+                                </span>
+                            </div>
+
+                            <div className="space-y-2">
+                                {trustedDevices.length === 0 ? (
+                                    <p className="rounded-xl bg-white/50 px-3 py-2.5 text-xs text-slate-500">Setting up this device securely…</p>
+                                ) : trustedDevices.filter(device => !device.revokedAt).map(device => {
+                                    const isCurrent = device.id === currentDeviceId;
+                                    return (
+                                        <div key={device.id} className={`rounded-xl px-3 py-2.5 ${theme === 'dark' ? 'bg-slate-950/35' : 'bg-white/80'}`}>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="min-w-0 flex items-center gap-2">
+                                                    {device.platform === 'web' ? <Monitor className="w-4 h-4 text-slate-400 shrink-0" /> : <Smartphone className="w-4 h-4 text-slate-400 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <p className={`truncate text-xs font-bold ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>{device.label}{isCurrent ? ' · This device' : ''}</p>
+                                                        <p className="text-[10px] text-slate-500">{device.isLocationPublisher ? 'Sharing live location' : 'Alerts, chat & map access'}</p>
+                                                    </div>
+                                                </div>
+                                                {device.isLocationPublisher && <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[9px] font-black text-emerald-600">LIVE GPS</span>}
+                                            </div>
+                                            <div className="mt-2 flex justify-end gap-2">
+                                                {isCurrent && currentDeviceIsMobile && !device.isLocationPublisher && (
+                                                    <button type="button" disabled={deviceActionPending} onClick={claimThisDeviceForLocation} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[10px] font-black text-white disabled:opacity-50">
+                                                        Share location here
+                                                    </button>
+                                                )}
+                                                {isCurrent && !currentDeviceIsMobile && (
+                                                    <span className="text-[10px] font-semibold text-slate-500">Companion screen</span>
+                                                )}
+                                                {!isCurrent && (
+                                                    <button type="button" disabled={deviceActionPending} onClick={() => revokeOtherDevice(device.id)} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-[10px] font-black text-red-600 disabled:opacity-50">
+                                                        Sign out
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            {deviceActionError && <p className="mt-2 text-[11px] font-semibold text-red-500">{deviceActionError}</p>}
+                            <button
+                                type="button"
+                                disabled={deviceActionPending}
+                                onClick={() => {
+                                    if (confirm('Sign out of My Way on every device? You will need to sign in again.')) void handleSignOutEverywhere();
+                                }}
+                                className="mt-3 w-full rounded-xl border border-red-200 bg-white/60 px-3 py-2 text-xs font-black text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                            >
+                                Sign out of all devices
+                            </button>
+                        </div>
+
                         {onManageSubscription && (
                             <button
                                 onClick={onManageSubscription}
@@ -1245,6 +1442,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 : 'bg-red-50 border-red-200 text-red-700'
                         }`}>
                             ⚠️ All your data, circle memberships, location history, saved places, and cryptographic keys will be permanently deleted from the servers and Google Firebase Authentication.
+                            {isMapAdmin && !hasRecoveryAdmin && (
+                                <span className="mt-2 block font-bold">This is your only My Way Operations account. Add a recovery admin above before this account can be deleted.</span>
+                            )}
                         </div>
 
                         {/* Error Message */}
@@ -1357,6 +1557,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     </div>
                 </div>
             )}
+            {isMapReviewOpen && <MapReviewPanel theme={theme} onClose={() => setIsMapReviewOpen(false)} />}
         </div>
     );
 };

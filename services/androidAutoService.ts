@@ -5,6 +5,7 @@
  * for projection onto vehicle infotainment displays.
  */
 import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core';
+import type { NavigationRoute } from '../types';
 
 interface NativeAndroidAutoPlugin {
   updateNavigationState(options: {
@@ -15,6 +16,16 @@ interface NativeAndroidAutoPlugin {
     speedMph: number;
     speedLimit: number;
     isArrived?: boolean;
+    currentLatitude?: number;
+    currentLongitude?: number;
+    destinationLatitude?: number;
+    destinationLongitude?: number;
+    routeCoordinates?: Array<{ lat: number; lng: number }>;
+    fuelGallonsBurned?: number;
+    fuelCostSoFar?: number;
+    fuelGallonsRemaining?: number;
+    fuelPercentRemaining?: number;
+    fuelRangeMiles?: number;
   }): Promise<{ success: boolean; isCarConnected: boolean }>;
 
   notifyArrival(options?: { destinationName?: string }): Promise<{ success: boolean }>;
@@ -31,6 +42,11 @@ interface NativeAndroidAutoPlugin {
     }>;
   }): Promise<{ success: boolean; count: number }>;
 
+  updateRouteOptions(options: {
+    activeRouteId: string;
+    routes: Array<{ id: string; summary: string; totalTime: string; totalDistance: string; tollLabel: string }>;
+  }): Promise<{ success: boolean; count: number }>;
+
   isCarConnected(): Promise<{ connected: boolean }>;
 
   addListener(
@@ -41,6 +57,11 @@ interface NativeAndroidAutoPlugin {
   addListener(
     eventName: 'carSessionStateChanged',
     listenerFunc: (data: { connected: boolean }) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'carRouteSelected',
+    listenerFunc: (data: { routeId: string; timestamp: number }) => void
   ): Promise<PluginListenerHandle>;
 }
 
@@ -78,6 +99,14 @@ export async function syncNavigationTelemetry(data: {
   speedMph: number;
   speedLimit?: number;
   isArrived?: boolean;
+  currentLocation?: { lat: number; lng: number };
+  destinationLocation?: { lat: number; lng: number };
+  routeCoordinates?: Array<{ lat: number; lng: number }>;
+  fuelGallonsBurned?: number;
+  fuelCostSoFar?: number;
+  fuelGallonsRemaining?: number | null;
+  fuelPercentRemaining?: number | null;
+  fuelRangeMiles?: number | null;
 }): Promise<void> {
   if (!isAndroidAutoAvailable()) return;
   try {
@@ -89,6 +118,16 @@ export async function syncNavigationTelemetry(data: {
       speedMph: data.speedMph,
       speedLimit: data.speedLimit || 0,
       isArrived: data.isArrived || false,
+      currentLatitude: data.currentLocation?.lat,
+      currentLongitude: data.currentLocation?.lng,
+      destinationLatitude: data.destinationLocation?.lat,
+      destinationLongitude: data.destinationLocation?.lng,
+      routeCoordinates: data.routeCoordinates,
+      fuelGallonsBurned: data.fuelGallonsBurned,
+      fuelCostSoFar: data.fuelCostSoFar,
+      fuelGallonsRemaining: data.fuelGallonsRemaining ?? undefined,
+      fuelPercentRemaining: data.fuelPercentRemaining ?? undefined,
+      fuelRangeMiles: data.fuelRangeMiles ?? undefined,
     });
   } catch (err) {
     console.warn('[AndroidAuto] Failed to sync navigation telemetry:', err);
@@ -195,4 +234,38 @@ export async function syncSavedPlaces(places: Array<{
   } catch (err) {
     console.warn('[AndroidAuto] Failed to sync saved places:', err);
   }
+}
+
+/** Sync up to three safe route choices to the car display. */
+export async function syncRouteOptions(activeRoute: NavigationRoute, alternatives: NavigationRoute[]): Promise<void> {
+  if (!isAndroidAutoAvailable()) return;
+  const routes = [activeRoute, ...alternatives.filter(route => route.id !== activeRoute.id)]
+    .filter((route, index, all) => !!route.id && all.findIndex(candidate => candidate.id === route.id) === index)
+    .slice(0, 3);
+  try {
+    await NativeAndroidAuto.updateRouteOptions({
+      activeRouteId: activeRoute.id || '',
+      routes: routes.map(route => ({
+        id: route.id || '',
+        summary: route.summary || route.routeLabel || 'Route option',
+        totalTime: route.totalTime || '',
+        totalDistance: route.totalDistance || '',
+        tollLabel: route.hasTolls ? (route.tollCostEstimate || 'Tolls') : 'No tolls'
+      }))
+    });
+  } catch (err) {
+    console.warn('[AndroidAuto] Failed to sync route options:', err);
+  }
+}
+
+/** Handle a driver-selected alternative from Android Auto. */
+export function onCarRouteSelected(callback: (routeId: string) => void): () => void {
+  if (!isAndroidAutoAvailable()) return () => {};
+  let listenerPromise: Promise<PluginListenerHandle> | null = null;
+  try {
+    listenerPromise = NativeAndroidAuto.addListener('carRouteSelected', data => callback(data.routeId));
+  } catch (err) {
+    console.warn('[AndroidAuto] Failed to bind route selection listener:', err);
+  }
+  return () => { if (listenerPromise) listenerPromise.then(handle => handle.remove()).catch(() => {}); };
 }

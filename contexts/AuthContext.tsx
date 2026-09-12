@@ -19,6 +19,7 @@ import {
     subscribeToUserProfile,
     getFamilyCircle,
     getUserCircles,
+    subscribeToUserCircles,
     switchActiveCircle,
     leaveCircle,
     renameFamilyCircle,
@@ -27,6 +28,9 @@ import {
     deleteAccount as deleteAccountService,
     resetPassword as resetPasswordService
 } from '../services/authService';
+import { syncVerifiedCircleMembership } from '../services/circleMembershipService';
+import { getCurrentDeviceLabel, registerCurrentDevice, subscribeToCurrentDeviceRevocation } from '../services/deviceSessionService';
+import { APP_VERSION, CIRCLE_SYNC_PROTOCOL_VERSION } from '../services/appVersionService';
 
 interface AuthContextType {
     user: User | null;
@@ -95,6 +99,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isRefreshingRef.current = true;
         try {
             const circles = await getUserCircles(currentUser.uid);
+            // Existing Circles created before the Firestore membership mirror
+            // are repaired here. A failure is harmless until the function is
+            // deployed; the next authenticated refresh retries it.
+            void Promise.all(circles.map(circle =>
+                syncVerifiedCircleMembership(circle.id).catch(error =>
+                    console.debug('[CircleMembership] Authorization mirror pending:', error)
+                )
+            ));
             setUserCircles(prev => {
                 if (prev.length === circles.length && prev.every((c, i) => c.id === circles[i].id && c.name === circles[i].name && c.color === circles[i].color)) {
                     return prev;
@@ -104,7 +116,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
             const currentProf = profileRef.current;
             if (currentProf?.familyCircleId) {
-                const active = circles.find(c => c.id === currentProf.familyCircleId) || await getFamilyCircle(currentProf.familyCircleId);
+                // Never revive a circle only from a stale profile reference.
+                // `circles` is already the membership-filtered source of truth.
+                const active = circles.find(c => c.id === currentProf.familyCircleId) || null;
                 setCurrentCircle(prev => {
                     if (prev?.id === active?.id && prev?.name === active?.name && prev?.color === active?.color) {
                         return prev;
@@ -137,6 +151,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
 
         let profileUnsubscribe: (() => void) | null = null;
+        let deviceRevocationUnsubscribe: (() => void) | null = null;
         
         const unsubscribe = onAuthChange((firebaseUser) => {
             setUser(firebaseUser);
@@ -144,10 +159,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 profileUnsubscribe();
                 profileUnsubscribe = null;
             }
+            if (deviceRevocationUnsubscribe) {
+                deviceRevocationUnsubscribe();
+                deviceRevocationUnsubscribe = null;
+            }
             
             if (firebaseUser) {
+                // A second device can remain signed in, but it must explicitly
+                // claim the one live-location publisher role before it sends GPS.
+                void registerCurrentDevice(firebaseUser.uid).catch(error =>
+                    console.warn('[Devices] Trusted-device registration pending:', error)
+                );
+                const currentDevice = getCurrentDeviceLabel();
+                // This is presence metadata only. It gives Circle members a
+                // truthful status for a browser companion without publishing
+                // that browser's coordinates as live account GPS.
+                void updateUserProfile(firebaseUser.uid, {
+                    activeViewerDeviceLabel: currentDevice.label,
+                    activeViewerDevicePlatform: currentDevice.platform,
+                    appVersion: APP_VERSION,
+                    syncProtocolVersion: CIRCLE_SYNC_PROTOCOL_VERSION
+                }).catch(error => console.warn('[Devices] Companion presence update pending:', error));
                 profileUnsubscribe = subscribeToUserProfile(firebaseUser.uid, (userProfile) => {
                     setProfile(userProfile);
+                });
+                deviceRevocationUnsubscribe = subscribeToCurrentDeviceRevocation(firebaseUser.uid, () => {
+                    void signOut().catch(error => console.warn('[Devices] Remote sign-out failed:', error));
                 });
             } else {
                 setProfile(null);
@@ -160,6 +197,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return () => {
             unsubscribe();
             if (profileUnsubscribe) profileUnsubscribe();
+            if (deviceRevocationUnsubscribe) deviceRevocationUnsubscribe();
         };
     }, []);
 
@@ -182,6 +220,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             refreshCircles();
         }
     }, [user?.uid, profile?.familyCircleId, refreshCircles]);
+
+    // Membership changes can be made from another device or by another Circle
+    // admin. Subscribe to the source collection so the active map unsubscribes
+    // from departed members as soon as the database confirms the change.
+    useEffect(() => {
+        if (!user?.uid) return;
+        return subscribeToUserCircles(user.uid, circles => {
+            setUserCircles(circles);
+            const activeId = profileRef.current?.familyCircleId;
+            setCurrentCircle(activeId ? (circles.find(circle => circle.id === activeId) || null) : null);
+        });
+    }, [user?.uid]);
  
     // Side Effect: Auto-join circle from pending invite
     useEffect(() => {
@@ -330,7 +380,23 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
 
     const handleLeaveCurrentCircle = async (circleId: string) => {
         if (!user) return;
-        await leaveCircle(circleId, user.uid);
+        const remainingCircles = userCircles.filter(circle => circle.id !== circleId);
+        const wasActiveCircle = profile?.familyCircleId === circleId;
+        const nextActiveCircleId = wasActiveCircle
+            ? (remainingCircles[0]?.id || null)
+            : (profile?.familyCircleId || remainingCircles[0]?.id || null);
+
+        // Remove the departed circle immediately. The backend refresh below is
+        // still authoritative, but this prevents the UI showing a phantom
+        // membership while RTDB subscriptions settle.
+        setUserCircles(remainingCircles);
+        setCurrentCircle(previous => previous?.id === circleId
+            ? (remainingCircles.find(circle => circle.id === nextActiveCircleId) || null)
+            : previous
+        );
+        setProfile(previous => previous ? { ...previous, familyCircleId: nextActiveCircleId } : previous);
+
+        await leaveCircle(circleId, user.uid, nextActiveCircleId);
         const updatedProfile = await getUserProfile(user.uid);
         setProfile(updatedProfile);
         await refreshCircles();

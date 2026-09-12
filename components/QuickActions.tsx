@@ -1,5 +1,6 @@
 import React from 'react';
 import { FamilyMember } from '../types';
+import { formatMemberStatus } from '../utils/memberStatus';
 
 interface QuickActionsProps {
     member: FamilyMember;
@@ -43,7 +44,7 @@ const QuickActions: React.FC<QuickActionsProps> = ({
                     <h3 className={`font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                         {member.name}
                     </h3>
-                    <p className="text-xs text-slate-500">{member.status} • Updated just now</p>
+                    <p className="text-xs text-slate-500">{formatMemberStatus(member)}</p>
                 </div>
             </div>
 

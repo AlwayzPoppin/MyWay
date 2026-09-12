@@ -168,6 +168,7 @@ class GeolocationService {
     private backgroundGeofences: Geofence[] = [];
     private onGeofenceTransitionCallback: ((transition: GeofenceTransition) => void) | null = null;
     private lastTelemetryState: GeolocationState | null = null;
+    private lastRawSpeedMps: number | null = null;
     private headlessPendingExitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     // Idempotent Predictive Dwelling Caching State
@@ -292,33 +293,42 @@ class GeolocationService {
         }
 
         // 2. Headless GPS Deceleration, Crash & Rapid Acceleration Detection
-        if (this.lastTelemetryState) {
+        // Uses raw (un-smoothed) GPS Doppler speeds for accurate event detection.
+        // The EMA-smoothed `speed` is for display only — it dampens real
+        // braking/acceleration deltas by 50-65%, suppressing most events.
+        if (this.lastTelemetryState && this.lastRawSpeedMps !== null) {
             const dt = (current.timestamp - this.lastTelemetryState.timestamp) / 1000;
-            if (dt > 0.3 && dt < 8) {
-                const prevSpeedMph = this.lastTelemetryState.speed || 0;
-                const currSpeedMph = current.speed || 0;
-                const v1_mps = prevSpeedMph / 2.23694;
-                const v2_mps = currSpeedMph / 2.23694;
+            if (dt > 0.3 && dt < 15) {
+                const rawPrevMps = this.lastRawSpeedMps;
+                const rawCurrMps = current.rawSpeedMps ?? 0;
+                const prevSpeedMph = rawPrevMps * 2.23694;
+                const currSpeedMph = rawCurrMps * 2.23694;
+                const v1_mps = rawPrevMps;
+                const v2_mps = rawCurrMps;
                 const decel = (v1_mps - v2_mps) / dt; // m/s²
                 const accel = (v2_mps - v1_mps) / dt; // m/s²
 
-                if (prevSpeedMph >= 10) {
+                if (prevSpeedMph >= 8) {
                     if (decel >= 4.5 && decel < 25) {
                         crashDetectionService.recordHardBrake(currSpeedMph, decel);
-                    } else if (decel >= 25 || (prevSpeedMph >= 25 && currSpeedMph === 0 && dt <= 2)) {
+                    } else if (decel >= 12 && prevSpeedMph >= 20 && currSpeedMph <= Math.max(5, prevSpeedMph * 0.4)) {
                         crashDetectionService.triggerHeadlessCrash(
                             { lat: current.latitude, lng: current.longitude },
-                            prevSpeedMph
+                            prevSpeedMph,
+                            decel,
+                            currSpeedMph,
+                            current.timestamp
                         );
                     }
                 }
 
-                if (currSpeedMph >= 10 && accel >= 3.5) {
+                if (currSpeedMph >= 8 && accel >= 3.5) {
                     crashDetectionService.recordRapidAccel(currSpeedMph, accel);
                 }
             }
         }
         this.lastTelemetryState = current;
+        this.lastRawSpeedMps = current.rawSpeedMps ?? null;
     }
 
     isSupported(): boolean {
@@ -683,6 +693,7 @@ class GeolocationService {
         this.kalmanLng.reset();
         this.velocitySmoother.reset();
         this.headingSmoother.reset();
+        this.lastRawSpeedMps = null;
         this.trackingTier = 'transit';
     }
 

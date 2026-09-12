@@ -6,7 +6,8 @@
  * into a shared real-time map layer visible to all users without requiring a search.
  */
 
-import { database, db } from './firebase';
+import { auth, database, db } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { ref, set as setRtdb, onValue } from 'firebase/database';
 import { doc, setDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { extractHouseNumber, extractStreetName } from '../utils/addressUtils';
@@ -53,11 +54,14 @@ function sanitizeForFirebase<T>(data: T): T {
 class CommunityBuildingService {
     private buildingsMap = new Map<string, CommunityBuilding>();
     private listeners = new Set<(buildings: CommunityBuilding[]) => void>();
-    private isInitialized = false;
 
     constructor() {
         this.loadLocalCache();
-        this.subscribeToRealtimeDatabase();
+        let stopRealtime: (() => void) | undefined;
+        onAuthStateChanged(auth, user => {
+            stopRealtime?.();
+            stopRealtime = user ? this.subscribeToRealtimeDatabase() : undefined;
+        });
     }
 
     private loadLocalCache(): void {
@@ -181,11 +185,14 @@ class CommunityBuildingService {
         }
     }
 
-    private subscribeToRealtimeDatabase(): void {
+    private subscribeToRealtimeDatabase(): () => void {
+        let active = true;
+        let unsubscribe: (() => void) | undefined;
         try {
             if (database) {
                 const bldRef = ref(database, 'community_buildings');
-                onValue(bldRef, snapshot => {
+                unsubscribe = onValue(bldRef, snapshot => {
+                    if (!active) return;
                     if (snapshot.exists()) {
                         const data = snapshot.val();
                         let hasNew = false;
@@ -200,15 +207,12 @@ class CommunityBuildingService {
                             this.notifyListeners();
                         }
                     }
-                    this.isInitialized = true;
                 }, err => {
                     console.warn('[CommunityBuildingService] RTDB listener fallback:', err);
-                    this.isInitialized = true;
                 });
             }
         } catch (err) {
             console.warn('[CommunityBuildingService] RTDB sync unavailable:', err);
-            this.isInitialized = true;
         }
 
         // Resilient Firestore backup query
@@ -220,6 +224,7 @@ class CommunityBuildingService {
                     limit(100)
                 );
                 getDocs(q).then(snapshot => {
+                    if (!active) return;
                     let hasNew = false;
                     snapshot.docs.forEach(docSnap => {
                         const data = docSnap.data();
@@ -256,6 +261,10 @@ class CommunityBuildingService {
                 console.debug('[CommunityBuildingService] Firestore fallback skipped:', err);
             }
         }
+        return () => {
+            active = false;
+            unsubscribe?.();
+        };
     }
 
     public subscribe(listener: (buildings: CommunityBuilding[]) => void): () => void {

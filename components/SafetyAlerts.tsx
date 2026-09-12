@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FamilyMember } from '../types';
+import { getLocationFreshness } from '../utils/safetyAlerts';
 
 interface SafetyAlertsProps {
     members: FamilyMember[];
@@ -7,6 +8,7 @@ interface SafetyAlertsProps {
     currentUserName?: string;
     onDismiss: (alertId: string) => void;
     onSendReminder: (memberId: string, type: 'charge' | 'checkin') => void;
+    onResolveOwnSOS: () => void;
     theme: 'light' | 'dark';
     compact?: boolean;
 }
@@ -21,7 +23,7 @@ interface Alert {
     priority: 'critical' | 'warning' | 'info';
     timestamp: Date;
     actionLabel?: string;
-    actionType?: 'charge' | 'checkin' | 'call' | 'navigate';
+    actionType?: 'charge' | 'checkin' | 'call' | 'navigate' | 'resolve_sos';
 }
 
 const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
@@ -30,6 +32,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
     currentUserName,
     onDismiss,
     onSendReminder,
+    onResolveOwnSOS,
     theme,
     compact = false
 }) => {
@@ -50,7 +53,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
             );
 
             // Low battery alert
-            if (member.battery <= 15 && member.battery > 0) {
+            if (member.battery <= 20 && member.battery > 0) {
                 const alertId = `battery-${member.id}`;
                 if (!dismissedIds.has(alertId)) {
                     if (isSelf) {
@@ -62,7 +65,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
                             memberName: 'You',
                             message: `Your phone battery is low (${member.battery}%). Please plug in your charger.`,
                             icon: '🪫',
-                            priority: member.battery <= 5 ? 'critical' : 'warning',
+                            priority: 'info',
                             timestamp: new Date(),
                             actionLabel: 'Got It',
                             actionType: undefined
@@ -76,7 +79,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
                             memberName: member.name,
                             message: `${member.name}'s phone is at ${member.battery}%`,
                             icon: '🔋',
-                            priority: member.battery <= 5 ? 'critical' : 'warning',
+                            priority: 'info',
                             timestamp: new Date(),
                             actionLabel: 'Send Reminder',
                             actionType: 'charge'
@@ -105,6 +108,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
             // SOS alert
             if (member.sosActive) {
                 const alertId = `sos-${member.id}`;
+                const freshness = getLocationFreshness(member.lastUpdated);
                 if (!dismissedIds.has(alertId)) {
                     if (isSelf) {
                         newAlerts.push({
@@ -112,10 +116,12 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
                             type: 'sos_alert',
                             memberId: member.id,
                             memberName: 'You',
-                            message: `🚨 EMERGENCY SOS: Broadcasting your live location to your circle!`,
+                            message: '🚨 Emergency SOS is active. Your Circle can see your latest shared location.',
                             icon: '🛡️',
                             priority: 'critical',
-                            timestamp: new Date()
+                            timestamp: new Date(),
+                            actionLabel: 'I’m Safe — End SOS',
+                            actionType: 'resolve_sos'
                         });
                     } else {
                         newAlerts.push({
@@ -123,7 +129,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
                             type: 'sos_alert',
                             memberId: member.id,
                             memberName: member.name,
-                            message: `🚨 EMERGENCY: ${member.name} needs help!`,
+                            message: `🚨 Emergency SOS: ${member.name} needs help. ${freshness.label}`,
                             icon: '🛡️',
                             priority: 'critical',
                             timestamp: new Date(),
@@ -162,6 +168,12 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
     };
 
     const handleAction = (alert: Alert) => {
+        if (alert.actionType === 'resolve_sos') {
+            if (window.confirm('End your active SOS? Your Circle will be told that you are safe.')) {
+                onResolveOwnSOS();
+            }
+            return;
+        }
         if (alert.actionType === 'charge' || alert.actionType === 'checkin') {
             onSendReminder(alert.memberId, alert.actionType);
         }
@@ -174,7 +186,7 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
             return 'bg-red-600 border-red-400 text-white shadow-red-500/50 animate-pulse';
         }
         if (type === 'low_battery') {
-            return 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400';
+            return 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300';
         }
         if (type === 'prediction' || type === 'arrived') {
             return 'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400';
@@ -228,12 +240,14 @@ const SafetyAlerts: React.FC<SafetyAlertsProps> = ({
                             </button>
                         )}
 
-                        <button
-                            onClick={() => handleDismiss(alert.id)}
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                        >
-                            ✕
-                        </button>
+                        {alert.type !== 'sos_alert' && (
+                            <button
+                                onClick={() => handleDismiss(alert.id)}
+                                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                            >
+                                ✕
+                            </button>
+                        )}
                     </div>
                 </div>
             ))}

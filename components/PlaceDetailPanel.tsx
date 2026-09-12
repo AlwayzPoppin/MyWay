@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { Place, Location, NavigationRoute, FamilyMember, RouteWaypoint } from '../types';
-import { fetchRouteOptions, fetchDetourDeltas } from '../services/osrmService';
+import { Place, Location, NavigationRoute, FamilyMember, RouteWaypoint, DestinationAccessPoint, AccessPointType } from '../types';
+import { fetchRouteOptions, fetchDetourDeltas, clearRouteCache } from '../services/osrmService';
 import { getDistanceMeters } from '../utils/geo';
 import { vehicleFuelService } from '../services/vehicleFuelService';
 import { convoyService } from '../services/convoyService';
@@ -9,8 +9,9 @@ import { placeCorrectionService } from '../services/placeCorrectionService';
 import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
 import { searchPlacesText, searchGasStations, searchCoffeeShops, searchRestaurants } from '../services/placesService';
 import { audioService } from '../services/audioService';
-import { placePhotoService, PlacePhotoContribution } from '../services/placePhotoService';
+import { getPlacePhotoKey, placePhotoService, PlacePhotoContribution } from '../services/placePhotoService';
 import { hapticSuccess, hapticTick } from '../utils/haptics';
+import { ensureCameraPermission } from '../services/nativeCameraPermission';
 import BrandIcon from './BrandIcon';
 import {
     Navigation,
@@ -73,6 +74,8 @@ interface PlaceDetailPanelProps {
     members?: FamilyMember[];
     currentUserId?: string;
     userPlaces?: Place[];
+    /** Keeps the map, saved place, and active navigation destination in sync after a contribution. */
+    onPhotoUploaded?: (place: Place, photoUrl: string) => void;
 }
 
 /**
@@ -296,6 +299,17 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
     );
 };
 
+export const ACCESS_POINT_TYPE_CONFIG: Record<AccessPointType, { label: string; icon: string; entranceType: import('../types').EntranceType }> = {
+    main_entrance: { label: 'Main entrance', icon: '🚪', entranceType: 'main_door' },
+    curbside: { label: 'Curbside pickup', icon: '🚗', entranceType: 'curbside' },
+    auto_care: { label: 'Auto care', icon: '🔧', entranceType: 'main_door' },
+    pharmacy_drive_thru: { label: 'Pharmacy drive-thru', icon: '💊', entranceType: 'drive_thru' },
+    emergency_dropoff: { label: 'Emergency drop-off', icon: '🚨', entranceType: 'main_door' },
+    contractor_lumber: { label: 'Contractor / Lumber', icon: '🪵', entranceType: 'driveway' },
+    drive_thru: { label: 'Drive-thru', icon: '🥤', entranceType: 'drive_thru' },
+    parking: { label: 'Parking lot / deck', icon: '🅿️', entranceType: 'parking' }
+};
+
 interface GlobalRouteCalcCacheEntry {
     destKey: string;
     origin: Location;
@@ -321,7 +335,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     onCorrectLocation,
     members = [],
     currentUserId = '',
-    userPlaces = []
+    userPlaces = [],
+    onPhotoUploaded
 }) => {
     const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState(false);
     const textColor = theme === 'dark' ? 'text-white' : 'text-slate-900';
@@ -357,22 +372,94 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null);
     const [editingCaptionText, setEditingCaptionText] = useState<string>('');
     const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+    const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
     const cameraInputRef = useRef<HTMLInputElement | null>(null);
+
+    const photoPlaceId = useMemo(() => getPlacePhotoKey({
+        id: place.id,
+        name: place.name,
+        location: place.location,
+        isSaved: isSavedLocation
+    }), [place.id, place.name, place.location, isSavedLocation]);
 
     // Current user member details for attribution
     const currentUserMember = useMemo(() => {
         return members.find(m => m.id === currentUserId);
     }, [members, currentUserId]);
 
+    const savedPlaceRecord = useMemo(() => userPlaces.find(saved => saved.id === place.id), [userPlaces, place.id]);
+    const savedPlaceOwnerId = (savedPlaceRecord as any)?.createdBy || (place as any)?.createdBy;
+    const savedPlaceOwner = useMemo(() => members.find(member => member.id === savedPlaceOwnerId), [members, savedPlaceOwnerId]);
+    const canManageSavedPlace = Boolean(isSaved && savedPlaceOwnerId && savedPlaceOwnerId === currentUserId);
+    const savedPlaceOwnerLabel = savedPlaceOwnerId === currentUserId
+        ? 'Saved by you'
+        : savedPlaceOwner?.name
+            ? `Saved by ${savedPlaceOwner.name}`
+            : savedPlaceOwnerId
+                ? 'Saved by a circle member'
+                : 'Legacy saved place';
+
     const myContributions = useMemo(() => {
         return photos.filter(p => p.userId && p.userId === currentUserId);
     }, [photos, currentUserId]);
 
+    // Destination Access Points (Verified Entrances)
+    const [selectedAccessPointId, setSelectedAccessPointId] = useState<string | null>(place.selectedAccessPointId || null);
+    const [isAddAccessPointOpen, setIsAddAccessPointOpen] = useState<boolean>(false);
+    const [newApType, setNewApType] = useState<AccessPointType>('curbside');
+    const [newApName, setNewApName] = useState<string>('');
+    const [newApNotes, setNewApNotes] = useState<string>('');
+    const [isSavingAccessPoint, setIsSavingAccessPoint] = useState<boolean>(false);
+    const [accessPointError, setAccessPointError] = useState<string | null>(null);
+
+    // Subscribe to live access points for this place
+    const [liveAccessPoints, setLiveAccessPoints] = useState<DestinationAccessPoint[]>(() => {
+        return placeCorrectionService.getAccessPoints(place);
+    });
+
+    useEffect(() => {
+        setLiveAccessPoints(placeCorrectionService.getAccessPoints(place));
+        const unsubscribeCorrections = placeCorrectionService.subscribe(() => {
+            setLiveAccessPoints(placeCorrectionService.getAccessPoints(place));
+        });
+        const unsubscribeAccessPoints = placeCorrectionService.subscribeAccessPoints(place, setLiveAccessPoints);
+        return () => {
+            unsubscribeCorrections();
+            unsubscribeAccessPoints();
+        };
+    }, [place.id, place.name, place.location?.lat, place.location?.lng]);
+
+    const accessPoints: DestinationAccessPoint[] = useMemo(() => {
+        if (liveAccessPoints && liveAccessPoints.length > 0) return liveAccessPoints;
+        if (Array.isArray(place.accessPoints) && place.accessPoints.length > 0) return place.accessPoints;
+        return placeCorrectionService.getAccessPoints(place);
+    }, [liveAccessPoints, place]);
+
+    const activeAccessPoint: DestinationAccessPoint = useMemo(() => {
+        if (selectedAccessPointId) {
+            const found = accessPoints.find(ap => ap.id === selectedAccessPointId);
+            if (found) return found;
+        }
+        return accessPoints[0] || {
+            id: `ap_main_${place.id || 'default'}`,
+            name: 'Main place pin',
+            type: 'main_entrance',
+            location: place.location,
+            entranceType: 'main_door',
+            source: 'osm',
+            confidence: 'low'
+        };
+    }, [accessPoints, selectedAccessPointId, place]);
+
+    const targetLocation: Location = useMemo(() => {
+        return activeAccessPoint?.location || place.location;
+    }, [activeAccessPoint, place.location]);
+
     // Fetch photos from Firestore & Storage cache
     useEffect(() => {
-        if (!place?.id) return;
+        if (!photoPlaceId) return;
         let isMounted = true;
-        placePhotoService.getPhotosForPlace(place.id).then((fetched) => {
+        const unsubscribe = placePhotoService.subscribeToPhotosForPlace(photoPlaceId, (fetched) => {
             if (!isMounted) return;
             setPhotos(fetched);
             const urls = fetched.map(p => p.url);
@@ -384,23 +471,60 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         });
         return () => {
             isMounted = false;
+            unsubscribe();
         };
-    }, [place?.id, place?.imageUrl]);
+    }, [photoPlaceId, place?.imageUrl]);
 
     // Secure Camera Capture Trigger (No File System / Library Access)
-    const handleTriggerCamera = () => {
+    const handleTriggerCamera = async () => {
         if (isUploadingPhoto) return;
-        cameraInputRef.current?.click();
+        setPhotoFeedback(null);
+        try {
+            if (!await ensureCameraPermission()) {
+                setPhotoFeedback('Camera access is needed to take a building photo. Enable it in My Way settings and try again.');
+                return;
+            }
+        } catch {
+            setPhotoFeedback('We could not request camera access. Please check My Way permissions and try again.');
+            return;
+        }
+        const input = cameraInputRef.current;
+        if (!input) {
+            setPhotoFeedback('Camera is still preparing. Please try again.');
+            return;
+        }
+        // showPicker is more reliable in current Android WebView builds; click
+        // keeps older Android, iOS, and desktop browsers working.
+        try {
+            if (typeof input.showPicker === 'function') {
+                input.showPicker();
+                return;
+            }
+        } catch {
+            // Some browsers expose showPicker but reject it. Fall through.
+        }
+        input.click();
     };
 
     const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (!file || !place?.id) return;
+        if (!file || !photoPlaceId) return;
+        if (!file.type.startsWith('image/')) {
+            setPhotoFeedback('Choose a photo of the building or storefront.');
+            e.target.value = '';
+            return;
+        }
+        if (file.size > 12 * 1024 * 1024) {
+            setPhotoFeedback('That photo is over 12 MB. Please choose a smaller photo.');
+            e.target.value = '';
+            return;
+        }
 
         setIsUploadingPhoto(true);
+        setPhotoFeedback('Preparing your building photo…');
         try {
             const newContribution = await placePhotoService.uploadPhotoContribution({
-                placeId: place.id,
+                placeId: photoPlaceId,
                 placeName: place.name,
                 file,
                 userId: currentUserId || 'anonymous',
@@ -413,9 +537,14 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             setPhotos(prev => [newContribution, ...prev.filter(p => p.id !== newContribution.id)]);
             setActivePhotoIndex(0);
             place.imageUrl = newContribution.url;
+            onPhotoUploaded?.(place, newContribution.url);
+            setPhotoFeedback(newContribution.isSynced === false
+                ? 'Saved on this device. It will share when your connection returns.'
+                : 'Building photo shared.');
             hapticSuccess();
         } catch (err) {
             console.error('[PlaceDetailPanel] Photo contribution failed:', err);
+            setPhotoFeedback('We could not save that photo. Check your connection and try again.');
         } finally {
             setIsUploadingPhoto(false);
             if (cameraInputRef.current) {
@@ -431,7 +560,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
     const handleSaveCaption = async (photo: PlacePhotoContribution) => {
         try {
-            await placePhotoService.updatePhotoCaption(photo.id, place.id, editingCaptionText.trim());
+            await placePhotoService.updatePhotoCaption(photo.id, photoPlaceId, editingCaptionText.trim());
             setPhotos(prev => prev.map(p => p.id === photo.id ? { ...p, caption: editingCaptionText.trim() } : p));
             setEditingCaptionId(null);
             hapticTick();
@@ -604,6 +733,18 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         </span>
                     </button>
                 )}
+                {photoFeedback && (
+                    <p
+                        role="status"
+                        className={`mt-1 px-1 text-center text-[10px] font-semibold ${
+                            photoFeedback.startsWith('We could not') || photoFeedback.startsWith('Choose') || photoFeedback.startsWith('That photo')
+                                ? 'text-rose-500'
+                                : 'text-emerald-500'
+                        }`}
+                    >
+                        {photoFeedback}
+                    </p>
+                )}
             </div>
         );
     };
@@ -691,6 +832,23 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         return submitterMember?.avatar || place?.submitterAvatar || null;
     }, [isCommunityReport, submitterMember, place?.submitterAvatar]);
 
+    const communityCategoryLabel = useMemo(() => {
+        const category = (place?.category || publicReport?.category || '').trim().toLowerCase();
+        const labels: Record<string, string> = {
+            residential: 'Residential',
+            business: 'Business',
+            food: 'Food & Dining',
+            coffee: 'Coffee & Cafe',
+            gas: 'Gas Station',
+            grocery: 'Store / Market',
+            work: 'Office / Work',
+            gym: 'Gym / Fitness',
+            pharmacy: 'Pharmacy / Health',
+            other: 'Landmark'
+        };
+        return labels[category] || '';
+    }, [place?.category, publicReport?.category]);
+
     const handleToggleHelpful = async () => {
         if (!place || isVoting) return;
         setIsVoting(true);
@@ -753,6 +911,139 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         return place.radius > 5 ? place.radius / 1000 : place.radius;
     });
 
+
+    const handleSaveNewAccessPoint = async () => {
+        if (!place || isSavingAccessPoint) return;
+        const distanceFromPlace = userLocation ? getDistanceMeters(userLocation, place.location) : Infinity;
+        if (!userLocation || distanceFromPlace > 250) {
+            setAccessPointError('Move within 250 m of this destination to contribute a verified entrance.');
+            return;
+        }
+
+        setAccessPointError(null);
+        setIsSavingAccessPoint(true);
+        try {
+            const config = ACCESS_POINT_TYPE_CONFIG[newApType];
+            const chosenName = newApName.trim() || config?.label || 'Entrance';
+            const apLocation = userLocation;
+
+            const saved = await placeCorrectionService.saveAccessPoint(place, {
+                placeId: place.id,
+                name: chosenName,
+                type: newApType,
+                location: apLocation,
+                entranceType: config?.entranceType || 'main_door',
+                notes: newApNotes.trim() || undefined,
+                source: 'user',
+                confidence: 'medium',
+                verifiedCount: 1
+            });
+
+            setSelectedAccessPointId(saved.id);
+            setIsAddAccessPointOpen(false);
+            hapticSuccess();
+        } catch (err) {
+            console.error('Failed to save destination access point:', err);
+        } finally {
+            setIsSavingAccessPoint(false);
+        }
+    };
+
+    const renderVerifiedEntrances = (isCompact: boolean = false) => {
+        if (!accessPoints || accessPoints.length === 0) return null;
+        const verifiedAccessPointCount = accessPoints.filter(ap => ap.confidence !== 'low').length;
+
+        return (
+            <div className={`mt-2 mb-1.5 ${isCompact ? 'px-0' : ''}`}>
+                <div className="flex items-center justify-between gap-1 mb-1 px-0.5">
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                            <Crosshair className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>Arrival points</span>
+                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            {verifiedAccessPointCount > 0 ? `${verifiedAccessPointCount} verified` : 'place pin'}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setNewApType('curbside');
+                            setNewApName('');
+                            setNewApNotes('');
+                            setIsAddAccessPointOpen(true);
+                        }}
+                        className="text-[9px] font-bold text-slate-400 hover:text-white px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+                        title="Contribute a verified entrance"
+                    >
+                        <Plus className="w-2.5 h-2.5" />
+                        <span>Add</span>
+                    </button>
+                </div>
+
+                {/* Horizontal scrollable chip row */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                    {accessPoints.map(ap => {
+                        const isSelected = activeAccessPoint?.id === ap.id;
+                        const config = ACCESS_POINT_TYPE_CONFIG[ap.type] || { icon: '📍', label: ap.name };
+                        return (
+                            <button
+                                key={ap.id}
+                                type="button"
+                                onClick={() => {
+                                    hapticTick();
+                                    setSelectedAccessPointId(ap.id);
+                                }}
+                                className={`px-2.5 py-1 rounded-xl text-xs font-bold shrink-0 flex items-center gap-1.5 transition-all border cursor-pointer active:scale-95 ${
+                                    isSelected
+                                        ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 border-amber-400 shadow-md font-black ring-1 ring-amber-300/40'
+                                        : theme === 'dark'
+                                        ? 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+                                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                                }`}
+                                title={ap.notes ? `${ap.name}: ${ap.notes}` : ap.name}
+                            >
+                                <span className="text-sm shrink-0">{config.icon}</span>
+                                <span className="whitespace-nowrap">{ap.name}</span>
+                                {isSelected && (
+                                    <Check className="w-3 h-3 text-slate-950 ml-0.5 shrink-0 stroke-[3]" />
+                                )}
+                            </button>
+                        );
+                    })}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setNewApType('curbside');
+                            setNewApName('');
+                            setNewApNotes('');
+                            setIsAddAccessPointOpen(true);
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-[11px] font-bold shrink-0 flex items-center gap-1 transition-all border border-dashed cursor-pointer ${
+                            theme === 'dark'
+                                ? 'border-white/20 text-slate-400 hover:text-white hover:border-white/40'
+                                : 'border-slate-300 text-slate-500 hover:text-slate-800 hover:border-slate-400'
+                        }`}
+                    >
+                        <Plus className="w-3 h-3 shrink-0" />
+                        <span>Add entrance</span>
+                    </button>
+                </div>
+
+                {/* Selected Entrance Arrival Banner */}
+                {activeAccessPoint && activeAccessPoint.type !== 'main_entrance' && (
+                    <div className="mt-1.5 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center gap-2 text-[10px] text-amber-300 font-bold">
+                        <span className="text-xs">{ACCESS_POINT_TYPE_CONFIG[activeAccessPoint.type]?.icon || '🎯'}</span>
+                        <span className="truncate">
+                            Routing to verified {activeAccessPoint.name} entrance
+                            {activeAccessPoint.notes ? ` · ${activeAccessPoint.notes}` : ''}
+                        </span>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     // Multi-route alternatives & multi-stop waypoints state
     const [routeOptions, setRouteOptions] = useState<NavigationRoute[]>([]);
     const [selectedRouteIdx, setSelectedRouteIdx] = useState<number>(0);
@@ -768,7 +1059,16 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const [stopSearchResults, setStopSearchResults] = useState<Place[]>([]);
     const [detourDeltas, setDetourDeltas] = useState<Map<number, number>>(new Map());
 
-    const activeVehicle = useMemo(() => vehicleFuelService.getActiveVehicle(), []);
+    const [retryTrigger, setRetryTrigger] = useState(0);
+    const activeVehicle = vehicleFuelService.getActiveVehicle();
+    const selectedRouteFuelReadiness = useMemo(() => {
+        const selectedRoute = routeOptions[selectedRouteIdx];
+        if (!selectedRoute) return null;
+        const miles = selectedRoute.distanceMeters
+            ? selectedRoute.distanceMeters / 1609.344
+            : parseFloat(selectedRoute.totalDistance) || 0;
+        return vehicleFuelService.assessTripFuel(miles, activeVehicle);
+    }, [routeOptions, selectedRouteIdx, activeVehicle, place, retryTrigger]);
 
     const lastCalculatedParamsRef = useRef<{
         destKey: string;
@@ -780,7 +1080,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const lastPreviewedRouteIdRef = useRef<string>('');
     const isComponentAliveRef = useRef(true);
     const activeRequestIdRef = useRef(0);
-    const [retryTrigger, setRetryTrigger] = useState(0);
+    const forceRouteRetryRef = useRef(false);
 
     // Track component mounting lifecycle to prevent setting state on unmounted component
     useEffect(() => {
@@ -792,8 +1092,14 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
     // Manual retry handler to re-trigger route calculation
     const handleRetryRoutes = useCallback(() => {
+        // Invalidate both panel and routing-service caches. Previously an empty
+        // cached response was immediately restored, so Retry appeared inert.
+        forceRouteRetryRef.current = true;
+        activeRequestIdRef.current += 1;
         lastCalculatedParamsRef.current = null;
         isCalculatingRoutesRef.current = false;
+        globalRouteCalcCache.clear();
+        clearRouteCache();
         setRouteOptions([]);
         setIsLoadingRoutes(true);
         setRetryTrigger(prev => prev + 1);
@@ -824,18 +1130,21 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     }, [isLoadingRoutes]);
 
     useEffect(() => {
-        if (!userLocation || !place.location) {
+        if (!userLocation || !place.location || !targetLocation) {
             setIsLoadingRoutes(false);
             return;
         }
 
-        const destKey = `${place.id || place.name}_${place.location.lat.toFixed(5)}_${place.location.lng.toFixed(5)}`;
+        const apKey = activeAccessPoint?.id || 'main';
+        const destKey = `${place.id || place.name}_${targetLocation.lat.toFixed(5)}_${targetLocation.lng.toFixed(5)}_${apKey}`;
         const waypointsKey = waypoints.map(w => `${w.id}_${w.location.lat.toFixed(5)}_${w.location.lng.toFixed(5)}`).join('|');
-        const cached = globalRouteCalcCache.get(destKey);
+        const forceRetry = forceRouteRetryRef.current;
+        if (forceRetry) globalRouteCalcCache.delete(destKey);
+        const cached = forceRetry ? undefined : globalRouteCalcCache.get(destKey);
         const lastParams = lastCalculatedParamsRef.current || cached;
 
         // Check if destination, tolls setting, or waypoints changed
-        const isParamChange = !lastParams || 
+        const isParamChange = forceRetry || !lastParams || 
             lastParams.destKey !== destKey || 
             lastParams.avoidTolls !== avoidTolls || 
             lastParams.waypointsKey !== waypointsKey;
@@ -874,8 +1183,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             waypointsKey
         };
 
-        fetchRouteOptions(userLocation, place.name || 'Destination', place.location, { avoidTolls, waypoints })
+        const destDisplayName = activeAccessPoint && activeAccessPoint.type !== 'main_entrance'
+            ? `${place.name} (${activeAccessPoint.name})`
+            : (place.name || 'Destination');
+
+        fetchRouteOptions(userLocation, destDisplayName, targetLocation, { avoidTolls, waypoints, bypassCache: forceRetry })
             .then(routes => {
+                // Attach access point entrance metadata to routes
+                if (activeAccessPoint) {
+                    routes.forEach(r => {
+                        r.destinationEntranceType = activeAccessPoint.entranceType;
+                        r.destinationEntranceNotes = activeAccessPoint.notes || place.entranceNotes;
+                    });
+                }
+
                 globalRouteCalcCache.set(destKey, {
                     destKey,
                     origin: { ...userLocation },
@@ -888,6 +1209,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     setRouteOptions(routes);
                     setIsLoadingRoutes(false);
                     isCalculatingRoutesRef.current = false;
+                    forceRouteRetryRef.current = false;
 
                     // Preserve selected route index if still valid
                     setSelectedRouteIdx(prevIdx => (prevIdx >= 0 && prevIdx < routes.length ? prevIdx : 0));
@@ -906,9 +1228,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 if (isComponentAliveRef.current && activeRequestIdRef.current === requestId) {
                     setIsLoadingRoutes(false);
                     isCalculatingRoutesRef.current = false;
+                    forceRouteRetryRef.current = false;
                 }
             });
-    }, [place.name, place.id, place.location?.lat, place.location?.lng, userLocation?.lat, userLocation?.lng, avoidTolls, waypoints, onSelectRoutePreview, retryTrigger]);
+    }, [place.name, place.id, targetLocation, userLocation?.lat, userLocation?.lng, avoidTolls, waypoints, onSelectRoutePreview, retryTrigger, activeAccessPoint]);
 
     const handleAddStop = (p: Place) => {
         if (!p.location) return;
@@ -1135,13 +1458,18 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         }
     };
     const typeLabel = useMemo(() => {
+        if (place.category) return place.category;
         if (!place.type) return '';
+        const nameLower = (place.name || '').toLowerCase();
         switch (place.type) {
-            case 'gas': return 'Gas Station';
+            case 'gas': 
+                return (nameLower.includes('7-eleven') || nameLower.includes('7 eleven') || nameLower.includes('circle k') || nameLower.includes('wawa') || nameLower.includes('sheetz'))
+                    ? 'Gas & Convenience'
+                    : 'Gas Station';
             case 'fire_station': return 'Fire Station';
             case 'hospital': case 'emergency': return 'Hospital / ER';
             case 'police': return 'Police Dept';
-            case 'grocery': return 'Supermarket';
+            case 'grocery': return 'Supermarket / Store';
             case 'pharmacy': return 'Pharmacy';
             case 'food': return 'Food & Dining';
             case 'coffee': return 'Coffee';
@@ -1152,7 +1480,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             case 'maintenance': case 'mechanic': return 'Auto Service';
             default: return place.type.replace('_', ' ');
         }
-    }, [place.type]);
+    }, [place.type, place.category, place.name]);
 
     const tagColor = useMemo(() => {
         if (place.type === 'fire_station' || place.type === 'hospital' || place.type === 'emergency') {
@@ -1166,6 +1494,12 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         }
         if (place.type === 'grocery' || place.type === 'pharmacy') {
             return theme === 'dark' ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40' : 'bg-emerald-100 text-emerald-800';
+        }
+        if (place.type === 'maintenance' || place.type === 'mechanic') {
+            return theme === 'dark' ? 'bg-sky-500/25 text-sky-300 border border-sky-500/40' : 'bg-sky-100 text-sky-800';
+        }
+        if (place.type === 'coffee') {
+            return theme === 'dark' ? 'bg-amber-500/25 text-amber-300 border border-amber-500/40' : 'bg-amber-100 text-amber-800';
         }
         return theme === 'dark' ? 'bg-indigo-500/20 text-indigo-300' : 'bg-indigo-100 text-indigo-700';
     }, [place.type, theme]);
@@ -1634,61 +1968,58 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <h3 className={`text-lg landscape:text-base font-black leading-tight truncate ${textColor}`}>{place.name}</h3>
 
                             {addressSubtitle && (
-                                <div className="flex flex-wrap items-center gap-1.5 mt-0.5 landscape:mt-0">
+                                <div className="flex flex-col items-start gap-1 mt-0.5 landscape:mt-0">
                                     <p className={`text-xs landscape:text-[11px] leading-snug flex items-start gap-1 ${subTextColor}`}>
                                         <svg className="w-3 h-3 mt-0.5 shrink-0 opacity-60" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
                                         <span className="line-clamp-2 landscape:line-clamp-1">{addressSubtitle}</span>
                                     </p>
-                                    {place.isCommunityVerified && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] landscape:text-[8px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shrink-0">
-                                            <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
-                                            <span>📍 Community Verified</span>
-                                        </span>
+                                    {(typeLabel || distance) && (
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            {typeLabel && (
+                                                <span className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full ${tagColor}`}>
+                                                    {typeLabel}
+                                                </span>
+                                            )}
+                                            {distance && (
+                                                <span className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                    <Navigation className="w-2.5 h-2.5 shrink-0" />
+                                                    <span>{distance}</span>
+                                                </span>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             )}
 
-                            {!addressSubtitle && place.isCommunityVerified && (
-                                <div className="mt-1 landscape:mt-0.5">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] landscape:text-[8px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shrink-0">
-                                        <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
-                                        <span>📍 Community Verified</span>
+                            {!addressSubtitle && (typeLabel || distance) && (
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                    {typeLabel && <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${tagColor}`}>{typeLabel}</span>}
+                                    {distance && <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}><Navigation className="w-2.5 h-2.5 shrink-0" />{distance}</span>}
+                                </div>
+                            )}
+
+                            {/* Community status is grouped independently from destination facts. */}
+                            {!isPrivatePlace && isVerified && (
+                                <div className="flex flex-row flex-wrap items-center gap-1.5 mt-2 landscape:mt-1">
+                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/35 flex items-center gap-1">
+                                        <Check className="w-3 h-3 shrink-0" />
+                                        <span>Community verified</span>
+                                    </span>
+                                    {hasPrecisionPin && (
+                                        <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 border border-amber-500/35 flex items-center gap-1">
+                                            <Crosshair className="w-3 h-3 shrink-0" />
+                                            <span>Entrance pin</span>
+                                        </span>
+                                    )}
+                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 border border-slate-400/25 flex items-center gap-1">
+                                        <ShieldCheck className="w-3 h-3 shrink-0" />
+                                        <span>Trust {trustScore}</span>
                                     </span>
                                 </div>
                             )}
 
-                            {/* Tags Row */}
-                            <div className="flex flex-row flex-wrap items-center gap-1.5 sm:gap-2 mt-1.5 landscape:mt-1">
-                                {place.isCommunityVerified && (
-                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
-                                        <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
-                                        <span>Community Verified Pin</span>
-                                    </span>
-                                )}
-                                {typeLabel && (
-                                    <span className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full ${tagColor}`}>
-                                        {typeLabel}
-                                    </span>
-                                )}
-                                {distance && (
-                                    <span className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
-                                        <Navigation className="w-2.5 h-2.5 shrink-0" />
-                                        <span>{distance}</span>
-                                    </span>
-                                )}
-                                {hasPrecisionPin && (
-                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                                        <Crosshair className="w-3 h-3 text-amber-400 shrink-0" />
-                                        <span>Precision Routing Pin</span>
-                                    </span>
-                                )}
-                                {!isPrivatePlace && isVerified && (
-                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-widest px-2.5 landscape:px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
-                                        <ShieldCheck className="w-3 h-3 text-amber-400 shrink-0" />
-                                        <span>Trust: {trustScore}</span>
-                                    </span>
-                                )}
-                            </div>
+                            {/* Verified Entrances Selector (Mobile) */}
+                            {renderVerifiedEntrances(true)}
 
                             {/* Entrance Notes (if present and not redundant default precision pin note) */}
                             {place.entranceNotes && !isPrecisionNotes && (
@@ -1714,7 +2045,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                             <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                                         )}
                                         <span className={`font-bold truncate ${textColor}`}>
-                                            Reported by <span className="text-amber-400 font-black">{isCommunityReport ? 'MyWay Community' : submitterDisplayName}</span>
+                                            {isCommunityReport && communityCategoryLabel ? `${communityCategoryLabel} · MyWay Community` : `Reported by ${submitterDisplayName}`}
                                         </span>
                                         {place.correctedAt && (
                                             <span className={`text-[9px] font-medium shrink-0 opacity-70 ${subTextColor}`}>
@@ -1770,8 +2101,19 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             {renderPhotoSection(true)}
                         </div>
 
-                        {/* Edit Place Button (Only for Saved Places) */}
-                        {isSaved && onEditPlace && (
+                        {isSaved && (
+                            <span className={`hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-bold border ${
+                                canManageSavedPlace
+                                    ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-500'
+                                    : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'
+                            }`} title={savedPlaceOwnerLabel}>
+                                <ShieldCheck className="w-3 h-3" />
+                                {savedPlaceOwnerLabel}
+                            </span>
+                        )}
+
+                        {/* Edit Place Button (owner only) */}
+                        {canManageSavedPlace && onEditPlace && (
                             <button
                                 type="button"
                                 onClick={() => onEditPlace(place)}
@@ -1784,7 +2126,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             </button>
                         )}
 
-                        <button
+                        {(canManageSavedPlace || !isSaved) && <button
                             onClick={() => {
                                 if (isSaved) {
                                     const savedMatch = userPlaces?.find(p => p.id === place.id || (
@@ -1808,7 +2150,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             title={isSaved ? "Remove from Saved Places" : "Save Place"}
                         >
                             <Star className={`w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0 ${isSaved ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
-                        </button>
+                        </button>}
 
                         {/* Close Button */}
                         <button
@@ -1998,6 +2340,41 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         </div>
                     </div>
 
+                    {/* Fuel readiness warning appears only after the driver records a real tank level. */}
+                    {selectedRouteFuelReadiness?.isTracking && !selectedRouteFuelReadiness.canCompleteWithReserve && (
+                        <div className={`mt-2 landscape:mt-1 p-2.5 rounded-xl border flex flex-col gap-2 ${theme === 'dark' ? 'bg-amber-500/10 border-amber-400/30 text-amber-100' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+                            <div className="flex items-start gap-2">
+                                <Fuel className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-[11px] landscape:text-[10px] font-black">Fill up before this trip</p>
+                                        {selectedRouteFuelReadiness.status && (
+                                            <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300">
+                                                {selectedRouteFuelReadiness.status.percentRemaining}% Tank ({selectedRouteFuelReadiness.status.gallonsRemaining} {activeVehicle.fuelType === 'electric' ? 'kWh' : 'gal'})
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className="text-[10px] landscape:text-[9px] font-medium opacity-80 mt-0.5">
+                                        ~{selectedRouteFuelReadiness.gallonsNeeded.toFixed(2)} gal for this route, plus a {selectedRouteFuelReadiness.reserveGallons.toFixed(2)} gal reserve. Add at least {selectedRouteFuelReadiness.gallonsToAdd.toFixed(2)} gal.
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowAddStopDrawer(true);
+                                    const q = activeVehicle.fuelType === 'electric' ? 'EV charging station' : 'gas station';
+                                    setStopSearchQuery(q);
+                                    handleSearchStops(q);
+                                }}
+                                className="w-full py-1.5 px-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-[10px] shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Add {activeVehicle.fuelType === 'electric' ? 'Charging' : 'Gas'} Stop Along Route</span>
+                            </button>
+                        </div>
+                    )}
+
                     {/* Action Buttons */}
                     <div className="flex items-center gap-1.5 mt-2 landscape:mt-1 shrink-0 sticky bottom-0 pt-1.5 pb-0.5 backdrop-blur-md bg-inherit/95">
                         <button
@@ -2011,8 +2388,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             type="button"
                             onClick={() => {
                                 convoyService.startConvoy(
-                                    place.name || 'Destination',
-                                    place.location,
+                                    activeAccessPoint && activeAccessPoint.type !== 'main_entrance' ? `${place.name} (${activeAccessPoint.name})` : (place.name || 'Destination'),
+                                    targetLocation,
                                     'self',
                                     'You'
                                 );
@@ -2111,8 +2488,19 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                        {/* Edit Place Button (Desktop) */}
-                        {isSaved && onEditPlace && (
+                        {isSaved && (
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-bold border ${
+                                canManageSavedPlace
+                                    ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-500'
+                                    : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'
+                            }`} title={savedPlaceOwnerLabel}>
+                                <ShieldCheck className="w-3 h-3" />
+                                {savedPlaceOwnerLabel}
+                            </span>
+                        )}
+
+                        {/* Edit Place Button (owner only) */}
+                        {canManageSavedPlace && onEditPlace && (
                             <button
                                 type="button"
                                 onClick={() => onEditPlace(place)}
@@ -2126,7 +2514,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         )}
 
                         {/* Relocated Save / Unsave Star Button */}
-                        <button
+                        {(canManageSavedPlace || !isSaved) && <button
                             type="button"
                             onClick={() => {
                                 if (isSaved) {
@@ -2151,7 +2539,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             title={isSaved ? "Saved to Circle (Click to remove)" : "Save Place to Circle"}
                         >
                             <Star className={`w-4 h-4 shrink-0 ${isSaved ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
-                        </button>
+                        </button>}
 
                         {/* Close Button */}
                         <button
@@ -2201,6 +2589,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     )}
                 </div>
 
+                {/* Verified Entrances Selector (Desktop) */}
+                {renderVerifiedEntrances(false)}
+
                 {/* Entrance Guidance (Desktop - if not redundant default precision pin note) */}
                 {place.entranceNotes && !isPrecisionNotes && (
                     <p className="text-xs text-amber-300/90 font-bold mb-2.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
@@ -2225,7 +2616,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 <Globe className="w-4 h-4 text-slate-400 shrink-0" />
                             )}
                             <span className={`font-bold truncate ${textColor}`}>
-                                Reported by <span className="text-amber-400 font-black">{isCommunityReport ? 'MyWay Community' : submitterDisplayName}</span>
+                                {isCommunityReport && communityCategoryLabel ? `${communityCategoryLabel} · ` : ''}Reported by <span className="text-amber-400 font-black">{isCommunityReport ? 'MyWay Community' : submitterDisplayName}</span>
                             </span>
                             {place.correctedAt && (
                                 <span className={`text-[10px] font-medium shrink-0 opacity-70 ${subTextColor}`}>
@@ -2499,6 +2890,149 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </button>
                 </div>
 
+                {/* Add Verified Entrance Modal */}
+                {isAddAccessPointOpen && (
+                    <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 pointer-events-auto">
+                        <div className={`w-full max-w-sm rounded-3xl p-5 border shadow-2xl space-y-4 ${
+                            theme === 'dark' ? 'bg-slate-900 border-amber-500/40 text-white' : 'bg-white border-amber-300 text-slate-900'
+                        }`}>
+                            <div className="flex items-center justify-between border-b pb-3 border-white/10">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-10 h-10 rounded-2xl bg-amber-500/20 flex items-center justify-center shrink-0 border border-amber-500/30">
+                                        <Crosshair className="w-5 h-5 text-amber-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-black">Add Verified Entrance</h3>
+                                        <p className="text-xs text-amber-400 truncate max-w-[200px]">{place.name}</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsAddAccessPointOpen(false)}
+                                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer"
+                                >
+                                    <X className="w-4 h-4 shrink-0" />
+                                </button>
+                            </div>
+
+                            {/* Entrance Type Selector */}
+                            <div className="space-y-1.5">
+                                <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider">
+                                    Entrance Type
+                                </label>
+                                <div className="grid grid-cols-2 gap-1.5 max-h-44 overflow-y-auto no-scrollbar">
+                                    {(Object.entries(ACCESS_POINT_TYPE_CONFIG) as [AccessPointType, { label: string; icon: string }][]).map(([typeKey, cfg]) => {
+                                        const isSelected = newApType === typeKey;
+                                        return (
+                                            <button
+                                                key={typeKey}
+                                                type="button"
+                                                onClick={() => {
+                                                    setNewApType(typeKey);
+                                                    if (!newApName || Object.values(ACCESS_POINT_TYPE_CONFIG).some(c => c.label === newApName)) {
+                                                        setNewApName(cfg.label);
+                                                    }
+                                                }}
+                                                className={`p-2 rounded-xl border text-left text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                                                    isSelected
+                                                        ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black ring-1 ring-amber-300/40'
+                                                        : theme === 'dark'
+                                                        ? 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+                                                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                                                }`}
+                                            >
+                                                <span className="text-base shrink-0">{cfg.icon}</span>
+                                                <span className="truncate">{cfg.label}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Entrance Custom Name */}
+                            <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider">
+                                    Display Name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={newApName}
+                                    onChange={(e) => setNewApName(e.target.value)}
+                                    placeholder={ACCESS_POINT_TYPE_CONFIG[newApType]?.label || 'e.g. Curbside Pickup'}
+                                    className={`w-full px-3 py-2 rounded-xl text-xs font-bold border outline-none ${
+                                        theme === 'dark'
+                                            ? 'bg-slate-800/90 border-white/15 text-white placeholder-slate-500 focus:border-amber-400'
+                                            : 'bg-slate-100 border-slate-300 text-slate-900 placeholder-slate-400 focus:border-amber-500'
+                                    }`}
+                                />
+                            </div>
+
+                            {/* Entrance Notes */}
+                            <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider">
+                                    Entrance Guidance / Notes (Optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={newApNotes}
+                                    onChange={(e) => setNewApNotes(e.target.value)}
+                                    placeholder="e.g. North wall, numbered orange bays 1-12"
+                                    className={`w-full px-3 py-2 rounded-xl text-xs font-medium border outline-none ${
+                                        theme === 'dark'
+                                            ? 'bg-slate-800/90 border-white/15 text-white placeholder-slate-500 focus:border-amber-400'
+                                            : 'bg-slate-100 border-slate-300 text-slate-900 placeholder-slate-400 focus:border-amber-500'
+                                    }`}
+                                />
+                            </div>
+
+                            {/* Location Context Pill */}
+                            <div className={`p-2.5 rounded-2xl border text-[11px] flex items-center gap-2 ${
+                                userLocation && getDistanceMeters(userLocation, place.location) <= 250
+                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                                    : 'bg-white/5 border-white/10 text-slate-400'
+                            }`}>
+                                <MapPin className="w-4 h-4 shrink-0" />
+                                <span>
+                                    {userLocation && getDistanceMeters(userLocation, place.location) <= 250
+                                        ? 'Using your live verified GPS position at the entrance'
+                                        : 'Move within 250 m of this destination to add a verified entrance'}
+                                </span>
+                            </div>
+                            {accessPointError && (
+                                <p role="alert" className="text-[11px] font-semibold text-rose-400 px-1">
+                                    {accessPointError}
+                                </p>
+                            )}
+
+                            {/* Modal Actions */}
+                            <div className="flex items-center gap-2 pt-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsAddAccessPointOpen(false)}
+                                    className={`flex-1 py-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                                        theme === 'dark' ? 'border-white/15 text-slate-300 hover:bg-white/10' : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleSaveNewAccessPoint}
+                                    disabled={isSavingAccessPoint || !userLocation || getDistanceMeters(userLocation, place.location) > 250}
+                                    className="flex-[2] py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/30 transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                >
+                                    {isSavingAccessPoint ? (
+                                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                                    ) : (
+                                        <Check className="w-4 h-4 stroke-[3] shrink-0" />
+                                    )}
+                                    <span>Save Entrance</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Caravan Member Selection Modal */}
                 {isConvoySetupOpen && (
                     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 pointer-events-auto">
@@ -2624,8 +3158,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     type="button"
                                     onClick={() => {
                                         convoyService.startConvoy(
-                                            place.name || 'Destination',
-                                            place.location,
+                                            activeAccessPoint && activeAccessPoint.type !== 'main_entrance' ? `${place.name} (${activeAccessPoint.name})` : (place.name || 'Destination'),
+                                            targetLocation,
                                             currentUserId || 'self',
                                             'You',
                                             selectedMemberIds
@@ -2643,14 +3177,15 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </div>
                 )}
 
-                {/* Hidden Secure Camera-Only Input (No Library / Browse Access) */}
+                {/* Kept rendered and focusable to Android WebView so a trusted user tap
+                    can always launch the camera/photo picker. capture asks for the rear camera. */}
                 <input
                     ref={cameraInputRef}
                     type="file"
                     accept="image/*"
                     capture="environment"
                     onChange={handleCameraCapture}
-                    className="hidden"
+                    className="absolute w-px h-px opacity-0 overflow-hidden pointer-events-none"
                     tabIndex={-1}
                     aria-hidden="true"
                 />

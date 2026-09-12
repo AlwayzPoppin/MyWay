@@ -33,6 +33,28 @@ public class CarStateRepository {
         }
     }
 
+    public static class MapPoint {
+        public final double lat;
+        public final double lng;
+
+        public MapPoint(double lat, double lng) {
+            this.lat = lat;
+            this.lng = lng;
+        }
+    }
+
+    public static class RouteOptionItem {
+        public final String id, summary, totalTime, totalDistance, tollLabel;
+
+        public RouteOptionItem(String id, String summary, String totalTime, String totalDistance, String tollLabel) {
+            this.id = id != null ? id : "";
+            this.summary = summary != null ? summary : "Route option";
+            this.totalTime = totalTime != null ? totalTime : "";
+            this.totalDistance = totalDistance != null ? totalDistance : "";
+            this.tollLabel = tollLabel != null ? tollLabel : "";
+        }
+    }
+
     private boolean isNavigating = false;
     private boolean isArrived = false;
     private String destinationName = "";
@@ -41,6 +63,19 @@ public class CarStateRepository {
     private String currentInstruction = "";
     private int speedMph = 0;
     private int speedLimit = 0;
+    private double currentLatitude = Double.NaN;
+    private double currentLongitude = Double.NaN;
+    private double destinationLatitude = Double.NaN;
+    private double destinationLongitude = Double.NaN;
+    private double fuelGallonsBurned = Double.NaN;
+    private double fuelCostSoFar = Double.NaN;
+    private double fuelGallonsRemaining = Double.NaN;
+    private int fuelPercentRemaining = -1;
+    private int fuelRangeMiles = -1;
+    private long lastNavigationUpdateMillis = 0L;
+    private final List<MapPoint> routePoints = new ArrayList<>();
+    private String activeRouteId = "";
+    private final List<RouteOptionItem> routeOptions = new ArrayList<>();
     private final List<SavedPlaceItem> savedPlaces = new ArrayList<>();
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
 
@@ -76,7 +111,17 @@ public class CarStateRepository {
             String currentInstruction,
             int speedMph,
             int speedLimit,
-            boolean isArrived
+            boolean isArrived,
+            double currentLatitude,
+            double currentLongitude,
+            double destinationLatitude,
+            double destinationLongitude,
+            List<MapPoint> routePoints,
+            double fuelGallonsBurned,
+            double fuelCostSoFar,
+            double fuelGallonsRemaining,
+            int fuelPercentRemaining,
+            int fuelRangeMiles
     ) {
         this.isNavigating = true;
         this.destinationName = (destinationName != null && !destinationName.trim().isEmpty())
@@ -90,6 +135,22 @@ public class CarStateRepository {
         this.speedMph = Math.max(0, speedMph);
         this.speedLimit = Math.max(0, speedLimit);
         this.isArrived = isArrived || "Arrived!".equalsIgnoreCase(this.currentInstruction);
+        if (isValidCoordinate(currentLatitude, currentLongitude)) {
+            this.currentLatitude = currentLatitude;
+            this.currentLongitude = currentLongitude;
+        }
+        if (isValidCoordinate(destinationLatitude, destinationLongitude)) {
+            this.destinationLatitude = destinationLatitude;
+            this.destinationLongitude = destinationLongitude;
+        }
+        this.routePoints.clear();
+        if (routePoints != null) this.routePoints.addAll(routePoints);
+        this.fuelGallonsBurned = fuelGallonsBurned;
+        this.fuelCostSoFar = fuelCostSoFar;
+        this.fuelGallonsRemaining = fuelGallonsRemaining;
+        this.fuelPercentRemaining = fuelPercentRemaining;
+        this.fuelRangeMiles = fuelRangeMiles;
+        this.lastNavigationUpdateMillis = System.currentTimeMillis();
         notifyNavigationChanged();
     }
 
@@ -101,7 +162,9 @@ public class CarStateRepository {
             int speedMph,
             int speedLimit
     ) {
-        updateNavigation(destinationName, eta, remainingDistance, currentInstruction, speedMph, speedLimit, false);
+        updateNavigation(destinationName, eta, remainingDistance, currentInstruction, speedMph, speedLimit, false,
+                Double.NaN, Double.NaN, Double.NaN, Double.NaN, null,
+                Double.NaN, Double.NaN, Double.NaN, -1, -1);
     }
 
     public synchronized void setArrived(boolean arrived) {
@@ -123,6 +186,19 @@ public class CarStateRepository {
         this.currentInstruction = "";
         this.speedMph = 0;
         this.speedLimit = 0;
+        this.currentLatitude = Double.NaN;
+        this.currentLongitude = Double.NaN;
+        this.destinationLatitude = Double.NaN;
+        this.destinationLongitude = Double.NaN;
+        this.routePoints.clear();
+        this.activeRouteId = "";
+        this.routeOptions.clear();
+        this.fuelGallonsBurned = Double.NaN;
+        this.fuelCostSoFar = Double.NaN;
+        this.fuelGallonsRemaining = Double.NaN;
+        this.fuelPercentRemaining = -1;
+        this.fuelRangeMiles = -1;
+        this.lastNavigationUpdateMillis = 0L;
         notifyNavigationChanged();
     }
 
@@ -132,6 +208,13 @@ public class CarStateRepository {
             this.savedPlaces.addAll(places);
         }
         notifySavedPlacesChanged();
+    }
+
+    public synchronized void updateRouteOptions(String activeRouteId, List<RouteOptionItem> options) {
+        this.activeRouteId = activeRouteId != null ? activeRouteId : "";
+        this.routeOptions.clear();
+        if (options != null) this.routeOptions.addAll(options);
+        notifyNavigationChanged();
     }
 
     private void notifyNavigationChanged() {
@@ -158,7 +241,26 @@ public class CarStateRepository {
     public synchronized String getCurrentInstruction() { return currentInstruction; }
     public synchronized int getSpeedMph() { return speedMph; }
     public synchronized int getSpeedLimit() { return speedLimit; }
+    public synchronized boolean hasCurrentLocation() { return isValidCoordinate(currentLatitude, currentLongitude); }
+    public synchronized boolean hasDestinationLocation() { return isValidCoordinate(destinationLatitude, destinationLongitude); }
+    public synchronized double getCurrentLatitude() { return currentLatitude; }
+    public synchronized double getCurrentLongitude() { return currentLongitude; }
+    public synchronized double getDestinationLatitude() { return destinationLatitude; }
+    public synchronized double getDestinationLongitude() { return destinationLongitude; }
+    public synchronized List<MapPoint> getRoutePoints() { return Collections.unmodifiableList(new ArrayList<>(routePoints)); }
+    public synchronized boolean isNavigationTelemetryStale() { return isNavigating && (lastNavigationUpdateMillis == 0L || System.currentTimeMillis() - lastNavigationUpdateMillis > 15000L); }
+    public synchronized double getFuelGallonsBurned() { return fuelGallonsBurned; }
+    public synchronized double getFuelCostSoFar() { return fuelCostSoFar; }
+    public synchronized double getFuelGallonsRemaining() { return fuelGallonsRemaining; }
+    public synchronized int getFuelPercentRemaining() { return fuelPercentRemaining; }
+    public synchronized int getFuelRangeMiles() { return fuelRangeMiles; }
+    public synchronized String getActiveRouteId() { return activeRouteId; }
+    public synchronized List<RouteOptionItem> getRouteOptions() { return Collections.unmodifiableList(new ArrayList<>(routeOptions)); }
     public synchronized List<SavedPlaceItem> getSavedPlaces() {
         return Collections.unmodifiableList(new ArrayList<>(savedPlaces));
+    }
+
+    private static boolean isValidCoordinate(double lat, double lng) {
+        return !Double.isNaN(lat) && !Double.isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
     }
 }

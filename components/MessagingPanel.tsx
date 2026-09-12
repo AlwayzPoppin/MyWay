@@ -4,9 +4,11 @@ import {
     subscribeToMessages,
     subscribeToMultipleCirclesMessages,
     sendMessage as firestoreSendMessage,
-    ChatMessage
+    ChatMessage,
+    markMessagesRead
 } from '../services/chatService';
-import { getBufferedMessages } from '../services/offlineMessageBuffer';
+import { clearBufferedConversation, getBufferedMessages } from '../services/offlineMessageBuffer';
+import { clearConversationOnDevice, getChatConversationKey, getConversationClearedAfter, getGroupConversationClearedAfter } from '../services/localChatHistoryService';
 import { parseMessageIntent, MessageIntent, getSocialSafetyAdvisory } from '../services/geminiService';
 import { FamilyCircle, getCircleColor } from '../services/authService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
@@ -62,10 +64,24 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [queuedMessages, setQueuedMessages] = useState<ChatMessage[]>([]);
     const [newMessage, setNewMessage] = useState('');
+    const [sendError, setSendError] = useState<string | null>(null);
     const [suggestion, setSuggestion] = useState<MessageIntent | null>(null);
     const [isLoadingOmni, setIsLoadingOmni] = useState(false);
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    const conversationKey = useMemo(() => getChatConversationKey(currentUserId, selectedChannelId, selectedRecipientId), [currentUserId, selectedChannelId, selectedRecipientId]);
+    const [clearedAfter, setClearedAfter] = useState(() => getConversationClearedAfter(currentUserId, conversationKey));
+
+    useEffect(() => {
+        setClearedAfter(getConversationClearedAfter(currentUserId, conversationKey));
+    }, [currentUserId, conversationKey]);
+
+    const effectiveClearedAfter = useMemo(() => {
+        if (selectedRecipientId) return clearedAfter;
+        if (selectedChannelId === 'all') return clearedAfter;
+        return Math.max(clearedAfter, getGroupConversationClearedAfter(currentUserId, selectedChannelId));
+    }, [clearedAfter, currentUserId, selectedChannelId, selectedRecipientId]);
 
     // Sync initialRecipientId if passed from parent
     useEffect(() => {
@@ -140,11 +156,15 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
 
     // Effective circle ID to write messages into
     const effectiveCircleId = useMemo(() => {
+        if (selectedRecipientId) {
+            const shared = userCircles.filter(c => c.members.includes(currentUserId) && c.members.includes(selectedRecipientId));
+            return shared.find(c => c.id === selectedChannelId)?.id || shared[0]?.id || '';
+        }
         if (selectedChannelId && selectedChannelId !== 'all') {
             return selectedChannelId;
         }
         return circleId || (userCircles.length > 0 ? userCircles[0].id : '');
-    }, [selectedChannelId, circleId, userCircles]);
+    }, [selectedChannelId, circleId, userCircles, selectedRecipientId, currentUserId]);
 
     const quickReplies = selectedRecipientId
         ? ['On my way!', 'Where are you?', 'Call me', 'Almost there!', '👍', '❤️']
@@ -158,7 +178,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
         const allBuffered: ChatMessage[] = [];
         for (const cId of targetIds) {
             const buffered = await getBufferedMessages(cId);
-            const mapped: ChatMessage[] = buffered.map(b => ({
+            const mapped: ChatMessage[] = buffered.filter(b => b.senderId === currentUserId).map(b => ({
                 id: `buffered-${b.id || b.clientMessageId}`,
                 senderId: b.senderId,
                 recipientId: b.recipientId,
@@ -171,10 +191,17 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
             allBuffered.push(...mapped);
         }
         setQueuedMessages(allBuffered);
-    }, [userCircles, circleId]);
+    }, [userCircles, circleId, currentUserId]);
 
     // Network status listener
     useEffect(() => {
+        const handleSendError = (event: Event) => {
+            const detail = (event as CustomEvent).detail;
+            if (detail?.senderId !== currentUserId) return;
+            setSendError(detail.code === 'permission-denied'
+                ? 'Queued messages could not send: circle chat access was denied. They remain saved on this device.'
+                : 'Queued messages have not reached the circle yet. They remain saved and will retry automatically.');
+        };
         const handleOnline = () => {
             setIsOnline(true);
             setTimeout(refreshQueuedMessages, 1000);
@@ -186,13 +213,18 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
 
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
+        window.addEventListener('myway-chat-queue-updated', refreshQueuedMessages);
+        window.addEventListener('myway-chat-send-error', handleSendError);
+        window.dispatchEvent(new Event('myway-chat-retry'));
         refreshQueuedMessages();
 
         return () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
+            window.removeEventListener('myway-chat-queue-updated', refreshQueuedMessages);
+            window.removeEventListener('myway-chat-send-error', handleSendError);
         };
-    }, [refreshQueuedMessages]);
+    }, [refreshQueuedMessages, currentUserId]);
 
     // Multi-Circle Live Message Subscription
     useEffect(() => {
@@ -202,7 +234,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
 
         if (targetIds.length === 0) return;
 
-        const unsubscribe = subscribeToMultipleCirclesMessages(targetIds, (msgs) => {
+        const unsubscribe = subscribeToMultipleCirclesMessages(targetIds, currentUserId, (msgs) => {
             setMessages(msgs);
             refreshQueuedMessages();
 
@@ -235,6 +267,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     // Filter messages based on active channel and recipient selection
     const activeConversationMessages = useMemo(() => {
         return combinedMessages.filter(msg => {
+            if (msg.timestamp.getTime() <= effectiveClearedAfter) return false;
             if (selectedRecipientId) {
                 // 1-on-1 Direct Message
                 return (
@@ -253,7 +286,39 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                 return msg.circleId === selectedChannelId;
             }
         });
-    }, [combinedMessages, selectedRecipientId, selectedChannelId, currentUserId]);
+    }, [combinedMessages, selectedRecipientId, selectedChannelId, currentUserId, effectiveClearedAfter]);
+
+    const handleClearConversation = useCallback(async () => {
+        const label = selectedRecipientId
+            ? `your conversation with ${activeRecipient?.name || 'this member'}`
+            : selectedChannelId === 'all'
+                ? 'your All Groups feed'
+                : `${activeChannelCircle?.name || 'this Circle'} chat`;
+
+        if (!window.confirm(`Clear ${label} from this device? Other Circle members will keep their messages.`)) return;
+
+        const marker = clearConversationOnDevice(currentUserId, conversationKey);
+        setClearedAfter(marker);
+        setSuggestion(null);
+        setSendError(null);
+        try {
+            await clearBufferedConversation({
+                senderId: currentUserId,
+                recipientId: selectedRecipientId,
+                circleId: selectedChannelId === 'all' ? undefined : selectedChannelId,
+                allGroupChats: !selectedRecipientId && selectedChannelId === 'all'
+            });
+            await refreshQueuedMessages();
+        } catch (error) {
+            console.warn('[Chat] Cleared visible history, but could not remove queued local drafts:', error);
+        }
+    }, [activeChannelCircle?.name, activeRecipient?.name, conversationKey, currentUserId, refreshQueuedMessages, selectedChannelId, selectedRecipientId]);
+
+    // Opening a conversation is the evidence required for a read receipt.
+    useEffect(() => {
+        if (!currentUserId || activeConversationMessages.length === 0) return;
+        void markMessagesRead(currentUserId, activeConversationMessages);
+    }, [currentUserId, activeConversationMessages]);
 
     // Auto-scroll to bottom on new messages
     useEffect(() => {
@@ -261,7 +326,12 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
     }, [activeConversationMessages]);
 
     const handleSendMessage = async (content: string, type: ChatMessage['type'] = 'text') => {
-        if (!content.trim() || !effectiveCircleId) return;
+        if (!content.trim()) return;
+        if (!effectiveCircleId) {
+            setSendError('No shared circle is available for this conversation. Select your circle and try again.');
+            return;
+        }
+        setSendError(null);
 
         try {
             const result = await firestoreSendMessage(
@@ -277,6 +347,10 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
             }
         } catch (error) {
             console.error("Failed to send message:", error);
+            const code = (error as { code?: string }).code;
+            setSendError(code === 'permission-denied'
+                ? 'Message not sent: circle chat access was denied. Your message is still here; try again after access is restored.'
+                : 'Message not sent. Check your connection and sign-in, then try again.');
         }
     };
 
@@ -342,6 +416,8 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                 members={members}
                 theme={theme}
                 onBackToGroup={() => setSelectedRecipientId(null)}
+                onClearConversation={() => void handleClearConversation()}
+                canClearConversation={activeConversationMessages.length > 0}
                 onClose={onClose}
             />
 
@@ -372,7 +448,12 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                 {userCircles.map(c => {
                     const cHex = c.color || getCircleColor(c.id).hex;
                     const isSelected = selectedRecipientId === null && selectedChannelId === c.id;
-                    const circleMsgCount = combinedMessages.filter(m => !m.recipientId && m.circleId === c.id).length;
+                    const circleClearedAfter = getGroupConversationClearedAfter(currentUserId, c.id);
+                    const circleMsgCount = combinedMessages.filter(m =>
+                        !m.recipientId &&
+                        m.circleId === c.id &&
+                        m.timestamp.getTime() > circleClearedAfter
+                    ).length;
 
                     return (
                         <button
@@ -412,7 +493,12 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                 {/* Individual 1-on-1 Member Pills */}
                 {otherMembers.map(member => {
                     const isSelected = selectedRecipientId === member.id;
+                    const directClearedAfter = getConversationClearedAfter(
+                        currentUserId,
+                        getChatConversationKey(currentUserId, selectedChannelId, member.id)
+                    );
                     const directCount = combinedMessages.filter(m => 
+                        m.timestamp.getTime() > directClearedAfter &&
                         m.recipientId && (
                             (m.senderId === currentUserId && m.recipientId === member.id) ||
                             (m.senderId === member.id && m.recipientId === currentUserId)
@@ -494,10 +580,13 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                         </p>
                     </div>
                 ) : (
-                    activeConversationMessages.map(msg => {
+                    activeConversationMessages.map((msg, index) => {
                         const isMe = msg.senderId === currentUserId;
                         const isOmni = msg.senderId === OMNI_ID;
                         const isQueued = msg.status === 'queued';
+                        const receipts = msg.readReceipts || {};
+                        const delivered = Object.keys(msg.deliveryReceipts || {}).some(id => id !== currentUserId);
+                        const read = Object.keys(receipts).some(id => id !== currentUserId);
                         const sender = members.find(m => m.id === msg.senderId);
                         const senderName = isOmni ? 'MyCo-Pilot' : (sender?.name || (isMe ? 'You' : 'Member'));
                         const senderAvatar = isOmni 
@@ -508,13 +597,22 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                         const msgCircleObj = userCircles.find(c => c.id === msg.circleId);
                         const msgCircleName = msg.circleName || msgCircleObj?.name;
                         const msgCircleColor = msg.circleColor || msgCircleObj?.color || (msg.circleId ? getCircleColor(msg.circleId).hex : '#6366f1');
+                        const previousMessage = activeConversationMessages[index - 1];
+                        const isGroupedWithPrevious = Boolean(
+                            isGroupChat &&
+                            previousMessage &&
+                            previousMessage.senderId === msg.senderId &&
+                            previousMessage.circleId === msg.circleId &&
+                            msg.timestamp.getTime() - previousMessage.timestamp.getTime() <= 5 * 60 * 1000
+                        );
+                        const showMessageIdentity = !isGroupedWithPrevious;
 
                         return (
                             <div
                                 key={msg.id}
                                 className={`flex gap-2.5 ${isMe ? 'flex-row-reverse' : ''}`}
                             >
-                                {!isMe && (
+                                {!isMe && (showMessageIdentity ? (
                                     <img
                                         src={senderAvatar}
                                         alt={senderName}
@@ -524,11 +622,14 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                                                 : ''
                                         }`}
                                     />
-                                )}
+                                ) : (
+                                    <div className="w-7 shrink-0" aria-hidden="true" />
+                                ))}
                                 <div className={`max-w-[78%] ${isMe ? 'text-right' : ''}`}>
-                                    <div className={`flex items-center gap-1.5 mb-1 ${isMe ? 'justify-end' : ''}`}>
-                                        {!isMe && (
-                                            isOmni ? (
+                                    {showMessageIdentity && (
+                                        <div className={`flex items-center gap-1.5 mb-1 ${isMe ? 'justify-end' : ''}`}>
+                                            {isOmni ? (
+                                            !isMe && (
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="text-[10px] font-black uppercase tracking-wider bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 bg-clip-text text-transparent">
                                                         ✨ MyCo-Pilot
@@ -537,28 +638,44 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                                                         AI CO-PILOT
                                                     </span>
                                                 </div>
-                                            ) : (
+                                            )
+                                            ) : isGroupChat ? (
+                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                    <img
+                                                        src={senderAvatar}
+                                                        alt=""
+                                                        aria-hidden="true"
+                                                        onError={(event) => {
+                                                            (event.target as HTMLImageElement).src = getDefaultAvatarDataUri(senderName);
+                                                        }}
+                                                        className="w-3.5 h-3.5 rounded-full object-cover shrink-0 ring-1 ring-white/40"
+                                                    />
+                                                    <p className="text-[10px] font-bold text-slate-400 truncate">
+                                                        {isMe ? 'You' : senderName}
+                                                    </p>
+                                                </div>
+                                            ) : !isMe ? (
                                                 <p className="text-[10px] font-bold text-slate-400">
                                                     {senderName}
                                                 </p>
-                                            )
-                                        )}
+                                            ) : null}
 
-                                        {/* Circle Badge Tag (Shown in All Groups view or on multi-circle feeds) */}
-                                        {msgCircleName && selectedChannelId === 'all' && !msg.recipientId && (
-                                            <span
-                                                style={{
-                                                    backgroundColor: `${msgCircleColor}22`,
-                                                    borderColor: `${msgCircleColor}44`,
-                                                    color: msgCircleColor
-                                                }}
-                                                className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded border flex items-center gap-1 shrink-0"
-                                            >
-                                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: msgCircleColor }} />
-                                                <span>{msgCircleName}</span>
-                                            </span>
-                                        )}
-                                    </div>
+                                            {/* Circle badge identifies the source only once per message group. */}
+                                            {msgCircleName && selectedChannelId === 'all' && !msg.recipientId && (
+                                                <span
+                                                    style={{
+                                                        backgroundColor: `${msgCircleColor}22`,
+                                                        borderColor: `${msgCircleColor}44`,
+                                                        color: msgCircleColor
+                                                    }}
+                                                    className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded border flex items-center gap-1 shrink-0"
+                                                >
+                                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: msgCircleColor }} />
+                                                    <span>{msgCircleName}</span>
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
 
                                     <div className={`inline-block px-3.5 py-2 rounded-2xl text-left relative ${
                                         msg.type === 'geofence'
@@ -584,7 +701,12 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
                                         </p>
                                         {isQueued && (
                                             <span className="text-[8px] font-bold text-amber-400 flex items-center gap-0.5">
-                                                🕒 Queued (Offline)
+                                                🕒 {isOnline ? 'Waiting to send' : 'Queued (Offline)'}
+                                            </span>
+                                        )}
+                                        {isMe && !isQueued && (
+                                            <span className="text-[8px] font-bold text-slate-400">
+                                                {read ? 'Read' : delivered ? 'Delivered' : 'Sent'}
                                             </span>
                                         )}
                                     </div>
@@ -638,6 +760,7 @@ const MessagingPanel: React.FC<MessagingPanelProps> = ({
 
             {/* Input Bar */}
             <div className={`p-3 border-t ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'}`}>
+                {sendError && <p role="alert" className="mb-2 text-sm text-red-500">{sendError}</p>}
                 <div className="flex items-center gap-2">
                     <button
                         onClick={sendLocationShare}

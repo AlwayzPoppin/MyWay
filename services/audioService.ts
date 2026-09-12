@@ -447,6 +447,32 @@ class AudioService {
         }
     }
 
+    /** A quiet, non-verbal confirmation for Circle arrival/departure updates. */
+    public async playCirclePresenceChime(type: 'arrival' | 'departure'): Promise<void> {
+        if (this.isMuted || !this.enabled || typeof window === 'undefined') return;
+        try {
+            const ctx = this.getAudioContext();
+            if (!ctx) return;
+            const now = ctx.currentTime;
+            const notes = type === 'arrival' ? [659.25, 783.99] : [587.33, 440.0];
+            notes.forEach((frequency, index) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                const start = now + index * 0.13;
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(frequency, start);
+                gain.gain.setValueAtTime(0.11, start);
+                gain.gain.exponentialRampToValueAtTime(0.01, start + 0.18);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(start);
+                osc.stop(start + 0.18);
+                osc.onended = () => { try { osc.disconnect(); gain.disconnect(); } catch {} };
+            });
+            this.scheduleIdleSuspension();
+        } catch {}
+    }
+
     /**
      * Play high-priority SOS emergency siren tone sequence with background music suppression
      */

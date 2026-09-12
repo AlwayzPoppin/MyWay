@@ -23,7 +23,10 @@ const config: CapacitorConfig = {
     LocalNotifications: {
       smallIcon: 'ic_stat_name',
       iconColor: '#6366f1',
-      sound: 'beep.wav'
+      sound: 'myway_arrival_chime.wav'
+    },
+    PushNotifications: {
+      presentationOptions: ['sound', 'banner', 'list']
     }
   },
   // AUDIT FIX: Deep Link URI scheme registration

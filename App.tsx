@@ -52,7 +52,8 @@ import {
   Battery,
   Radio,
   AlertTriangle,
-  Shield
+  Shield,
+  Settings
 } from 'lucide-react';
 import {
   getFamilyInsights,
@@ -82,7 +83,7 @@ import {
   removeMember
 } from './services/authService';
 import { createCheckoutSession, goToBillingPortal } from './services/stripeService';
-import { Geofence, GeofenceStatus, detectTransition } from './services/geofenceService';
+import { Geofence, GeofenceStatus, detectTransition, getGeofenceDisplayName } from './services/geofenceService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from './utils/avatar';
 import { setKnownPlaces } from './services/locationService';
 import { formatMemberStatus } from './utils/memberStatus';
@@ -401,7 +402,9 @@ const App: React.FC = () => {
         radius: Math.max(15, radiusMeters),
         entranceType: p.entranceType,
         entranceLocation: p.entranceLocation,
-        entrancePrecision: p.entrancePrecision
+        entrancePrecision: p.entrancePrecision,
+        address: p.address,
+        description: p.description
       };
     });
   }, [userPlaces]);
@@ -409,7 +412,8 @@ const App: React.FC = () => {
   const {
     members: liveMembers,
     setMembers,
-    userLocation
+    userLocation,
+    forcePublishLocation
   } = useLocationSync(
     user,
     profile,
@@ -417,13 +421,14 @@ const App: React.FC = () => {
     mappedGeofences,
     (t) => {
       const isInside = t.to === 'INSIDE';
-      const message = isInside ? `📍 Entered ${t.geofence.name}` : `🚶 Left ${t.geofence.name}`;
+      const placeLabel = getGeofenceDisplayName(t.geofence);
+      const message = isInside ? `📍 Entered ${placeLabel}` : `🚶 Left ${placeLabel}`;
       showNotification(message, 5000);
       if (logActivityRef.current) {
         logActivityRef.current(
           isInside ? 'arrival' : 'departure',
           isInside ? 'Geofence Entry' : 'Geofence Exit',
-          `${profile?.displayName || 'You'} ${isInside ? 'entered' : 'left'} ${t.geofence.name}`,
+          `${profile?.displayName || 'You'} ${isInside ? 'entered' : 'left'} ${placeLabel}`,
           isInside ? '📍' : '🚶',
           user?.uid
         );
@@ -511,7 +516,12 @@ const App: React.FC = () => {
     arrivalTripData,
     setArrivalTripData,
     setIsNavigating,
-    setActiveRoute
+    setActiveRoute,
+    liveFuelSnapshot,
+    lowFuelAlert,
+    handleSelectGasStationStop,
+    handleAddStop,
+    handleDismissLowFuelAlert
   } = useNavigation(
     user,
     profile,
@@ -1146,6 +1156,11 @@ const App: React.FC = () => {
       (editingPlace && editingPlace.id === placeId ? editingPlace : undefined) ||
       (correctingPlace && correctingPlace.id === placeId ? correctingPlace : undefined);
 
+    if (!targetPlace || !user?.uid || targetPlace.createdBy !== user.uid) {
+      showNotification('Only the member who saved this place can remove it.', 3000);
+      return;
+    }
+
     // Collect all coordinates associated with the place (building centroid, driveway pin, entrance)
     const targetCoordsList: { lat: number; lng: number }[] = [];
     const addCoords = (loc?: { lat: number; lng: number } | null) => {
@@ -1312,6 +1327,12 @@ const App: React.FC = () => {
   }, [userPlaces, selectedPlace, editingPlace, correctingPlace, profile, activeUserProfile, currentCircle, userCircles, user, showNotification]);
 
   const handleUpdatePlace = useCallback(async (placeId: string, updates: Partial<Place>) => {
+    const targetPlace = userPlaces.find(p => p.id === placeId);
+    if (!targetPlace || !user?.uid || targetPlace.createdBy !== user.uid) {
+      showNotification('Only the member who saved this place can edit it.', 3000);
+      return;
+    }
+
     setUserPlaces(prev => {
       const next = prev.map(p => p.id === placeId ? { ...p, ...updates } : p);
       try {
@@ -1321,7 +1342,6 @@ const App: React.FC = () => {
     });
     showNotification(`✅ Updated "${updates.name || 'Place'}"`, 3000);
 
-    const targetPlace = userPlaces.find(p => p.id === placeId);
     const targetCircleId = targetPlace?.circleId || currentCircle?.id || profile?.familyCircleId || userCircles[0]?.id || '';
     const allCircleIds = Array.from(new Set([
       targetCircleId,
@@ -1530,6 +1550,11 @@ const App: React.FC = () => {
 
     const actualPlaceId = targetSavedPlace?.id || placeId;
 
+    if (!targetSavedPlace || !user?.uid || targetSavedPlace.createdBy !== user.uid) {
+      showNotification('Only the member who saved this place can change its safe zone.', 3000);
+      return;
+    }
+
     // 2. Visual Save Confirmation: Formatted descriptor toast
     const radiusMeters = radius > 5 ? Math.round(radius) : Math.round(radius * 1000);
     let radiusDescriptor = 'Safe Zone';
@@ -1666,11 +1691,13 @@ const App: React.FC = () => {
         {!isDriveMode && !isMobile && !arrivalTripData && (
           <BentoSidebar
             members={members}
+            currentUserId={user?.uid || ''}
             selectedId={selectedMemberId}
             onSelect={handleSelectMember}
             theme={activeTheme}
             hasCircle={!!profile?.familyCircleId}
             circleName={currentCircle?.name}
+            activeCircleId={currentCircle?.id}
             userCircles={userCircles}
             activeFilterCircleId={activeFilterCircleId}
             onSelectFilterCircle={setActiveFilterCircleId}
@@ -1710,25 +1737,15 @@ const App: React.FC = () => {
           />
         )}
 
-        {/* Mobile-only Profile/Settings FAB - Desktop has this in sidebar */}
+        {/* Mobile-only Settings FAB - a gear is clearer than a profile photo. */}
         {!isDriveMode && isMobile && !activeModal && !isBottomSheetExpanded && !arrivalTripData && (
           <button
             onClick={() => setActiveModal('settings')}
             className="absolute top-14 left-4 z-[90] group flex items-center gap-3 transition-all duration-300 pointer-events-auto"
           >
-            <div className={`relative w-11 h-11 rounded-full border-2 overflow-hidden shadow-2xl transition-all duration-300
-              ${activeTheme === 'dark' ? 'bg-slate-800 border-white/20' : 'bg-white border-slate-200 shadow-md'}
-              ${members[0]?.membershipTier === 'gold' ? 'border-amber-500' : ''}`}
-            >
-              <img
-                src={getSafeAvatarUrl(members[0]?.avatar || user?.photoURL, profile?.displayName || user?.displayName || user?.uid || 'guest')}
-                alt="Profile"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(profile?.displayName || user?.displayName || user?.uid || 'guest');
-                }}
-              />
-            </div>
+            <span className={`w-11 h-11 rounded-2xl border flex items-center justify-center shadow-xl transition-all duration-300 ${activeTheme === 'dark' ? 'bg-slate-900/90 border-white/15 text-slate-100' : 'bg-white border-slate-200 text-slate-700 shadow-md'}`}>
+              <Settings className="w-5 h-5" />
+            </span>
           </button>
         )}
 
@@ -1783,6 +1800,8 @@ const App: React.FC = () => {
               isNavigating={isNavigating || isDriveMode}
               currentStepIndex={navState.currentStepIndex}
               splitIndex={navState.splitIndex}
+              remainingDistanceMeters={navState.remainingDistanceMeters}
+              hasArrived={navState.hasArrived}
               onSelectPlace={handleSelectPlace}
               onSelectMember={handleSelectMember}
               onSelectIncident={setSelectedIncident}
@@ -1909,8 +1928,16 @@ const App: React.FC = () => {
                 members={members}
                 userLocation={userLocation}
                 currentUserId={user?.uid || ''}
+                remainingDistanceMeters={navState.remainingDistanceMeters}
+                remainingDurationSeconds={navState.remainingDurationSeconds}
+                distanceToNextStep={navState.distanceToNextStep}
                 isCameraFree={isCameraFree}
                 onRecenter={handleRecenter}
+                liveFuelSnapshot={liveFuelSnapshot}
+                lowFuelAlert={lowFuelAlert}
+                onSelectGasStationStop={handleSelectGasStationStop}
+                onAddStop={handleAddStop}
+                onDismissLowFuelAlert={handleDismissLowFuelAlert}
               />
             </OverlayManager>
           ) : (
@@ -2390,7 +2417,10 @@ const App: React.FC = () => {
           <TripCompletedCard
             arrivalData={arrivalTripData}
             isOpen={!!arrivalTripData}
-            onClose={() => setArrivalTripData(null)}
+            onClose={() => {
+              setArrivalTripData(null);
+              handleCancelNavigation();
+            }}
             onFixLocation={(destinationPlace) => {
               setCorrectingPlace(destinationPlace);
             }}
@@ -2472,7 +2502,8 @@ const App: React.FC = () => {
               <div className={`absolute z-[150] flex flex-col pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 h-[calc(100dvh-120px)]'}`}>
                 <SettingsPanel
                   settings={userSettings}
-                  onUpdateSettings={(newSettings) => {
+                  onUpdateSettings={async (newSettings) => {
+                    const prevSharing = userSettings.locationSharing;
                     setUserSettings(newSettings);
                     if (newSettings.theme !== 'auto') {
                       setTheme(newSettings.theme);
@@ -2489,6 +2520,31 @@ const App: React.FC = () => {
                     }
                     if (typeof newSettings.showTrafficControls === 'boolean') {
                       localStorage.setItem('myway_show_traffic_controls', String(newSettings.showTrafficControls));
+                    }
+
+                    if (user?.uid && newSettings.locationSharing !== prevSharing) {
+                      try {
+                        const { updateUserProfile } = await import('./services/authService');
+                        await updateUserProfile(user.uid, {
+                          settings: {
+                            ...profile?.settings,
+                            locationSharing: newSettings.locationSharing
+                          }
+                        });
+                        if (newSettings.locationSharing) {
+                          const { claimLocationSharingForCurrentDevice } = await import('./services/deviceSessionService');
+                          await claimLocationSharingForCurrentDevice();
+                          if (forcePublishLocation) {
+                            await forcePublishLocation(true);
+                          }
+                        } else {
+                          if (forcePublishLocation) {
+                            await forcePublishLocation(false);
+                          }
+                        }
+                      } catch (err) {
+                        console.warn('[App] Failed to update location sharing setting in profile:', err);
+                      }
                     }
                   }}
                   onClose={() => setActiveModal(null)}
@@ -2721,6 +2777,7 @@ const App: React.FC = () => {
             isExpanded={isBottomSheetExpanded}
             onExpandedChange={setIsBottomSheetExpanded}
             members={members}
+            currentUserId={user?.uid || ''}
             selectedId={selectedMemberId}
             onSelect={handleSelectMember}
             theme={activeTheme}

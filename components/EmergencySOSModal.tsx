@@ -9,6 +9,7 @@ interface EmergencySOSModalProps {
     onCancelSOS: () => void;
     theme?: 'light' | 'dark';
     userLocation?: { lat: number; lng: number } | null;
+    locationFreshness?: string;
 }
 
 const EmergencySOSModal: React.FC<EmergencySOSModalProps> = ({
@@ -18,7 +19,8 @@ const EmergencySOSModal: React.FC<EmergencySOSModalProps> = ({
     onTriggerSOS,
     onCancelSOS,
     theme = 'dark',
-    userLocation
+    userLocation,
+    locationFreshness
 }) => {
     const [countdown, setCountdown] = useState<number>(5);
     const [isAutoSending, setIsAutoSending] = useState(!isSosActive);
@@ -122,13 +124,13 @@ const EmergencySOSModal: React.FC<EmergencySOSModalProps> = ({
                             <div>
                                 <h4 className="text-base font-black text-white">Emergency Broadcast Active</h4>
                                 <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
-                                    Your live GPS coordinates are being shared with your Circle & Caravan members in real time.
+                                    Your latest available GPS coordinates are shared with your Circle members.
                                 </p>
                             </div>
 
                             {userLocation && (
                                 <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 text-[11px] font-mono text-slate-300">
-                                    📍 {userLocation.lat.toFixed(5)}, {userLocation.lng.toFixed(5)}
+                                    📍 {userLocation.lat.toFixed(5)}, {userLocation.lng.toFixed(5)} {locationFreshness ? `· ${locationFreshness}` : ''}
                                 </div>
                             )}
 

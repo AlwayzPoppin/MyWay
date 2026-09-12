@@ -1,5 +1,6 @@
 import { IncidentReport, IncidentType, Location } from '../types';
-import { database as rtdb } from './firebase';
+import { auth, database as rtdb } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { ref, set, onValue, update, remove, get } from 'firebase/database';
 import { getDistanceMeters } from '../utils/geo';
 import { speechService } from './speechService';
@@ -14,13 +15,17 @@ const TTL_MAP: Record<IncidentType, number> = {
     shoulder: 60 * 60 * 1000,      // 1 hour
     construction: 360 * 60 * 1000, // 6 hours
     traffic: 90 * 60 * 1000,       // 1.5 hours
-    safety_alert: 180 * 60 * 1000  // 3 hours
+    safety_alert: 180 * 60 * 1000, // 3 hours
+    road_closed: 4 * 60 * 60 * 1000,
+    signal_out: 2 * 60 * 60 * 1000,
+    speed_bump: 0                 // A durable road feature; no automatic expiry
 };
 
 class IncidentService {
     private activeIncidents: IncidentReport[] = [];
     private listeners = new Set<(incidents: IncidentReport[]) => void>();
-    private isSubscribed = false;
+    private stopAuth: (() => void) | undefined;
+    private stopRealtime: (() => void) | undefined;
 
     constructor() {
         this.loadLocalCache();
@@ -32,7 +37,7 @@ class IncidentService {
             if (raw) {
                 const list: IncidentReport[] = JSON.parse(raw);
                 const now = Date.now();
-                this.activeIncidents = list.filter(i => (i.expiresAt || 0) > now);
+                this.activeIncidents = list.filter(i => !i.expiresAt || i.expiresAt > now);
             }
         } catch (e) {
             console.warn('[IncidentService] Local cache load failed:', e);
@@ -53,33 +58,43 @@ class IncidentService {
         // Immediately provide cached data
         callback(this.activeIncidents);
 
-        if (!this.isSubscribed && rtdb) {
-            this.isSubscribed = true;
-            const incidentsRef = ref(rtdb, INCIDENTS_REF_PATH);
-            onValue(incidentsRef, (snapshot) => {
-                const data = snapshot.val();
-                if (!data) {
-                    this.activeIncidents = [];
-                } else {
-                    const now = Date.now();
-                    const list: IncidentReport[] = [];
-                    Object.keys(data).forEach(key => {
-                        const item = data[key] as IncidentReport;
-                        if (item && item.location && (item.expiresAt || 0) > now) {
-                            list.push({ ...item, id: key });
-                        }
-                    });
-                    this.activeIncidents = list;
-                }
-                this.saveLocalCache();
-                this.notifyListeners();
-            }, (error) => {
-                console.warn('[IncidentService] RTDB sync error:', error);
+        if (!this.stopAuth && rtdb) {
+            this.stopAuth = onAuthStateChanged(auth, user => {
+                this.stopRealtime?.();
+                this.stopRealtime = undefined;
+                if (!user) return;
+                const incidentsRef = ref(rtdb, INCIDENTS_REF_PATH);
+                this.stopRealtime = onValue(incidentsRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (!data) {
+                        this.activeIncidents = [];
+                    } else {
+                        const now = Date.now();
+                        const list: IncidentReport[] = [];
+                        Object.keys(data).forEach(key => {
+                            const item = data[key] as IncidentReport;
+                            if (item && item.location && (!item.expiresAt || item.expiresAt > now)) {
+                                list.push({ ...item, id: key });
+                            }
+                        });
+                        this.activeIncidents = list;
+                    }
+                    this.saveLocalCache();
+                    this.notifyListeners();
+                }, (error) => {
+                    console.warn('[IncidentService] RTDB sync error:', error);
+                });
             });
         }
 
         return () => {
             this.listeners.delete(callback);
+            if (this.listeners.size === 0) {
+                this.stopAuth?.();
+                this.stopRealtime?.();
+                this.stopAuth = undefined;
+                this.stopRealtime = undefined;
+            }
         };
     }
 
@@ -99,6 +114,7 @@ class IncidentService {
         const id = `inc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const now = Date.now();
         const ttl = TTL_MAP[type] || (60 * 60 * 1000);
+        const isPermanent = type === 'speed_bump';
 
         const newIncident: IncidentReport = {
             id,
@@ -116,7 +132,8 @@ class IncidentService {
             upvoterIds: [user.id],
             downvotes: 0,
             downvoterIds: [],
-            expiresAt: now + ttl,
+            expiresAt: isPermanent ? undefined : now + ttl,
+            isPermanent,
             verified: false
         };
 
@@ -131,6 +148,10 @@ class IncidentService {
             type === 'hazard' ? 'Road hazard reported. Drive safely.' :
             type === 'shoulder' ? 'Vehicle on shoulder reported.' :
             type === 'construction' ? 'Road construction reported.' :
+            type === 'road_closed' ? 'Road closure reported. Rerouting may be needed.' :
+            type === 'signal_out' ? 'Traffic signal outage reported. Use caution.' :
+            type === 'speed_bump' ? 'Speed bump added as a road feature.' :
+            type === 'safety_alert' ? 'Flooded road reported. Use caution.' :
             'Road incident reported.';
         speechService.speak(speechMsg);
 

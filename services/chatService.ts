@@ -1,19 +1,23 @@
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import {
     collection,
-    addDoc,
+    doc,
+    setDoc,
     query,
     where,
     orderBy,
     onSnapshot,
-    serverTimestamp,
     limit,
-    Timestamp
+    Timestamp,
+    writeBatch
 } from 'firebase/firestore';
 import { encryptMessage, decryptMessage } from './cryptoService';
+import { syncVerifiedCircleMembership } from './circleMembershipService';
 import {
     bufferMessage,
     getBufferedMessages,
+    removeBufferedMessage,
     setupMessageAutoFlush,
     BufferedMessage
 } from './offlineMessageBuffer';
@@ -29,6 +33,8 @@ export interface ChatMessage {
     type: 'text' | 'emoji' | 'location' | 'checkin' | 'geofence';
     timestamp: Date;
     status?: 'sent' | 'queued' | 'syncing';
+    deliveryReceipts?: Record<string, number>;
+    readReceipts?: Record<string, number>;
 }
 
 // Convert Firestore timestamp to JS Date
@@ -40,7 +46,39 @@ const convertTimestamp = (timestamp: any): Date => {
     return new Date();
 };
 
-export const subscribeToMessages = (circleId: string, callback: (messages: ChatMessage[]) => void) => {
+const acknowledgeReceipt = async (
+    circleId: string,
+    viewerId: string,
+    messages: ChatMessage[],
+    type: 'delivered' | 'read'
+): Promise<void> => {
+    const candidates = messages.filter(message =>
+        message.senderId !== viewerId &&
+        !(type === 'delivered' ? message.deliveryReceipts : message.readReceipts)?.[viewerId]
+    );
+    if (!candidates.length) return;
+    const batch = writeBatch(db);
+    const now = Date.now();
+    candidates.slice(0, 100).forEach(message => {
+        batch.set(doc(db, 'familyCircles', circleId, 'messages', message.id), {
+            [type === 'delivered' ? `deliveryReceipts.${viewerId}` : `readReceipts.${viewerId}`]: now
+        }, { merge: true });
+    });
+    await batch.commit();
+};
+
+export const markMessagesRead = async (viewerId: string, messages: ChatMessage[]): Promise<void> => {
+    const byCircle = new Map<string, ChatMessage[]>();
+    messages.forEach(message => {
+        if (!message.circleId) return;
+        byCircle.set(message.circleId, [...(byCircle.get(message.circleId) || []), message]);
+    });
+    await Promise.all([...byCircle.entries()].map(([circleId, circleMessages]) =>
+        acknowledgeReceipt(circleId, viewerId, circleMessages, 'read')
+    ));
+};
+
+export const subscribeToMessages = (circleId: string, callback: (messages: ChatMessage[]) => void, viewerId?: string) => {
     if (!circleId) return () => { };
 
     const messagesRef = collection(db, 'familyCircles', circleId, 'messages');
@@ -58,7 +96,7 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
             try {
                 // Attempt to decrypt content
                 if (content && typeof content === 'string') {
-                    const decrypted = await decryptMessage(content);
+                    const decrypted = await decryptMessage(content, circleId);
                     if (decrypted) content = decrypted;
                 }
             } catch (e) {
@@ -75,7 +113,9 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
                 content: content,
                 type: data.type || 'text',
                 timestamp: convertTimestamp(data.timestamp),
-                status: 'sent' as const
+                status: 'sent' as const,
+                deliveryReceipts: data.deliveryReceipts || {},
+                readReceipts: data.readReceipts || {}
             };
         });
 
@@ -84,6 +124,10 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
         messages.reverse();
 
         callback(messages as ChatMessage[]);
+        if (viewerId) {
+            void acknowledgeReceipt(circleId, viewerId, messages as ChatMessage[], 'delivered')
+                .catch(error => console.debug('[Chat] Delivery receipt will retry on the next snapshot:', error));
+        }
     }, (error) => {
         console.warn('💬 [ChatService] Firestore listener notice (offline / sync pending):', error?.message || error);
     });
@@ -95,6 +139,7 @@ export const subscribeToMessages = (circleId: string, callback: (messages: ChatM
  */
 export const subscribeToMultipleCirclesMessages = (
     circleIds: string[],
+    viewerId: string,
     callback: (messages: ChatMessage[]) => void
 ): (() => void) => {
     const validIds = Array.from(new Set(circleIds.filter(id => !!id)));
@@ -124,7 +169,7 @@ export const subscribeToMultipleCirclesMessages = (
 
             merged.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
             callback(merged);
-        });
+        }, viewerId);
     });
 
     return () => {
@@ -136,11 +181,22 @@ export const subscribeToMultipleCirclesMessages = (
  * Sync a single offline buffered message to Firestore
  */
 export const syncBufferedMessage = async (msg: BufferedMessage): Promise<void> => {
+    if (auth.currentUser?.uid !== msg.senderId) throw new Error('Sign in as the message sender to retry.');
+
+    // A mobile app can resume with a valid RTDB Circle but a missing Firestore
+    // membership mirror (for example after an app update, restore, or offline
+    // period). Repair that trusted mirror before every durable outbox attempt.
+    // This also releases messages that were queued before the rules rollout.
+    const activeMembership = await syncVerifiedCircleMembership(msg.circleId);
+    if (!activeMembership) {
+        throw new Error('You are no longer an active member of this Circle.');
+    }
+
     const messagesRef = collection(db, 'familyCircles', msg.circleId, 'messages');
 
     let secureContent = msg.content;
     try {
-        secureContent = await encryptMessage(msg.content);
+        secureContent = await encryptMessage(msg.content, msg.circleId);
     } catch (e) {
         console.error('Encryption failed during sync, sending plaintext:', e);
     }
@@ -156,12 +212,14 @@ export const syncBufferedMessage = async (msg: BufferedMessage): Promise<void> =
         payload.recipientId = msg.recipientId;
     }
 
-    await addDoc(messagesRef, payload);
+    // Retrying an acknowledged write must not create a second message.
+    await setDoc(doc(messagesRef, msg.clientMessageId), payload);
 };
 
 // Initialize automatic background sync when network reconnects
 if (typeof window !== 'undefined') {
-    setupMessageAutoFlush(syncBufferedMessage);
+    setupMessageAutoFlush(syncBufferedMessage, msg => msg.senderId === auth.currentUser?.uid);
+    onAuthStateChanged(auth, user => { if (user) window.dispatchEvent(new Event('myway-chat-retry')); });
 }
 
 /**
@@ -174,79 +232,42 @@ export const sendMessage = async (
     type: ChatMessage['type'] = 'text',
     recipientId?: string
 ): Promise<ChatMessage | void> => {
-    if (!circleId || !senderId || !content.trim()) return;
+    if (!circleId || !senderId || !content.trim()) throw new Error('Choose a circle before sending.');
+    if (auth.currentUser?.uid !== senderId) throw new Error('Please sign in again to send messages.');
 
-    // Instant offline bypass: Buffer directly if disconnected
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-    if (isOffline) {
-        console.warn('📶 Offline: Buffering chat message to IndexedDB...');
-        const buffered = await bufferMessage({
-            clientMessageId: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-            circleId,
-            senderId,
-            recipientId,
-            content,
-            type,
-            timestamp: Date.now(),
-            status: 'queued'
-        });
-
-        return {
-            id: `buffered-${buffered.id || Date.now()}`,
-            senderId,
-            recipientId,
-            circleId,
-            content,
-            type,
-            timestamp: new Date(buffered.timestamp),
-            status: 'queued'
-        };
-    }
-
-    const messagesRef = collection(db, 'familyCircles', circleId, 'messages');
-
-    let secureContent = content;
-    try {
-        secureContent = await encryptMessage(content);
-    } catch (e) {
-        console.error('Encryption failed, sending plaintext:', e);
-    }
-
-    const payload: any = {
-        senderId,
+    // Persist before attempting the write. Every retry uses this same document
+    // ID, so an ambiguous network failure cannot create a duplicate message.
+    const buffered = await bufferMessage({
+        clientMessageId: `msg_${crypto.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`}`,
         circleId,
-        content: secureContent,
+        senderId,
+        recipientId,
+        content,
         type,
-        timestamp: serverTimestamp()
+        timestamp: Date.now(),
+        status: 'queued'
+    });
+    const queuedMessage: ChatMessage = {
+        id: `buffered-${buffered.id || buffered.clientMessageId}`,
+        senderId,
+        recipientId,
+        circleId,
+        content,
+        type,
+        timestamp: new Date(buffered.timestamp),
+        status: 'queued'
     };
-    if (recipientId) {
-        payload.recipientId = recipientId;
-    }
 
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return queuedMessage;
     try {
-        await addDoc(messagesRef, payload);
+        await syncBufferedMessage(buffered);
+        if (buffered.id) await removeBufferedMessage(buffered.id);
+        window.dispatchEvent(new Event('myway-chat-queue-updated'));
+        return { ...queuedMessage, id: buffered.clientMessageId, status: 'sent' };
     } catch (error) {
-        console.warn('📶 Firestore send failed (network dropped), buffering to IndexedDB...', error);
-        const buffered = await bufferMessage({
-            clientMessageId: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-            circleId,
-            senderId,
-            recipientId,
-            content,
-            type,
-            timestamp: Date.now(),
-            status: 'queued'
-        });
-
-        return {
-            id: `buffered-${buffered.id || Date.now()}`,
-            senderId,
-            recipientId,
-            circleId,
-            content,
-            type,
-            timestamp: new Date(buffered.timestamp),
-            status: 'queued'
-        };
+        const code = (error as { code?: string }).code?.replace('firestore/', '');
+        console.warn('📶 Message remains in the durable outbox after a failed delivery attempt:', error);
+        window.dispatchEvent(new CustomEvent('myway-chat-send-error', { detail: { senderId, code } }));
+        return queuedMessage;
     }
 };

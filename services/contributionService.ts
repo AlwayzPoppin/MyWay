@@ -145,7 +145,7 @@ class ContributionService {
     /**
      * Record a completed wizard contribution:
      * 1. Save to users/{userId}/contributions subcollection in Firestore.
-     * 2. If corrected coordinates exist (Step 4), save to global community_pins collection.
+     * 2. Verified or corrected coordinates save to the global community_pins collection.
      * 3. Always maintain offline localStorage fallback.
      */
     public async recordTripContribution(payload: TripContributionPayload): Promise<{
@@ -202,7 +202,7 @@ class ContributionService {
             console.warn(`⚠️ [ContributionService] Firestore user contribution write deferred/failed (using local cache):`, err);
         }
 
-        // 3. Update global community_pins Firestore collection if pin was corrected (Step 4)
+        // 3. Update the global community_pins collection for verified and corrected pins.
         let communityPinId: string | undefined;
         if (payload.correctedCoordinates && payload.correctedCoordinates.length === 2) {
             const [lng, lat] = payload.correctedCoordinates;
@@ -462,8 +462,16 @@ class ContributionService {
                     ...place,
                     originalLocation: place.location,
                     location: { lat, lng },
+                    category: matchedPin.placeType || place.category,
+                    type: matchedPin.placeType === 'residential'
+                        ? 'residential'
+                        : (place.type === 'home' ? 'other' : place.type),
                     isCommunityVerified: true,
                     isCorrected: true,
+                    visibility: 'public',
+                    correctedAt: matchedPin.updatedAt,
+                    submitterId: 'community',
+                    submitterName: 'MyWay Community',
                     entranceType: (matchedPin.entranceType as any) || place.entranceType,
                     imageUrl: matchedPin.imageUrl || place.imageUrl,
                     rating: matchedPin.rating || place.rating

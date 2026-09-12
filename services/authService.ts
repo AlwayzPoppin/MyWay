@@ -41,6 +41,10 @@ export interface UserProfile {
     familyCircleId: string | null;
     createdAt: number;
     lastSeen: number;
+    activeViewerDeviceLabel?: string;
+    activeViewerDevicePlatform?: string;
+    appVersion?: string;
+    syncProtocolVersion?: number;
     settings: {
         theme: 'light' | 'dark' | 'auto';
         notifications: boolean;
@@ -441,7 +445,7 @@ export const getFamilyCircle = async (circleId: string): Promise<FamilyCircle | 
  * Leave a family circle. If the user is the owner and there are other members,
  * ownership transfers to the next member automatically.
  */
-export const leaveCircle = async (circleId: string, userId: string): Promise<void> => {
+export const leaveCircle = async (circleId: string, userId: string, nextCircleId?: string | null): Promise<void> => {
     const circle = await getFamilyCircle(circleId);
     if (!circle) throw new Error('Circle not found');
 
@@ -467,12 +471,40 @@ export const leaveCircle = async (circleId: string, userId: string): Promise<voi
     }
 
     // Clear the user's circle reference
-    await updateUserProfile(userId, { familyCircleId: null });
+    await updateUserProfile(userId, { familyCircleId: nextCircleId !== undefined ? nextCircleId : null });
 };
 
 /**
  * Fetches all circles that a user belongs to (Multi-Circle / Secondary Circles support).
  */
+/**
+ * Subscribes to changes in circles the user belongs to.
+ */
+export const subscribeToUserCircles = (
+    userId: string,
+    callback: (circles: FamilyCircle[]) => void
+): (() => void) => {
+    const circlesRef = ref(database, 'circles');
+    return onValue(circlesRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            callback([]);
+            return;
+        }
+        const data = snapshot.val();
+        const userCircles: FamilyCircle[] = [];
+        for (const id in data) {
+            const circle = data[id];
+            if (circle.members && Array.isArray(circle.members) && circle.members.includes(userId)) {
+                userCircles.push({ ...circle, id });
+            }
+        }
+        callback(userCircles);
+    }, (error) => {
+        console.warn('⚠️ Error subscribing to user circles:', error);
+        callback([]);
+    });
+};
+
 export const getUserCircles = async (userId: string): Promise<FamilyCircle[]> => {
     try {
         const circlesRef = ref(database, 'circles');
@@ -774,6 +806,8 @@ export interface MemberLocation {
     encryptedData?: string;
     status?: string;
     sosActive?: boolean;
+    isSharingLocation?: boolean;
+    locationSharing?: boolean;
     impact?: CrashImpactMetadata | null;
     privacyMode?: PrivacyMode;
     blurredRadiusMeters?: number;
@@ -799,6 +833,8 @@ export const updateMemberLocation = async (
         signalQuality: location.signalQuality || 'medium',
         timestamp: location.timestamp || Date.now(),
         status: location.status || 'Moving',
+        isSharingLocation: location.isSharingLocation !== false,
+        locationSharing: location.locationSharing !== false,
         privacyMode: location.privacyMode || 'exact',
         blurredRadiusMeters: location.blurredRadiusMeters || 0,
     };
@@ -856,6 +892,25 @@ export const updateMemberLocation = async (
 /**
  * Update member's live status in Firebase Realtime Database and Firestore
  */
+/**
+ * Clear a member's location across circles when location sharing is paused or disabled
+ */
+export const clearMemberLocations = async (
+    userId: string,
+    circleIds: string[]
+): Promise<void> => {
+    if (!userId || !circleIds || circleIds.length === 0) return;
+    const updates: Record<string, null> = {};
+    for (const cId of circleIds) {
+        updates[`locations/${cId}/${userId}`] = null;
+    }
+    try {
+        await update(ref(database), updates);
+    } catch (err) {
+        console.warn('[authService] Failed to clear member locations:', err);
+    }
+};
+
 export const updateUserStatusInFirestore = async (
     circleId: string,
     userId: string,

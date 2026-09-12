@@ -5,6 +5,7 @@
  */
 
 import { CrashImpactMetadata } from '../types';
+import { registerReliableDeliveryFlusher } from './reliableDeliveryService';
 
 export interface BufferedSosAlert {
     id?: number;
@@ -240,6 +241,5 @@ export const setupSosAutoFlush = (
         await flushSosBuffer(syncFn);
     };
 
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
+    return registerReliableDeliveryFlusher('sos', 100, handleOnline);
 };

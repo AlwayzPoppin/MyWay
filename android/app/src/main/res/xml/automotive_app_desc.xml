@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <automotiveApp>
     <uses name="navigation" />
+    <!-- Required for Android Auto to discover a Car App Library service. -->
+    <uses name="template" />
 </automotiveApp>

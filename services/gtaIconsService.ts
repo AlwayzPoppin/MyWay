@@ -42,8 +42,16 @@ export const getGTAPlaceBlipHtml = (type?: string, name?: string): string => {
         `;
     }
 
-    // 2. Gas Station / Fuel
-    if (t === 'gas' || t === 'gas_station' || n.includes('gas') || n.includes('fuel') || n.includes('shell') || n.includes('bp') || n.includes('exxon') || n.includes('citgo') || n.includes('chevron')) {
+    // 2. Gas Station / Fuel & Convenience Stop
+    if (
+        t === 'gas' || t === 'gas_station' ||
+        n.includes('gas') || n.includes('fuel') || n.includes('shell') || n.includes('bp') ||
+        n.includes('exxon') || n.includes('citgo') || n.includes('chevron') || n.includes('valero') ||
+        n.includes('marathon') || n.includes('sunoco') || n.includes('speedway') || n.includes('7-eleven') ||
+        n.includes('7 eleven') || n.includes('circle k') || n.includes('wawa') || n.includes('sheetz') ||
+        n.includes('quiktrip') || n.includes('racetrac') || n.includes('buc-ee') || n.includes('casey') ||
+        n.includes('murphy')
+    ) {
         return `
             <div style="
                 width: 32px; height: 32px;
@@ -157,7 +165,7 @@ export const getGTAPlaceBlipHtml = (type?: string, name?: string): string => {
     }
 
     // 8. Supermarket / Grocery / Store
-    if (t === 'supermarket' || t === 'grocery_or_supermarket' || n.includes('walmart') || n.includes('target') || n.includes('grocery') || n.includes('market') || n.includes('food lion') || n.includes('kroger') || n.includes('publix')) {
+    if (t === 'supermarket' || t === 'grocery_or_supermarket' || t === 'grocery' || n.includes('walmart') || n.includes('target') || n.includes('grocery') || n.includes('market') || n.includes('food lion') || n.includes('kroger') || n.includes('publix')) {
         return `
             <div style="
                 width: 32px; height: 32px;
@@ -170,6 +178,63 @@ export const getGTAPlaceBlipHtml = (type?: string, name?: string): string => {
             ">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="#10b981">
                     <path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/>
+                </svg>
+            </div>
+        `;
+    }
+
+    // 9. Auto Service / Mechanic / Auto Parts / Maintenance
+    if (t === 'maintenance' || t === 'mechanic' || n.includes('jiffy lube') || n.includes('autozone') || n.includes('valvoline') || n.includes('firestone') || n.includes('auto repair') || n.includes('oil change') || n.includes('auto parts')) {
+        return `
+            <div style="
+                width: 32px; height: 32px;
+                background: #111827;
+                border: 2px solid #38bdf8;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.8), 0 0 8px rgba(56,189,248,0.5);
+                display: flex; align-items: center; justify-content: center;
+                cursor: pointer;
+            ">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#38bdf8">
+                    <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/>
+                </svg>
+            </div>
+        `;
+    }
+
+    // 10. Bank / ATM / Financial
+    if (t === 'bank' || t === 'atm' || n.includes('bank') || n.includes('wells fargo') || n.includes('chase') || n.includes('credit union')) {
+        return `
+            <div style="
+                width: 32px; height: 32px;
+                background: #111827;
+                border: 2px solid #34d399;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.8), 0 0 8px rgba(52,211,153,0.5);
+                display: flex; align-items: center; justify-content: center;
+                cursor: pointer;
+            ">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#34d399">
+                    <path d="M4 10v7h3v-7H4zm6 0v7h3v-7h-3zm6 0v7h3v-7h-3zM2 22h19v-3H2v3zm9.5-20L2 7v2h19V7l-9.5-5z"/>
+                </svg>
+            </div>
+        `;
+    }
+
+    // 11. Lodging / Hotel / Motel
+    if (t === 'lodging' || t === 'hotel' || n.includes('hotel') || n.includes('motel') || n.includes('inn') || n.includes('suites') || n.includes('resort')) {
+        return `
+            <div style="
+                width: 32px; height: 32px;
+                background: #111827;
+                border: 2px solid #818cf8;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.8), 0 0 8px rgba(129,140,248,0.5);
+                display: flex; align-items: center; justify-content: center;
+                cursor: pointer;
+            ">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#818cf8">
+                    <path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z"/>
                 </svg>
             </div>
         `;

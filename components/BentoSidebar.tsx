@@ -10,6 +10,7 @@ import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { FamilyCircle, getCircleColor } from '../services/authService';
 import { MemberStatusText } from '../utils/memberStatus';
 import { MemberAvatarWithRing, AddMemberButton } from './MemberCard';
+import { isOlderCircleSyncProtocol } from '../services/appVersionService';
 import {
     Settings,
     Shield,
@@ -26,6 +27,7 @@ import {
     AlertTriangle,
     Sparkles,
     ChevronLeft,
+    ChevronDown,
     Car,
     Radio,
     Home,
@@ -54,11 +56,13 @@ const SIDEBAR_PLACE_CATEGORIES = [
 
 interface BentoSidebarProps {
     members: FamilyMember[];
+    currentUserId?: string;
     selectedId: string | null;
     onSelect: (id: string) => void;
     theme: 'light' | 'dark';
     hasCircle: boolean;
     circleName?: string;
+    activeCircleId?: string;
     userCircles?: FamilyCircle[];
     activeFilterCircleId?: string | 'all';
     onSelectFilterCircle?: (circleId: string | 'all') => void;
@@ -91,11 +95,13 @@ interface BentoSidebarProps {
 
 const BentoSidebar: React.FC<BentoSidebarProps> = ({
     members,
+    currentUserId,
     selectedId,
     onSelect,
     theme,
     hasCircle,
     circleName,
+    activeCircleId,
     userCircles = [],
     activeFilterCircleId = 'all',
     onSelectFilterCircle,
@@ -131,6 +137,33 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     const [customPlaceName, setCustomPlaceName] = React.useState('');
     const [customPlaceIcon, setCustomPlaceIcon] = React.useState('📍');
     const [customPlaceType, setCustomPlaceType] = React.useState<Place['type']>('custom');
+    const [collapsedCircleIds, setCollapsedCircleIds] = React.useState<Record<string, boolean>>({});
+
+    const hasMultipleCircles = userCircles.length > 1;
+    const memberGroups = React.useMemo(() => {
+        if (!hasMultipleCircles) return [{ circle: null as FamilyCircle | null, members }];
+
+        const grouped = userCircles.map(circle => ({
+            circle,
+            members: members.filter(member => member.circleId === circle.id)
+        }));
+        const knownCircleIds = new Set(userCircles.map(circle => circle.id));
+        const unassignedMembers = members.filter(member => !member.circleId || !knownCircleIds.has(member.circleId));
+
+        if (unassignedMembers.length) grouped.push({ circle: null, members: unassignedMembers });
+
+        return grouped.filter(group => group.members.length > 0);
+    }, [hasMultipleCircles, members, userCircles]);
+
+    const toggleCircleMembers = (circleId: string) => {
+        setCollapsedCircleIds(previous => ({ ...previous, [circleId]: !previous[circleId] }));
+    };
+
+    const memberEntries = memberGroups.flatMap(group => group.members.map((member, index) => ({
+        member,
+        group,
+        isFirstInGroup: index === 0
+    })));
 
     const renderPlaceIcon = (icon?: string) => {
         switch (icon) {
@@ -311,7 +344,11 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 {onOpenCircleSettings && <span className="text-[8px]">▾</span>}
                                             </div>
                                             <h3 className={`text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                                {members.filter(m => m.status !== 'Offline').length} Active Now
+                                                {members.filter(m => {
+                                                    if (m.status === 'Offline' || m.locationStale) return false;
+                                                    const lastFixMs = Date.parse(m.lastUpdated || '');
+                                                    return !Number.isFinite(lastFixMs) || (Date.now() - lastFixMs) <= 90_000;
+                                                }).length} Active Now
                                             </h3>
                                         </div>
 
@@ -329,7 +366,11 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 </button>
                                             )}
                                             <div className="flex -space-x-2">
-                                                {members.slice(0, 3).map(m => (
+                                                {members.filter(m => {
+                                                    if (m.status === 'Offline' || m.locationStale) return false;
+                                                    const lastFixMs = Date.parse(m.lastUpdated || '');
+                                                    return !Number.isFinite(lastFixMs) || (Date.now() - lastFixMs) <= 90_000;
+                                                }).slice(0, 3).map(m => (
                                                     <img
                                                         key={m.id}
                                                         src={getSafeAvatarUrl(m.avatar, m.name || m.id)}
@@ -394,12 +435,68 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
 
                                 {/* Member Grid/List */}
                                 <div className={`grid gap-3 ${isCollapsed ? 'grid-cols-1' : 'grid-cols-1'}`}>
-                                    {members.map(member => {
+                                    {memberEntries.map(({ member, group, isFirstInGroup }) => {
+                                        const groupId = group.circle?.id;
+                                        const isGroupCollapsed = Boolean(groupId && collapsedCircleIds[groupId]);
+                                        const groupColor = group.circle?.color || (groupId ? getCircleColor(groupId).hex : '#64748b');
                                         const memberCircleHex = member.circleColor || '#6366f1';
-                                        const isUnresolved = !member.location || (member.location.lat === 0 && member.location.lng === 0);
+                                        const isUnresolved = !member.companionDeviceLabel && (!member.location || (member.location.lat === 0 && member.location.lng === 0));
+                                        const needsSyncUpdate = isOlderCircleSyncProtocol(member.syncProtocolVersion);
+                                        if (isGroupCollapsed) {
+                                            return isFirstInGroup ? (
+                                                <button
+                                                    key={`${groupId}-collapsed`}
+                                                    type="button"
+                                                    onClick={() => groupId && toggleCircleMembers(groupId)}
+                                                    className={`w-full flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all cursor-pointer hover:brightness-105 active:scale-[0.99] ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}
+                                                    style={{ borderColor: `${groupColor}55` }}
+                                                    aria-expanded={false}
+                                                >
+                                                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: groupColor }} />
+                                                    <span className={`min-w-0 flex-1 truncate text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                                                        {group.circle?.name}
+                                                    </span>
+                                                    {groupId && groupId === activeCircleId && (
+                                                        <span className="rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-white" style={{ backgroundColor: groupColor }}>
+                                                            Active
+                                                        </span>
+                                                    )}
+                                                    <span className={`text-[10px] font-black ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                        {group.members.length}
+                                                    </span>
+                                                    <ChevronDown className="w-4 h-4 -rotate-90" style={{ color: groupColor }} />
+                                                </button>
+                                            ) : null;
+                                        }
                                         return (
+                                        <React.Fragment key={`${groupId || 'other'}-${member.id}`}>
+                                        {hasMultipleCircles && !isCollapsed && isFirstInGroup && (
+                                            <button
+                                                type="button"
+                                                onClick={() => groupId && toggleCircleMembers(groupId)}
+                                                disabled={!groupId}
+                                                className={`w-full flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all ${
+                                                    groupId ? 'cursor-pointer hover:brightness-105 active:scale-[0.99]' : 'cursor-default'
+                                                } ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}
+                                                style={{ borderColor: `${groupColor}55` }}
+                                                aria-expanded={groupId ? !isGroupCollapsed : undefined}
+                                            >
+                                                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: groupColor }} />
+                                                    <span className={`min-w-0 flex-1 truncate text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                                                        {group.circle?.name || 'Other Circle Members'}
+                                                    </span>
+                                                    {groupId && groupId === activeCircleId && (
+                                                        <span className="rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-white" style={{ backgroundColor: groupColor }}>
+                                                            Active
+                                                        </span>
+                                                    )}
+                                                    <span className={`text-[10px] font-black ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                    {group.members.length}
+                                                </span>
+                                                {groupId && <ChevronDown className="w-4 h-4" style={{ color: groupColor }} />}
+                                            </button>
+                                        )}
                                         <div
-                                            key={member.id}
                                             role="button"
                                             tabIndex={0}
                                             onClick={() => onSelect(member.id)}
@@ -451,15 +548,33 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 <div className="flex-1 text-left min-w-0 animate-in fade-in slide-in-from-left-2">
                                                     <div className="flex items-center justify-between gap-1">
                                                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                                                            <h3 
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    onSelect(member.id);
-                                                                }}
-                                                                className={`font-black text-sm tracking-tight truncate cursor-pointer hover:underline ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}
-                                                            >
-                                                                {member.name}
-                                                            </h3>
+                                                            {(() => {
+                                                                const isSelf = Boolean(
+                                                                    (currentUserId && member.id === currentUserId) ||
+                                                                    member.id === 'demo-you' ||
+                                                                    (member as any).isSelf
+                                                                );
+                                                                return (
+                                                                    <>
+                                                                        <h3
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onSelect(member.id);
+                                                                            }}
+                                                                            className={`font-black text-sm tracking-tight truncate cursor-pointer hover:underline ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}
+                                                                        >
+                                                                            {member.name}
+                                                                        </h3>
+                                                                        {isSelf && (
+                                                                            <span className={`text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border shrink-0 ${
+                                                                                theme === 'dark' ? 'bg-indigo-500/20 border-indigo-400/35 text-indigo-200' : 'bg-indigo-50 border-indigo-200 text-indigo-600'
+                                                                            }`}>
+                                                                                You
+                                                                            </span>
+                                                                        )}
+                                                                    </>
+                                                                );
+                                                            })()}
                                                             {isUnresolved ? (
                                                                 <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
                                                                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
@@ -495,7 +610,11 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                             ) : null}
                                                         </div>
                                                         <div className="flex items-center gap-1 shrink-0">
-                                                            {onOpenMessages && (
+                                                            {onOpenMessages && !(
+                                                                (currentUserId && member.id === currentUserId) ||
+                                                                member.id === 'demo-you' ||
+                                                                (member as any).isSelf
+                                                            ) && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={(e) => {
@@ -554,6 +673,13 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                 </div>
                                                             </div>
                                                         </div>
+                                                    ) : member.companionDeviceLabel ? (
+                                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                                            <div className="text-[10px] font-medium text-sky-400/90 flex items-center gap-1.5 truncate">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block shrink-0" />
+                                                                <span className="truncate">{member.companionDeviceLabel}</span>
+                                                            </div>
+                                                        </div>
                                                     ) : isUnresolved ? (
                                                         <div className="flex items-center gap-1.5 mt-0.5">
                                                             <div className="text-[10px] font-medium text-amber-400/90 flex items-center gap-1.5 truncate">
@@ -589,9 +715,16 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                             )}
                                                         </div>
                                                     )}
+                                                    {needsSyncUpdate && (
+                                                        <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-black text-amber-500">
+                                                            <AlertTriangle className="h-2.5 w-2.5" />
+                                                            Update needed for live sync
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
+                                        </React.Fragment>
                                     );
                                 })}
 
@@ -916,16 +1049,59 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 </p>
                                             </div>
                                         </div>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                onNavigatePlace?.(parkedVehicle);
-                                            }}
-                                            className="p-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white shadow-md shrink-0 transition-transform active:scale-95"
-                                            title="Walk to vehicle"
-                                        >
-                                            <Navigation className="w-3.5 h-3.5" />
-                                        </button>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            {userLocation && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (window.confirm('Move your parked vehicle pin to your current GPS location?')) {
+                                                            parkingService.setParkedVehicle({
+                                                                ...parkedVehicle,
+                                                                location: { lat: userLocation.lat, lng: userLocation.lng },
+                                                                nearestAddress: 'Current location',
+                                                                parkedAt: Date.now(),
+                                                                hasWalkedAway: false,
+                                                                hasReturned: false
+                                                            });
+                                                            showNotification?.('Moved parked vehicle pin to your current location.', 3000);
+                                                        }
+                                                    }}
+                                                    className="p-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-600 hover:bg-cyan-500/20 transition-transform active:scale-95"
+                                                    title="Move parking pin to current location"
+                                                    aria-label="Move parking pin to current location"
+                                                >
+                                                    <MapPin className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (window.confirm('Remove your parked vehicle pin?')) {
+                                                        parkingService.clearParkedVehicle();
+                                                        showNotification?.('Removed parked vehicle pin.', 2500);
+                                                    }
+                                                }}
+                                                className="p-2 rounded-xl border border-red-500/25 bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-transform active:scale-95"
+                                                title="Remove parked vehicle pin"
+                                                aria-label="Remove parked vehicle pin"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onNavigatePlace?.(parkedVehicle);
+                                                }}
+                                                className="p-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white shadow-md transition-transform active:scale-95"
+                                                title="Walk to vehicle"
+                                                aria-label="Walk to parked vehicle"
+                                            >
+                                                <Navigation className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
 

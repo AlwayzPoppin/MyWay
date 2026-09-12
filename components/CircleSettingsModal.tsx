@@ -61,14 +61,13 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     const [newCircleName, setNewCircleName] = useState('');
     const [newCircleColor, setNewCircleColor] = useState<string>(defaultColor);
     const [activeThemeColor, setActiveThemeColor] = useState<string>(defaultColor);
-    const [isJoiningCircle, setIsJoiningCircle] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
-    const [joinInviteCode, setJoinInviteCode] = useState('');
     const [manualInviteCode, setManualInviteCode] = useState('');
     const [joinError, setJoinError] = useState<string | null>(null);
     const [editingCircleName, setEditingCircleName] = useState('');
     const [isRenaming, setIsRenaming] = useState(false);
     const [editingMemberRole, setEditingMemberRole] = useState<string | null>(null);
+    const [isDangerZoneOpen, setIsDangerZoneOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const autoSubmitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -76,9 +75,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         if (isOpen) {
             setActiveTab(initialTab);
             setIsCreatingCircle(false);
-            setIsJoiningCircle(false);
             setIsScannerOpen(false);
-            setJoinInviteCode('');
             setManualInviteCode('');
             setJoinError(null);
             if (autoSubmitTimerRef.current) {
@@ -87,6 +84,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             }
             setEditingCircleName(currentCircle?.name || '');
             setIsRenaming(false);
+            setIsDangerZoneOpen(false);
             const currentColor = currentCircle?.color || (currentCircle ? getCircleColor(currentCircle.id).hex : CIRCLE_COLORS[0].hex);
             setNewCircleColor(currentColor);
             setActiveThemeColor(currentColor);
@@ -120,6 +118,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     const subTextColor = isDark ? 'text-slate-400' : 'text-slate-500';
     const cardBg = isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200';
     const isOwner = currentCircle ? currentUserId === currentCircle.ownerId : false;
+    const circleOwnerName = currentCircle
+        ? (members.find(member => member.id === currentCircle.ownerId)?.name || 'the circle owner')
+        : 'the circle owner';
+    const managedMemberCount = currentCircle?.members?.length ?? members.length;
     const inviteCode = currentCircle?.inviteCode || '------';
     const shareUrl = `https://myway-gps.com/join/${inviteCode}`;
 
@@ -142,7 +144,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
     const handleJoinCircle = async (codeToJoin?: string, e?: React.FormEvent) => {
         if (e) e.preventDefault();
-        const rawCode = typeof codeToJoin === 'string' ? codeToJoin : joinInviteCode;
+        const rawCode = typeof codeToJoin === 'string' ? codeToJoin : manualInviteCode;
         const cleanCode = cleanInviteCode(rawCode);
 
         if (!cleanCode) {
@@ -180,9 +182,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             if (circle) {
                 hapticSuccess();
                 showNotification?.(`🎉 Successfully joined circle "${circle.name}"!`, 3000);
-                setJoinInviteCode('');
                 setManualInviteCode('');
-                setIsJoiningCircle(false);
                 setActiveTab('circles');
             } else {
                 const err = 'Invalid code. No matching circle found.';
@@ -205,7 +205,6 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         const cleaned = cleanInviteCode(scannedInviteCode);
         if (cleaned) {
             const formatted = formatSegmentedInviteCode(cleaned);
-            setJoinInviteCode(formatted);
             setManualInviteCode(formatted);
             if (cleaned.length === 8) {
                 handleJoinCircle(cleaned);
@@ -213,15 +212,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
         }
     };
 
-    const handleCodeChange = (val: string, target: 'tab1' | 'tab3') => {
+    const handleCodeChange = (val: string) => {
         const formatted = formatSegmentedInviteCode(val);
         const cleaned = cleanInviteCode(formatted);
-
-        if (target === 'tab1') {
-            setJoinInviteCode(formatted);
-        } else {
-            setManualInviteCode(formatted);
-        }
+        setManualInviteCode(formatted);
 
         if (joinError) setJoinError(null);
 
@@ -371,7 +365,9 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 {currentCircle?.name || 'Circle Settings'}
                             </h2>
                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                                {userCircles.length} {userCircles.length === 1 ? 'Circle' : 'Circles'} Available
+                                {currentCircle
+                                    ? `${isOwner ? 'You’re the owner' : 'Circle member'} · ${managedMemberCount} ${managedMemberCount === 1 ? 'member' : 'members'}`
+                                    : `${userCircles.length} ${userCircles.length === 1 ? 'Circle' : 'Circles'} Available`}
                             </p>
                         </div>
                     </div>
@@ -611,35 +607,21 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 )}
                             </div>
 
-                            {/* Create / Join Actions */}
+                            {/* Create Circle */}
                             <div className="space-y-2 pt-2 border-t border-white/10">
-                                {/* Create Circle Toggle */}
-                                {!isCreatingCircle && !isJoiningCircle && (
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsCreatingCircle(true)}
-                                            className="py-3 px-3 active:scale-95 text-white font-black text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                                            style={{
-                                                backgroundColor: activeThemeColor,
-                                                boxShadow: `0 4px 14px ${activeThemeColor}40`
-                                            }}
-                                        >
-                                            <span>+</span>
-                                            <span>Create Circle</span>
-                                        </button>
-
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsJoiningCircle(true)}
-                                            className={`py-3 px-3 border active:scale-95 font-black text-xs rounded-2xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                                                isDark ? 'border-white/15 bg-white/5 hover:bg-white/10 text-white' : 'border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-900'
-                                            }`}
-                                        >
-                                            <QrCode className="w-3.5 h-3.5 text-purple-400" />
-                                            <span>Join / Scan Code</span>
-                                        </button>
-                                    </div>
+                                {!isCreatingCircle && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsCreatingCircle(true)}
+                                        className="w-full py-3 px-3 active:scale-95 text-white font-black text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                        style={{
+                                            backgroundColor: activeThemeColor,
+                                            boxShadow: `0 4px 14px ${activeThemeColor}40`
+                                        }}
+                                    >
+                                        <span>+</span>
+                                        <span>Create Circle</span>
+                                    </button>
                                 )}
 
                                 {/* Create Circle Inline Form */}
@@ -734,101 +716,6 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                     </form>
                                 )}
 
-                                {/* Join Circle Inline Form */}
-                                {isJoiningCircle && (
-                                    <form onSubmit={(e) => handleJoinCircle(joinInviteCode, e)} className={`p-4 rounded-2xl border space-y-3 animate-in fade-in duration-150 ${cardBg}`}>
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-xs font-black text-purple-400 uppercase tracking-wider">
-                                                Join a Circle
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setIsJoiningCircle(false);
-                                                    setJoinError(null);
-                                                }}
-                                                className="text-xs text-slate-400 hover:text-white"
-                                            >
-                                                ✕ Cancel
-                                            </button>
-                                        </div>
-
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                placeholder="XXXX - XXXX"
-                                                maxLength={11}
-                                                value={joinInviteCode}
-                                                onChange={(e) => handleCodeChange(e.target.value, 'tab1')}
-                                                autoFocus
-                                                className={`w-full px-3.5 py-2.5 pr-16 rounded-xl border text-xs font-mono font-black text-center tracking-[0.2em] uppercase outline-none transition-all duration-300 ${
-                                                    cleanInviteCode(joinInviteCode).length === 8
-                                                        ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/20 animate-pulse'
-                                                        : 'focus:border-purple-500'
-                                                } ${
-                                                    isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
-                                                }`}
-                                            />
-                                            <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono font-black px-1.5 py-0.5 rounded-md transition-all duration-300 ${
-                                                cleanInviteCode(joinInviteCode).length === 8
-                                                    ? 'bg-emerald-500 text-white shadow-sm scale-105'
-                                                    : isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-500'
-                                            }`}>
-                                                {isSubmitting && cleanInviteCode(joinInviteCode).length === 8
-                                                    ? 'Joining...'
-                                                    : cleanInviteCode(joinInviteCode).length === 8
-                                                        ? '8/8 ✓'
-                                                        : `${cleanInviteCode(joinInviteCode).length}/8`}
-                                            </span>
-                                        </div>
-
-                                        {/* Scan QR Code Button */}
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsScannerOpen(true)}
-                                            className={`w-full py-2.5 px-3 rounded-xl border text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${
-                                                isDark
-                                                    ? 'border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300'
-                                                    : 'border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-700'
-                                            }`}
-                                        >
-                                            <QrCode className="w-4 h-4 text-purple-400" />
-                                            <span>Scan QR Code with Camera</span>
-                                        </button>
-
-                                        {joinError && (
-                                            <p className="text-[10px] font-bold text-red-400 mt-1">{joinError}</p>
-                                        )}
-
-                                        <button
-                                            type="submit"
-                                            disabled={!cleanInviteCode(joinInviteCode).length || isSubmitting}
-                                            className={`w-full py-2.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 ${
-                                                cleanInviteCode(joinInviteCode).length === 8
-                                                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25 ring-2 ring-emerald-400/40 animate-pulse'
-                                                    : 'disabled:opacity-50'
-                                            }`}
-                                            style={{
-                                                backgroundColor: cleanInviteCode(joinInviteCode).length === 8 ? undefined : activeThemeColor,
-                                                boxShadow: cleanInviteCode(joinInviteCode).length === 8 ? undefined : `0 4px 14px ${activeThemeColor}40`
-                                            }}
-                                        >
-                                            {isSubmitting ? (
-                                                <>
-                                                    <span className="animate-spin inline-block">⏳</span>
-                                                    <span>Joining Circle...</span>
-                                                </>
-                                            ) : cleanInviteCode(joinInviteCode).length === 8 ? (
-                                                <>
-                                                    <span>⚡</span>
-                                                    <span>Join Now</span>
-                                                </>
-                                            ) : (
-                                                <span>Join</span>
-                                            )}
-                                        </button>
-                                    </form>
-                                )}
                             </div>
                         </div>
                     )}
@@ -838,6 +725,8 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                     {/* ────────────────────────────────────────────────────────── */}
                     {activeTab === 'invite' && (
                         <div className="space-y-4 text-center">
+                            {currentCircle && (
+                                <>
                             {/* QR Code Card */}
                             <div className="flex justify-center pt-2">
                                 <div className="p-3 bg-white rounded-3xl shadow-xl border border-white/20">
@@ -894,6 +783,46 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                     <span>Copy Code Only</span>
                                 </button>
                             </div>
+                                </>
+                            )}
+
+                            {/* Joining lives beside invitation sharing, not current-circle management. */}
+                            <form onSubmit={(event) => handleJoinCircle(manualInviteCode, event)} className={`pt-4 mt-4 border-t space-y-2.5 text-left ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <h4 className={`text-xs font-black ${textColor}`}>Join another Circle</h4>
+                                        <p className={`text-[10px] ${subTextColor}`}>{currentCircle ? 'Enter an invite code or scan a QR code.' : 'Enter an invite code or scan a QR code to get started.'}</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsScannerOpen(true)}
+                                        className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-colors ${isDark ? 'border-purple-500/30 bg-purple-500/10 text-purple-300' : 'border-purple-200 bg-purple-50 text-purple-700'}`}
+                                        title="Scan a Circle QR code"
+                                        aria-label="Scan a Circle QR code"
+                                    >
+                                        <QrCode className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="XXXX - XXXX"
+                                        maxLength={11}
+                                        value={manualInviteCode}
+                                        onChange={(event) => handleCodeChange(event.target.value)}
+                                        className={`min-w-0 flex-1 px-3 py-2.5 rounded-xl border text-xs font-mono font-black tracking-[0.16em] text-center uppercase outline-none ${isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'}`}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={isSubmitting || cleanInviteCode(manualInviteCode).length !== 8}
+                                        className="px-4 rounded-xl text-white font-black text-xs disabled:opacity-50"
+                                        style={{ backgroundColor: activeThemeColor }}
+                                    >
+                                        {isSubmitting ? 'Joining...' : 'Join'}
+                                    </button>
+                                </div>
+                                {joinError && <p className="text-[10px] font-bold text-red-400">{joinError}</p>}
+                            </form>
                         </div>
                     )}
 
@@ -935,22 +864,24 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             </button>
                                         </div>
                                     ) : (
-                                        <div className="flex items-center justify-between">
+                                        <button
+                                            type="button"
+                                            disabled={!isOwner}
+                                            onClick={() => {
+                                                if (!isOwner) return;
+                                                setEditingCircleName(currentCircle.name);
+                                                setIsRenaming(true);
+                                            }}
+                                            className={`w-full flex items-center justify-between rounded-xl px-2.5 py-2 text-left transition-colors ${isOwner ? 'hover:bg-white/5 cursor-pointer' : 'cursor-default'}`}
+                                            title={isOwner ? 'Rename Circle' : 'Only the owner can rename this Circle'}
+                                        >
                                             <span className={`text-sm font-black ${textColor}`}>
                                                 {currentCircle.name}
                                             </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setEditingCircleName(currentCircle.name);
-                                                    setIsRenaming(true);
-                                                }}
-                                                className="text-xs font-bold hover:underline cursor-pointer"
-                                                style={{ color: activeThemeColor }}
-                                            >
-                                                ✏️ Rename
-                                            </button>
-                                        </div>
+                                            <span className="text-xs font-black" style={{ color: activeThemeColor }}>
+                                                {isOwner ? 'Edit ›' : 'Owner managed'}
+                                            </span>
+                                        </button>
                                     )}
                                 </div>
                             )}
@@ -963,7 +894,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 >
                                     <div className="flex items-center justify-between">
                                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                                            Circle Base Color Theme
+                                            Circle Color
                                         </span>
                                         <span
                                             style={{
@@ -977,6 +908,12 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                         </span>
                                     </div>
 
+                                    {!isOwner && (
+                                        <p className={`text-[10px] font-semibold ${subTextColor}`}>
+                                            {circleOwnerName} manages the shared circle name and color.
+                                        </p>
+                                    )}
+
                                     {/* Compact row of circular color swatches */}
                                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                                         {CIRCLE_COLORS.map(c => {
@@ -985,14 +922,15 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                                 <button
                                                     key={c.id}
                                                     type="button"
+                                                    disabled={!isOwner}
                                                     onClick={() => handleSelectColorTheme(c.hex)}
                                                     aria-label={c.name}
-                                                    title={c.name}
+                                                    title={isOwner ? c.name : `${circleOwnerName} manages the circle color`}
                                                     className={`w-10 h-10 rounded-full transition-all duration-200 flex items-center justify-center cursor-pointer relative shrink-0 ${
                                                         isSelected
                                                             ? 'ring-2 ring-white ring-offset-2 scale-110 shadow-lg'
                                                             : 'opacity-80 hover:opacity-100 hover:scale-105 active:scale-95'
-                                                    } ${isDark ? 'ring-offset-slate-900' : 'ring-offset-white'}`}
+                                                    } ${isDark ? 'ring-offset-slate-900' : 'ring-offset-white'} ${!isOwner ? 'cursor-not-allowed opacity-55 hover:scale-100' : ''}`}
                                                     style={{
                                                         backgroundColor: c.hex,
                                                         boxShadow: isSelected ? `0 0 16px ${c.hex}90` : undefined
@@ -1095,98 +1033,54 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 </div>
                             </div>
 
-                            {/* Join a Circle Section */}
-                            <div
-                                className={`p-3.5 rounded-2xl border space-y-3 transition-colors duration-200 ${cardBg}`}
-                                style={{ borderColor: `${activeThemeColor}30` }}
-                            >
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-base">🔗</span>
-                                        <div>
-                                            <h4 className={`text-xs font-black uppercase tracking-wider ${textColor}`}>
-                                                Join a Circle
-                                            </h4>
-                                            <p className={`text-[10px] ${subTextColor}`}>
-                                                Enter an 8-character invite code (e.g. ABCD - 1234)
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <span className={`text-[9px] font-mono font-black px-2 py-0.5 rounded-md ${
-                                        cleanInviteCode(manualInviteCode).length === 8
-                                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                            : isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-500'
-                                    }`}>
-                                        {cleanInviteCode(manualInviteCode).length === 8 ? '8/8 ✓' : `${cleanInviteCode(manualInviteCode).length} / 8`}
-                                    </span>
-                                </div>
-
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        placeholder="XXXX - XXXX"
-                                        maxLength={11}
-                                        value={manualInviteCode}
-                                        onChange={(e) => handleCodeChange(e.target.value, 'tab3')}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
-                                                handleJoinCircle(manualInviteCode);
-                                            }
-                                        }}
-                                        className={`flex-1 px-3.5 py-2.5 rounded-xl border text-xs font-mono font-black tracking-[0.2em] text-center uppercase outline-none transition-all duration-300 ${
-                                            cleanInviteCode(manualInviteCode).length === 8
-                                                ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/20 animate-pulse'
-                                                : 'focus:border-indigo-500'
-                                        } ${
-                                            isDark ? 'bg-slate-800 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
-                                        }`}
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
-                                            handleJoinCircle(manualInviteCode);
-                                        }}
-                                        disabled={isSubmitting || cleanInviteCode(manualInviteCode).length === 0}
-                                        className={`px-5 py-2.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0 flex items-center justify-center gap-1.5 ${
-                                            cleanInviteCode(manualInviteCode).length === 8
-                                                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25 ring-2 ring-emerald-400/40 animate-pulse'
-                                                : 'disabled:opacity-50'
-                                        }`}
-                                        style={{
-                                            backgroundColor: cleanInviteCode(manualInviteCode).length === 8 ? undefined : activeThemeColor,
-                                            boxShadow: cleanInviteCode(manualInviteCode).length === 8 ? undefined : `0 4px 14px ${activeThemeColor}40`
-                                        }}
-                                    >
-                                        {isSubmitting ? 'Joining...' : cleanInviteCode(manualInviteCode).length === 8 ? '⚡ Join' : 'Join'}
-                                    </button>
-                                </div>
-                                {joinError && (
-                                    <p className="text-[10px] font-bold text-red-400 mt-1">{joinError}</p>
-                                )}
-                            </div>
-
-                            {/* Danger Zone: Leave / Delete Circle */}
+                            {/* Leave and deletion are intentionally separated. */}
                             <div className="space-y-2 pt-2 border-t border-white/10">
-                                <button
-                                    type="button"
-                                    onClick={handleLeaveCurrentCircle}
-                                    className="w-full py-2.5 px-4 rounded-2xl border border-red-500/30 text-red-400 hover:bg-red-500/10 font-bold text-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-                                >
-                                    <span>🚪</span>
-                                    <span>Leave This Circle</span>
-                                </button>
-
-                                {isOwner && members.length <= 1 && (
+                                {isOwner && managedMemberCount <= 1 ? (
                                     <button
                                         type="button"
                                         onClick={handleDeleteCurrentCircle}
-                                        className="w-full py-2 px-4 text-red-500 hover:text-red-400 font-bold text-[10px] transition-all text-center cursor-pointer"
+                                        className="w-full py-2.5 px-4 rounded-2xl border border-red-500/40 text-red-400 hover:bg-red-500/10 font-bold text-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        🗑️ Delete Circle Permanently
+                                        <span>🗑️</span>
+                                        <span>Delete Circle</span>
                                     </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={handleLeaveCurrentCircle}
+                                        className="w-full py-2.5 px-4 rounded-2xl border border-red-500/30 text-red-400 hover:bg-red-500/10 font-bold text-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                                    >
+                                        <span>🚪</span>
+                                        <span>Leave This Circle</span>
+                                    </button>
+                                )}
+
+                                {isOwner && managedMemberCount > 1 && (
+                                    <div className="rounded-2xl border border-red-500/20 overflow-hidden">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsDangerZoneOpen(open => !open)}
+                                            className="w-full px-4 py-2.5 flex items-center justify-between text-left text-[10px] font-black uppercase tracking-wider text-red-400 hover:bg-red-500/5"
+                                            aria-expanded={isDangerZoneOpen}
+                                        >
+                                            <span>Advanced danger zone</span>
+                                            <span>{isDangerZoneOpen ? '⌃' : '⌄'}</span>
+                                        </button>
+                                        {isDangerZoneOpen && (
+                                            <div className="px-4 pb-3 space-y-2 animate-in fade-in duration-150">
+                                                <p className="text-[10px] leading-relaxed text-slate-400">
+                                                    Deleting removes this Circle, its shared places, and access for all {managedMemberCount} members.
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleDeleteCurrentCircle}
+                                                    className="w-full py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black text-xs transition-colors"
+                                                >
+                                                    Delete Circle Permanently
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         </div>

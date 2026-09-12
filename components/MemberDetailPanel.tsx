@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FamilyMember } from '../types';
 import { predictETA } from '../services/geminiService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
+import { formatMemberStatus } from '../utils/memberStatus';
 
 interface MemberDetailPanelProps {
   member: FamilyMember;
@@ -55,6 +56,7 @@ const MemberDetailPanel: React.FC<MemberDetailPanelProps> = ({ member, onClose, 
           <div>
             <h3 className="font-bold text-base leading-none">{member.name}</h3>
             <p className="text-[10px] opacity-80 uppercase tracking-widest mt-1">{member.isGhostMode ? 'HIDDEN' : member.role}</p>
+            <p className="text-[11px] font-medium opacity-90 truncate mt-1">{formatMemberStatus(member)}</p>
           </div>
         </div>
         <button onClick={onClose} className="hover:bg-white/10 p-2 rounded-full transition-colors">

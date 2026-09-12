@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FamilyMember, Place, NavigationRoute, ArrivalTripData } from '../types';
+import { FamilyMember, Place, NavigationRoute, ArrivalTripData, Location, RouteWaypoint } from '../types';
 import { getDistanceMeters } from '../utils/geo';
 import { getRouteFromOSRM, geocodePlace, fetchRouteOptions, clearRouteCache } from '../services/osrmService';
-import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText, searchMaintenanceAlongRoute } from '../services/placesService';
-import { updateNavigationState, NavigationState, ARRIVAL_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS } from '../services/navigationEngine';
+import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText, searchMaintenanceAlongRoute, searchGasStationsAlongRoute } from '../services/placesService';
+import { updateNavigationState, NavigationState, analyzeDrivingBehavior, ARRIVAL_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS } from '../services/navigationEngine';
 import { geolocationService } from '../services/geolocationService';
 
 export { ARRIVAL_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS };
@@ -19,6 +19,9 @@ import { maintenanceAlertService, VehicleHealthItem } from '../services/maintena
 import { findDeadZonesIntersectingRoute, syncDeadZoneTiles } from '../services/offlineLocationBuffer';
 import { placeCorrectionService } from '../services/placeCorrectionService';
 import { syncNavigationTelemetry, clearNavigation, onCarNavigationCancelled, notifyArrival } from '../services/androidAutoService';
+import { LiveTripFuelTracker, LiveFuelSnapshot, vehicleFuelService, LowFuelAlert } from '../services/vehicleFuelService';
+
+export type { LowFuelAlert };
 
 export interface BetterRouteSuggestion {
     route: NavigationRoute;
@@ -126,6 +129,16 @@ export const useNavigation = (
     const lastOrientationChangeTimeRef = useRef<number>(0);
     const lastRecalculatedOriginRef = useRef<{ lat: number; lng: number } | null>(null);
     const lastRecalculatedDestRef = useRef<string | null>(null);
+    const fuelTrackerRef = useRef<LiveTripFuelTracker | null>(null);
+    const lastFuelTickTimeRef = useRef<number>(0);
+    const lastBehaviorSpeedMpsRef = useRef<number | null>(null);
+    const lastBehaviorTimestampRef = useRef<number>(0);
+    const lastDriveEventTimeRef = useRef<{ hard_brake: number; rapid_accel: number }>({ hard_brake: 0, rapid_accel: 0 });
+    const [liveFuelSnapshot, setLiveFuelSnapshot] = useState<LiveFuelSnapshot | null>(null);
+    const [lowFuelAlert, setLowFuelAlert] = useState<LowFuelAlert | null>(null);
+    const hasAnnouncedLowFuelRef = useRef<boolean>(false);
+    const [pendingTripResume, setPendingTripResume] = useState<{ destinationName: string; destinationLoc: Location } | null>(null);
+    const [isResumingTrip, setIsResumingTrip] = useState(false);
 
     useEffect(() => {
         navStateRef.current = navState;
@@ -311,6 +324,48 @@ export const useNavigation = (
 
             startTrip(liveOrigin, dest);
 
+            // Initialize live fuel consumption tracker
+            fuelTrackerRef.current = new LiveTripFuelTracker();
+            lastFuelTickTimeRef.current = Date.now();
+            setLiveFuelSnapshot(fuelTrackerRef.current.getSnapshot());
+
+            // Check low fuel & low battery readiness for this trip
+            const tripDistanceMiles = route.distanceMeters
+                ? route.distanceMeters / 1609.344
+                : (parseFloat(route.totalDistance) || 0);
+
+            hasAnnouncedLowFuelRef.current = false;
+            const tripFuelAlert = vehicleFuelService.checkLowFuelAlert(tripDistanceMiles);
+            if (tripFuelAlert) {
+                setLowFuelAlert(tripFuelAlert);
+                hasAnnouncedLowFuelRef.current = true;
+
+                // Deliver spoken alert after initial maneuver announcement
+                setTimeout(() => {
+                    speechService.speak(tripFuelAlert.spokenPrompt, { chime: 'turn' });
+                }, 2000);
+
+                showNotification(
+                    `${tripFuelAlert.fuelType === 'electric' ? '⚡' : '⛽'} ${tripFuelAlert.title}: ${tripFuelAlert.message}`,
+                    7000
+                );
+
+                // Proactively search corridor gas stations / EV chargers along route
+                searchGasStationsAlongRoute(route.routeGeometry, liveOrigin, tripFuelAlert.fuelType === 'electric')
+                    .then(stations => {
+                        if (stations && stations.length > 0) {
+                            setLowFuelAlert(prev => prev ? {
+                                ...prev,
+                                gasStations: stations,
+                                recommendedGasStation: stations[0]
+                            } : null);
+                        }
+                    })
+                    .catch(err => console.warn('[useNavigation] Failed to fetch corridor gas stations:', err));
+            } else {
+                setLowFuelAlert(null);
+            }
+
             // Announce initial route start
             if (route.steps.length > 0) {
                 const firstStep = route.steps[0];
@@ -352,6 +407,7 @@ export const useNavigation = (
                     const loc = userLocation || liveOrigin;
                     if (loc && loc.lat !== 0 && loc.lng !== 0) {
                         recordDriveEvent('hard_brake', loc);
+                        fuelTrackerRef.current?.recordDriveEvent('hard_brake');
                         showNotification('⚠️ Hard braking detected', 2500);
                     }
                 },
@@ -359,6 +415,7 @@ export const useNavigation = (
                     const loc = userLocation || liveOrigin;
                     if (loc && loc.lat !== 0 && loc.lng !== 0) {
                         recordDriveEvent('rapid_accel', loc);
+                        fuelTrackerRef.current?.recordDriveEvent('rapid_accel');
                         showNotification('⚡ Rapid acceleration detected', 2500);
                     }
                 },
@@ -709,7 +766,10 @@ export const useNavigation = (
         audioService.playAlertChime();
         showNotification(`🎯 Arrived at ${currentRoute.destinationName}! Safety Score: ${safetyScore}%`, 6000);
         speechService.announceManeuver('', 0, 'arrival', currentRoute.destinationName);
-        endTrip(loc || undefined);
+        const actualFuelGallons = fuelTrackerRef.current?.getGallonsBurned();
+        endTrip(loc || undefined, actualFuelGallons && actualFuelGallons > 0 ? actualFuelGallons : undefined);
+        fuelTrackerRef.current = null;
+        setLiveFuelSnapshot(null);
         stopCrashMonitoring();
         setEtaSharing(false);
         clearNavigation();
@@ -770,7 +830,11 @@ export const useNavigation = (
         if (immediate) {
             finalizeExit();
         } else {
-            setTimeout(finalizeExit, 2000);
+            // Keep activeRoute and navigation state active so map camera settles
+            // smoothly on the destination pin and arrival view remains stable
+            setDriveMode(false);
+            // Auto-cleanup fallback after 45 seconds if user leaves wizard open
+            setTimeout(finalizeExit, 45000);
         }
     }, [activeRoute, userLocation, safetyScore, members, user?.uid, profile?.familyCircleId, showNotification, setDriveMode, setEtaSharing, clearLeaderPromptTimer]);
 
@@ -786,6 +850,65 @@ export const useNavigation = (
             currentSpeedRef.current = selfSpeed;
             recordTripPoint(userLocation.lat, userLocation.lng, selfSpeed, selfHeading);
             updateCrashDetectionSpeed(selfSpeed);
+
+            const now = Date.now();
+            const rawMps = geolocationService.getCurrentSpeedMps() || (selfSpeed / 2.23694);
+
+            // Driving Behavior Analysis via GPS velocity delta tracking
+            if (lastBehaviorSpeedMpsRef.current !== null && lastBehaviorTimestampRef.current > 0) {
+                const dtMs = now - lastBehaviorTimestampRef.current;
+                const prevSpeedMps = lastBehaviorSpeedMpsRef.current;
+                const behaviorEvent = analyzeDrivingBehavior(rawMps, prevSpeedMps, dtMs);
+
+                if (behaviorEvent === 'hard_brake' && (now - lastDriveEventTimeRef.current.hard_brake > 3500)) {
+                    lastDriveEventTimeRef.current.hard_brake = now;
+                    recordDriveEvent('hard_brake', userLocation);
+                    fuelTrackerRef.current?.recordDriveEvent('hard_brake');
+                    showNotification('⚠️ Hard braking detected', 2500);
+                } else if (behaviorEvent === 'rapid_accel' && (now - lastDriveEventTimeRef.current.rapid_accel > 3500)) {
+                    lastDriveEventTimeRef.current.rapid_accel = now;
+                    recordDriveEvent('rapid_accel', userLocation);
+                    fuelTrackerRef.current?.recordDriveEvent('rapid_accel');
+                    showNotification('⚡ Rapid acceleration detected', 2500);
+                }
+            }
+            lastBehaviorSpeedMpsRef.current = rawMps;
+            lastBehaviorTimestampRef.current = now;
+
+            // Feed live fuel tracker with raw GPS speed
+            if (fuelTrackerRef.current) {
+                const dt = (now - lastFuelTickTimeRef.current) / 1000;
+                lastFuelTickTimeRef.current = now;
+                fuelTrackerRef.current.recordTick(rawMps, dt);
+                const snapshot = fuelTrackerRef.current.getSnapshot();
+                setLiveFuelSnapshot(snapshot);
+
+                // Check for mid-trip depletion if not already alerted
+                if (!hasAnnouncedLowFuelRef.current && snapshot) {
+                    const remainingDistanceMiles = (newNavState.remainingDistanceMeters || 0) / 1609.344;
+                    const dynamicAlert = vehicleFuelService.checkLowFuelAlert(remainingDistanceMiles);
+                    if (dynamicAlert) {
+                        hasAnnouncedLowFuelRef.current = true;
+                        setLowFuelAlert(dynamicAlert);
+                        speechService.speak(dynamicAlert.spokenPrompt, { chime: 'turn' });
+                        showNotification(
+                            `${dynamicAlert.fuelType === 'electric' ? '⚡' : '⛽'} ${dynamicAlert.title}: ${dynamicAlert.message}`,
+                            7000
+                        );
+                        searchGasStationsAlongRoute(activeRoute.routeGeometry, userLocation, dynamicAlert.fuelType === 'electric')
+                            .then(stations => {
+                                if (stations && stations.length > 0) {
+                                    setLowFuelAlert(prev => prev ? {
+                                        ...prev,
+                                        gasStations: stations,
+                                        recommendedGasStation: stations[0]
+                                    } : null);
+                                }
+                            })
+                            .catch(err => console.warn('[useNavigation] Failed to fetch corridor gas stations:', err));
+                    }
+                }
+            }
 
             const currentStep = activeRoute.steps[newNavState.currentStepIndex];
             const distToStep = newNavState.distanceToNextStep;
@@ -888,7 +1011,6 @@ export const useNavigation = (
             }
 
             // Periodic in-drive alternative route discovery (every 90s)
-            const now = Date.now();
             if (now - lastRerouteCheckTimeRef.current > 90000 && activeRoute.destinationLoc && !betterRouteSuggestion) {
                 lastRerouteCheckTimeRef.current = now;
                 fetchRouteOptions(userLocation, activeRoute.destinationName, activeRoute.destinationLoc)
@@ -969,7 +1091,7 @@ export const useNavigation = (
             // Speed check from Geolocation API coords.speed or live member telemetry in m/s
             const currentSpeedMps = geolocationService.getCurrentSpeedMps() || (selfSpeedMph / 2.23694);
 
-            const isInsideArrivalRadius = distToFinalDestination > 0 && distToFinalDestination < ARRIVAL_RADIUS_METERS;
+            const isInsideArrivalRadius = distToFinalDestination > 0 && distToFinalDestination <= ARRIVAL_RADIUS_METERS;
             const isStationaryOrWalking = currentSpeedMps < ARRIVAL_SPEED_THRESHOLD_MPS;
 
             if (isInsideArrivalRadius && isStationaryOrWalking) {
@@ -978,28 +1100,42 @@ export const useNavigation = (
                 arrivalCandidateTicksRef.current = 0;
             }
 
-            // New Arrival Condition: If distanceToDestination < ARRIVAL_RADIUS_METERS AND speed < 2 m/s
-            // for consecutive ticks, automatically trigger the onTripCompleted() flow to pop up the wizard.
+            // Arrival Condition: If distanceToDestination <= ARRIVAL_RADIUS_METERS (30m) AND speed < 2 m/s
+            // for consecutive ticks, automatically trigger arrival.
             // Also supports pinpoint arrival if user hits the exact coordinates (<= 20m).
             const hasMetGeofencedHeuristic = arrivalCandidateTicksRef.current >= ARRIVAL_CONSECUTIVE_TICKS;
-            const hasReachedPinpoint = newNavState.hasArrived && (distToFinalDestination <= 20 || !activeRoute.destinationLoc);
+            const hasReachedPinpoint = (distToFinalDestination <= 20 && distToFinalDestination > 0) || (newNavState.hasArrived && (distToFinalDestination <= 25 || !activeRoute.destinationLoc));
             const canArrive = hasMetGeofencedHeuristic || hasReachedPinpoint;
 
-            const isArrived = newNavState.hasArrived || isInsideArrivalRadius || canArrive;
+            const isArrived = newNavState.hasArrived || canArrive;
 
             if (canArrive && !currentNavState.hasArrived) {
                 notifyArrival(activeRoute.destinationName || 'Destination');
                 onTripCompleted(userLocation || undefined, false);
             }
 
+            if (isArrived) {
+                newNavState.hasArrived = true;
+                newNavState.distanceToNextStep = 0;
+                newNavState.remainingDistanceMeters = 0;
+                newNavState.remainingDurationSeconds = 0;
+            } else if (newNavState.currentStepIndex >= (activeRoute.steps?.length || 1) - 1) {
+                // Ensure the final step displays actual remaining distance to destination
+                newNavState.distanceToNextStep = distToFinalDestination || newNavState.remainingDistanceMeters || 0;
+            }
+
             // Sync navigation telemetry & turn-by-turn instruction to Android Auto head unit
             const remainDistStr = isArrived
                 ? '0 ft'
-                : (currentStep
-                    ? (distToStep > 1000
-                        ? `${(distToStep / 1609.34).toFixed(1)} mi`
-                        : `${Math.round(distToStep * 3.28084)} ft`)
-                    : (activeRoute.totalDistance || ''));
+                : (typeof newNavState.remainingDistanceMeters === 'number' && Number.isFinite(newNavState.remainingDistanceMeters)
+                    ? (newNavState.remainingDistanceMeters >= 1609.34
+                        ? `${(newNavState.remainingDistanceMeters / 1609.34).toFixed(1)} mi`
+                        : `${Math.round(newNavState.remainingDistanceMeters * 3.28084)} ft`)
+                    : (currentStep
+                        ? (distToStep > 1000
+                            ? `${(distToStep / 1609.34).toFixed(1)} mi`
+                            : `${Math.round(distToStep * 3.28084)} ft`)
+                        : (activeRoute.totalDistance || '')));
 
             const instructionText = isArrived
                 ? 'Arrived!'
@@ -1012,7 +1148,15 @@ export const useNavigation = (
                 currentInstruction: instructionText,
                 speedMph: Math.round(selfSpeedMph),
                 speedLimit: currentStep?.speedLimit || 35,
-                isArrived: isArrived
+                isArrived: isArrived,
+                currentLocation: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+                destinationLocation: activeRoute.destinationLoc ? { lat: activeRoute.destinationLoc.lat, lng: activeRoute.destinationLoc.lng } : undefined,
+                routeCoordinates: activeRoute.routeGeometry?.map(([lng, lat]) => ({ lat, lng })),
+                fuelGallonsBurned: liveFuelSnapshot?.gallonsBurned,
+                fuelCostSoFar: liveFuelSnapshot?.costSoFar,
+                fuelGallonsRemaining: liveFuelSnapshot?.gallonsRemaining,
+                fuelPercentRemaining: liveFuelSnapshot?.percentRemaining,
+                fuelRangeMiles: liveFuelSnapshot?.predictedRangeMiles
             });
 
             setNavState(newNavState);
@@ -1110,6 +1254,69 @@ export const useNavigation = (
         setUpcomingTollAlert(null);
     }, []);
 
+    const handleAddStop = useCallback(async (place: Place) => {
+        if (!activeRoute) return;
+        if (!place?.location || !Number.isFinite(place.location.lat) || !Number.isFinite(place.location.lng)) {
+            showNotification('⚠️ This stop does not have a usable location.', 4000);
+            return;
+        }
+        const stopName = place.name;
+        showNotification(`➕ Adding ${stopName} as a stop...`, 4000);
+        speechService.speak(`Adding ${stopName} to your route.`, { chime: 'turn' });
+
+        setLowFuelAlert(null);
+
+        const currentLeg = activeRoute.currentLegIndex || 0;
+        const remainingWaypoints = (activeRoute.waypoints || []).slice(currentLeg);
+        const newWaypoint: RouteWaypoint = {
+            id: `stop_${Date.now()}`,
+            name: stopName,
+            location: place.location,
+            order: currentLeg,
+            isStop: true
+        };
+
+        const updatedWaypoints = [newWaypoint, ...remainingWaypoints];
+        const liveOrigin = getActiveUserLocation();
+
+        try {
+            clearRouteCache();
+            const allOptions = await fetchRouteOptions(
+                liveOrigin,
+                activeRoute.destinationName,
+                activeRoute.destinationLoc,
+                {
+                    waypoints: updatedWaypoints,
+                    avoidTolls: activeRoute.avoidTolls,
+                    bypassCache: true
+                }
+            );
+
+            if (allOptions && allOptions.length > 0) {
+                const newRoute = allOptions[0];
+                newRoute.waypoints = updatedWaypoints;
+                newRoute.currentLegIndex = 0;
+                setActiveRoute(newRoute);
+                setActiveRouteIndex(0);
+                setNavState({
+                    currentStepIndex: 0,
+                    distanceToNextStep: 0,
+                    isOffRoute: false,
+                    hasArrived: false,
+                    splitIndex: 0
+                });
+                showNotification(`🧭 Route updated: ${stopName} is your next stop`, 5000);
+            }
+        } catch (err) {
+            console.warn('[useNavigation] Failed to recalculate with added stop:', err);
+            showNotification('⚠️ Could not add that stop. Your current route is unchanged.', 4500);
+        }
+    }, [activeRoute, getActiveUserLocation, showNotification]);
+
+    const handleDismissLowFuelAlert = useCallback(() => {
+        setLowFuelAlert(null);
+    }, []);
+
     // Cleanup & Cancel Navigation / Manual End-Trip Override
     const handleCancelNavigation = useCallback(() => {
         // Manual End-Trip Override:
@@ -1135,6 +1342,8 @@ export const useNavigation = (
         setIsRecalculatingRoutes(false);
         setBetterRouteSuggestion(null);
         setUpcomingTollAlert(null);
+        setLowFuelAlert(null);
+        hasAnnouncedLowFuelRef.current = false;
         setLeaderDivertedPrompt(null);
         clearLeaderPromptTimer();
         arrivalCandidateTicksRef.current = 0;
@@ -1171,7 +1380,10 @@ export const useNavigation = (
         lastTollAnnouncedStepRef.current = -1;
         lastCameraAlertStepRef.current = -1;
 
-        endTrip(userLocation || undefined);
+        const actualFuelGallons = fuelTrackerRef.current?.getGallonsBurned();
+        endTrip(userLocation || undefined, actualFuelGallons && actualFuelGallons > 0 ? actualFuelGallons : undefined);
+        fuelTrackerRef.current = null;
+        setLiveFuelSnapshot(null);
         stopCrashMonitoring();
         setEtaSharing(false);
         setDriveMode(false);
@@ -1181,6 +1393,22 @@ export const useNavigation = (
             updateMemberTrip(profile.familyCircleId, user.uid, null).catch(() => {});
         }
     }, [activeRoute, userLocation, onTripCompleted, setDriveMode, setEtaSharing, profile?.familyCircleId, user?.uid, clearLeaderPromptTimer]);
+
+    const handleResumeTrip = useCallback(async () => {
+        const recovery = pendingTripResume;
+        if (!recovery || isResumingTrip) return;
+        setIsResumingTrip(true);
+        try {
+            await handleStartNavigation(recovery.destinationName, recovery.destinationLoc, undefined);
+            setPendingTripResume(null);
+        } finally {
+            setIsResumingTrip(false);
+        }
+    }, [pendingTripResume, isResumingTrip, handleStartNavigation]);
+
+    const handleDiscardTripResume = useCallback(() => {
+        setPendingTripResume(null);
+    }, []);
 
     // Android Auto Integration: Sync cancellation initiated from vehicle head unit Action Strip (red "X" button)
     useEffect(() => {
@@ -1418,6 +1646,15 @@ export const useNavigation = (
         handleQuickSearch,
         arrivalTripData,
         setArrivalTripData,
-        onTripCompleted
+        onTripCompleted,
+        pendingTripResume,
+        isResumingTrip,
+        handleResumeTrip,
+        handleDiscardTripResume,
+        liveFuelSnapshot,
+        lowFuelAlert,
+        handleSelectGasStationStop: handleAddStop,
+        handleAddStop,
+        handleDismissLowFuelAlert
     };
 };

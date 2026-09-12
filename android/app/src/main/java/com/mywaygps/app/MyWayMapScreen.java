@@ -13,12 +13,13 @@ import androidx.car.app.model.Action;
 import androidx.car.app.model.ActionStrip;
 import androidx.car.app.model.CarColor;
 import androidx.car.app.model.CarIcon;
-import androidx.car.app.model.CarText;
 import androidx.car.app.model.DateTimeWithZone;
 import androidx.car.app.model.Distance;
 import androidx.car.app.model.Template;
 import androidx.car.app.navigation.model.Destination;
 import androidx.car.app.navigation.model.MessageInfo;
+import androidx.car.app.navigation.NavigationManager;
+import androidx.car.app.navigation.NavigationManagerCallback;
 import androidx.car.app.navigation.model.NavigationTemplate;
 import androidx.car.app.navigation.model.RoutingInfo;
 import androidx.car.app.navigation.model.Step;
@@ -42,14 +43,30 @@ import java.util.TimeZone;
  * 4. Hardware Map Surface: Rendered in background via MyWayCarSession SurfaceCallback.
  */
 public class MyWayMapScreen extends Screen implements CarStateRepository.Listener {
+    private boolean navigationLifecycleActive = false;
 
     public MyWayMapScreen(@NonNull CarContext carContext) {
         super(carContext);
         CarStateRepository.getInstance().addListener(this);
+        NavigationManager navigationManager = getCarContext().getCarService(NavigationManager.class);
+        navigationManager.setNavigationManagerCallback(new NavigationManagerCallback() {
+            @Override
+            public void onStopNavigation() {
+                // Keep the phone route and Android Auto navigation focus in sync.
+                NativeAndroidAutoPlugin.notifyNavigationCancelledFromCar();
+            }
+        });
 
         getLifecycle().addObserver(new DefaultLifecycleObserver() {
             @Override
             public void onDestroy(@NonNull LifecycleOwner owner) {
+                endNavigationLifecycle();
+                try {
+                    getCarContext().getCarService(NavigationManager.class)
+                            .clearNavigationManagerCallback();
+                } catch (Exception ignored) {
+                    // The car host may already be disconnected during teardown.
+                }
                 CarStateRepository.getInstance().removeListener(MyWayMapScreen.this);
             }
         });
@@ -57,8 +74,13 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
 
     @Override
     public void onNavigationStateChanged() {
-        // Invalidate screen to re-request onGetTemplate and refresh turn-by-turn text/ETA
-        invalidate();
+        // Android Auto must be told that this is an active navigation session.
+        // Updating a NavigationTemplate alone leaves the host in an idle state,
+        // which is why a phone-started My Way trip did not take over the car UI.
+        getCarContext().getMainExecutor().execute(() -> {
+            updateNavigationLifecycle(CarStateRepository.getInstance().isNavigating());
+            invalidate();
+        });
     }
 
     @Override
@@ -70,12 +92,22 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
     @Override
     public Template onGetTemplate() {
         CarStateRepository repo = CarStateRepository.getInstance();
+        updateNavigationLifecycle(repo.isNavigating());
         NavigationTemplate.Builder navBuilder = new NavigationTemplate.Builder();
 
         // 1. Action Strip: Prominent Red "X" Trip Cancellation Button
         ActionStrip.Builder actionStripBuilder = new ActionStrip.Builder();
 
         if (repo.isNavigating()) {
+            if (repo.getRouteOptions().size() > 1) {
+                actionStripBuilder.addAction(
+                        new Action.Builder()
+                                .setTitle("Routes")
+                                .setIcon(createRoutesIcon(getCarContext()))
+                                .setOnClickListener(() -> getScreenManager().push(new CarRouteOptionsScreen(getCarContext())))
+                                .build()
+                );
+            }
             Action cancelAction = new Action.Builder()
                     .setTitle("Cancel")
                     .setIcon(createRedXIcon(getCarContext()))
@@ -122,7 +154,7 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
                 // User has reached the 150-meter arrival geofence:
                 // Project celebratory "Arrived!" step and destination confirmation
                 Step arrivalStep = new Step.Builder("Arrived!")
-                        .setCue(new CarText.Builder("Arrived at " + repo.getDestinationName()).build())
+                        .setCue("Arrived at " + repo.getDestinationName())
                         .build();
 
                 RoutingInfo arrivalRouting = new RoutingInfo.Builder()
@@ -149,6 +181,7 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
                 Distance distance = parseDistanceFromString(remainingDistStr);
 
                 Step currentStep = new Step.Builder(instruction)
+                        .setCue("Destination: " + repo.getDestinationName())
                         .build();
 
                 RoutingInfo routingInfo = new RoutingInfo.Builder()
@@ -173,12 +206,47 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
             // Idle (Not actively navigating): Map surface is shown with ready prompt
             MessageInfo readyInfo = new MessageInfo.Builder("Ready to Navigate")
                     .setText("Select a destination in MyWay or open saved places")
-                    .setIcon(CarIcon.APP_ICON)
                     .build();
             navBuilder.setNavigationInfo(readyInfo);
         }
 
         return navBuilder.build();
+    }
+
+    /**
+     * Keeps Android Auto's navigation focus in step with the route owned by the
+     * phone app. This is intentionally idempotent because telemetry arrives on
+     * every GPS tick while a trip is active.
+     */
+    private void updateNavigationLifecycle(boolean shouldNavigate) {
+        if (shouldNavigate == navigationLifecycleActive) {
+            return;
+        }
+        try {
+            NavigationManager navigationManager = getCarContext().getCarService(NavigationManager.class);
+            if (shouldNavigate) {
+                navigationManager.navigationStarted();
+            } else {
+                navigationManager.navigationEnded();
+            }
+            navigationLifecycleActive = shouldNavigate;
+        } catch (Exception exception) {
+            // A host can briefly be unavailable while ZPlus/Android Auto is
+            // connecting. The next telemetry refresh retries safely.
+            android.util.Log.w("MyWayMapScreen", "Unable to update Android Auto navigation lifecycle", exception);
+        }
+    }
+
+    private void endNavigationLifecycle() {
+        if (!navigationLifecycleActive) {
+            return;
+        }
+        try {
+            getCarContext().getCarService(NavigationManager.class).navigationEnded();
+        } catch (Exception ignored) {
+            // The host may already be disconnected during session teardown.
+        }
+        navigationLifecycleActive = false;
     }
 
     /**
@@ -234,6 +302,27 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
             canvas.drawLine(4, center, 14, center, paint);
             canvas.drawLine(size - 14, center, size - 4, center, paint);
 
+            return new CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build();
+        } catch (Exception e) {
+            return CarIcon.APP_ICON;
+        }
+    }
+
+    /** Creates a high-contrast route-choice glyph for the car action strip. */
+    private static CarIcon createRoutesIcon(Context context) {
+        try {
+            int size = 72;
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(Color.parseColor("#A78BFA"));
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(6.0f);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            canvas.drawLine(18, 18, 54, 18, paint);
+            canvas.drawLine(18, 18, 18, 54, paint);
+            canvas.drawLine(18, 54, 54, 54, paint);
+            canvas.drawLine(54, 18, 54, 54, paint);
             return new CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build();
         } catch (Exception e) {
             return CarIcon.APP_ICON;

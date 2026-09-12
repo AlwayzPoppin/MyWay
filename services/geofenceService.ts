@@ -15,7 +15,18 @@ export interface Geofence {
     entranceType?: EntranceType;
     entranceLocation?: Location;
     entrancePrecision?: EntrancePrecision;
+    /** Saved place address retained for unambiguous activity and alerts. */
+    address?: string;
+    description?: string;
 }
+
+/** "Home" is only useful when a circle has one home. Pair aliases with their address. */
+export const getGeofenceDisplayName = (geofence: Pick<Geofence, 'name' | 'address' | 'description'>): string => {
+    const rawAddress = geofence.address || geofence.description || '';
+    const streetAddress = rawAddress.split(',')[0]?.trim();
+    if (!streetAddress || streetAddress.toLowerCase() === geofence.name.toLowerCase()) return geofence.name;
+    return `${geofence.name} • ${streetAddress}`;
+};
 
 export type GeofenceStatus = 'INSIDE' | 'OUTSIDE';
 

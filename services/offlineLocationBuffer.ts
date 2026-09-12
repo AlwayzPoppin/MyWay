@@ -8,6 +8,7 @@
 
 import { offlineMapService, computeRadiusBounds } from './offlineMapService';
 import { getDistanceFromCoords } from '../utils/geo';
+import { registerReliableDeliveryFlusher } from './reliableDeliveryService';
 
 export interface BufferedLocation {
     id?: number;
@@ -309,16 +310,7 @@ export const setupAutoFlush = (
         }
     };
 
-    window.addEventListener('online', handleOnline);
-
-    // Initial check on startup if online
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
-        setTimeout(() => {
-            flushBuffer(syncFn).catch(err => console.warn('📦 Initial location flush check failed:', err));
-        }, 3000);
-    }
-
-    return () => window.removeEventListener('online', handleOnline);
+    return registerReliableDeliveryFlusher('location', 10, handleOnline);
 };
 
 // ==========================================

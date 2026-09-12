@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { geolocationService } from '../services/geolocationService';
 import {
     updateMemberLocation,
+    clearMemberLocations,
     subscribeToFamilyLocations,
     subscribeToMultipleCirclesLocations,
     getCircleColor,
@@ -11,7 +12,7 @@ import {
     UserProfile
 } from '../services/authService';
 import { encryptLocation, decryptLocation, getFuzzyLocation, getNeighborhoodCentroid } from '../services/cryptoService';
-import { detectTransition, getEntranceArrivalMessage, isPointInEntranceZone } from '../services/geofenceService';
+import { detectTransition, getEntranceArrivalMessage, getGeofenceDisplayName, isPointInEntranceZone } from '../services/geofenceService';
 import { getDistanceFromCoords } from '../utils/geo';
 import { FamilyMember, PrivacyMode } from '../types';
 import { useUI } from '../contexts/UIContext';
@@ -62,6 +63,10 @@ export const useLocationSync = (
     useEffect(() => {
         membersRef.current = members;
     }, [members]);
+    const userLocationRef = useRef(userLocation);
+    useEffect(() => {
+        userLocationRef.current = userLocation;
+    }, [userLocation]);
     const lastSyncRef = useRef<{ lat: number, lng: number, time: number }>({ lat: 0, lng: 0, time: 0 });
     const lastReactRenderRef = useRef<{
         lat: number;
@@ -134,7 +139,8 @@ export const useLocationSync = (
                     role: 'Primary',
                     safetyScore: 100,
                     pathHistory: [],
-                    driveEvents: []
+                    driveEvents: [],
+                    isSelf: true
                 };
                 return [newSelf, ...cleaned];
             });
@@ -218,7 +224,7 @@ export const useLocationSync = (
                             }
 
                             const entranceMsg = getEntranceArrivalMessage(memberName, gf.name, gf.entranceType);
-                            speechService.speak(entranceMsg.title.replace(/^[^\w]+/, ''), { chime: 'arrival' });
+                            speechService.playChime('arrival');
 
                             onTransitionRef.current?.({
                                 geofence: { ...gf, name: `${gf.name} (${entranceMsg.title})` },
@@ -303,6 +309,7 @@ export const useLocationSync = (
 
                                 const circleId = currentCircleIdRef.current || profileRef.current?.familyCircleId;
                                 const uid = userRef.current?.uid;
+                                const departurePlace = getGeofenceDisplayName(gf);
 
                                 // 1. Broadcast real-time push alert to circle devices and lock screens
                                 if (circleId && uid) {
@@ -310,7 +317,7 @@ export const useLocationSync = (
                                         circleId,
                                         uid,
                                         profileRef.current?.displayName || userRef.current?.displayName || 'You',
-                                        gf.name,
+                                        departurePlace,
                                         'departure',
                                         currentPending.lastLocation
                                     ).catch(e => console.warn('Could not broadcast geofence push alert:', e));
@@ -318,7 +325,7 @@ export const useLocationSync = (
 
                                 // 2. Offline failover: Queue geofence alert to IndexedDB for circle sync
                                 if (typeof navigator !== 'undefined' && !navigator.onLine && circleId && uid) {
-                                    const text = `🚶 Departed from ${gf.name}`;
+                                    const text = `🚶 Departed from ${departurePlace}`;
                                     bufferMessage({
                                         clientMessageId: `gf_${Date.now()}_${gf.id}`,
                                         circleId,
@@ -331,7 +338,7 @@ export const useLocationSync = (
                                 }
 
                                 // 3. Spoken geofence audio feedback
-                                speechService.speak(`Departed ${gf.name}`, { chime: 'turn' });
+                                speechService.playChime('turn');
 
                                 // 4. Notify app listeners
                                 onTransitionRef.current?.({
@@ -415,7 +422,7 @@ export const useLocationSync = (
                             }
 
                             // 3. Spoken geofence audio feedback
-                            speechService.speak(`Arrived at ${gf.name}`, { chime: 'arrival' });
+                            speechService.playChime('arrival');
 
                             // 4. Notify app listeners
                             onTransitionRef.current?.({
@@ -563,9 +570,9 @@ export const useLocationSync = (
                 setUserLocation(currentCoords);
 
                 setMembers(prev => {
-                    const cleaned = prev.filter(m => 
-                        m.id !== 'demo-you' && 
-                        m.id !== 'current_user' && 
+                    const cleaned = prev.filter(m =>
+                        m.id !== 'demo-you' &&
+                        m.id !== 'current_user' &&
                         (user?.uid ? m.id !== 'local-user' : true)
                     );
                     const existing = cleaned.find(m => m.id === targetId);
@@ -591,7 +598,8 @@ export const useLocationSync = (
                             role: 'Primary',
                             safetyScore: 100,
                             pathHistory: [],
-                            driveEvents: []
+                            driveEvents: [],
+                            isSelf: true
                         };
                         return [newSelf, ...cleaned.filter(m => m.id !== targetId)];
                     }
@@ -599,6 +607,7 @@ export const useLocationSync = (
                     return cleaned.map(m =>
                         m.id === targetId ? {
                             ...m,
+                            isSelf: true,
                             name: profile?.displayName || user?.displayName || m.name,
                             avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL || m.avatar, profile?.displayName || user?.displayName || m.name),
                             location: currentCoords,
@@ -648,6 +657,9 @@ export const useLocationSync = (
 
             // Sync to Firebase if in a circle
             if (user && currentCircleId && profile) {
+                if (profile?.settings?.locationSharing === false) {
+                    return; // Skip sync when location sharing disabled
+                }
                 const syncLocation = async () => {
                     const currentMembers = membersRef.current;
                     const self = currentMembers.find(m => m.id === user.uid);
@@ -692,7 +704,9 @@ export const useLocationSync = (
                                 battery: batteryService.getBatteryLevel(),
                                 signalQuality: location.signalQuality,
                                 status: '❄️ Location Paused (Ghost)',
-                                privacyMode: 'frozen'
+                                privacyMode: 'frozen',
+                                isSharingLocation: false,
+                                locationSharing: false
                             });
                             continue;
                         }
@@ -729,8 +743,8 @@ export const useLocationSync = (
                         // Encrypt the target location if family key is established
                         let encrypted: string | null = null;
                         try {
-                            encrypted = (targetLat !== 0 && targetLng !== 0) 
-                                ? await encryptLocation(targetLat, targetLng, cId) 
+                            encrypted = (targetLat !== 0 && targetLng !== 0)
+                                ? await encryptLocation(targetLat, targetLng, cId)
                                 : null;
                         } catch (e) {
                             // Non-critical: allow broadcast of location to family circle
@@ -751,7 +765,9 @@ export const useLocationSync = (
                             blurredRadiusMeters: blurredRadius,
                             displayName: profile?.displayName || user.displayName || 'You',
                             photoURL: profile?.photoURL || user.photoURL || undefined,
-                            role: profile?.role || 'Member'
+                            role: profile?.role || 'Member',
+                            isSharingLocation: true,
+                            locationSharing: true
                         });
                     }
                 };
@@ -805,9 +821,9 @@ export const useLocationSync = (
                 });
             });
 
-            const current = membersRef.current.filter(m => 
-                m.id !== 'demo-you' && 
-                m.id !== 'current_user' && 
+            const current = membersRef.current.filter(m =>
+                m.id !== 'demo-you' &&
+                m.id !== 'current_user' &&
                 (user?.uid ? m.id !== 'local-user' : true)
             );
 
@@ -821,9 +837,9 @@ export const useLocationSync = (
                 ...current.map(m => m.id),
                 ...Object.keys(allLocations),
                 ...circleMemberIds
-            ])).filter(id => 
-                id !== 'demo-you' && 
-                id !== 'current_user' && 
+            ])).filter(id =>
+                id !== 'demo-you' &&
+                id !== 'current_user' &&
                 (user?.uid ? id !== 'local-user' : true)
             );
 
@@ -847,6 +863,7 @@ export const useLocationSync = (
                         }))
                         : [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }];
 
+                    const selfSharing = profile?.settings?.locationSharing !== false;
                     return {
                         ...(existing || {
                             id: user.uid,
@@ -871,7 +888,12 @@ export const useLocationSync = (
                         circleId: memberCircleId,
                         circleName: memberCircleName,
                         circleColor: memberCircleColor,
-                        circleBadges: userCircleBadges
+                        circleBadges: userCircleBadges,
+                        isSelf: true,
+                        activeViewerDeviceLabel: profile?.activeViewerDeviceLabel,
+                        activeViewerDevicePlatform: profile?.activeViewerDevicePlatform,
+                        isSharingLocation: selfSharing,
+                        locationSharing: selfSharing
                     };
                 }
 
@@ -900,7 +922,9 @@ export const useLocationSync = (
                                         ...m,
                                         name,
                                         avatar,
-                                        role: (userProfile as any).role || m.role
+                                        role: (userProfile as any).role || m.role,
+                                        activeViewerDeviceLabel: userProfile.activeViewerDeviceLabel,
+                                        activeViewerDevicePlatform: userProfile.activeViewerDevicePlatform
                                     };
                                 }
                                 return m;
@@ -913,9 +937,9 @@ export const useLocationSync = (
 
                 const cachedProfile = profilesCacheRef.current.get(id);
                 const resolvedName = loc?.displayName || cachedProfile?.displayName || (cachedProfile as any)?.name || (existing?.name && existing.name !== 'Circle Member' ? existing.name : undefined);
-                const resolvedAvatar = loc?.photoURL 
+                const resolvedAvatar = loc?.photoURL
                     ? getSafeAvatarUrl(loc.photoURL, resolvedName || id)
-                    : cachedProfile?.photoURL 
+                    : cachedProfile?.photoURL
                     ? getSafeAvatarUrl(cachedProfile.photoURL, resolvedName || id)
                     : (existing?.avatar && !existing.avatar.includes('default') ? existing.avatar : getDefaultAvatarDataUri(resolvedName || id));
 
@@ -924,6 +948,8 @@ export const useLocationSync = (
                     name: resolvedName || existing.name,
                     avatar: resolvedAvatar || existing.avatar,
                     role: cachedProfile?.role || loc?.role || existing.role || 'Member',
+                    activeViewerDeviceLabel: cachedProfile?.activeViewerDeviceLabel,
+                    activeViewerDevicePlatform: cachedProfile?.activeViewerDevicePlatform,
                     circleId: memberCircleId,
                     circleName: memberCircleName,
                     circleColor: memberCircleColor,
@@ -942,6 +968,8 @@ export const useLocationSync = (
                     speed: 0,
                     heading: 0,
                     role: cachedProfile?.role || loc?.role || 'Member',
+                    activeViewerDeviceLabel: cachedProfile?.activeViewerDeviceLabel,
+                    activeViewerDevicePlatform: cachedProfile?.activeViewerDevicePlatform,
                     safetyScore: 100,
                     pathHistory: [],
                     driveEvents: [],
@@ -951,7 +979,13 @@ export const useLocationSync = (
                     circleBadges: [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }]
                 };
 
-                if (!loc) return member;
+                if (!loc) {
+                    return {
+                        ...member,
+                        isSharingLocation: false,
+                        locationSharing: false
+                    };
+                }
 
                 let lat = loc.lat;
                 let lng = loc.lng;
@@ -1022,7 +1056,6 @@ export const useLocationSync = (
                                             memberPendingMap!.delete(gf.id);
                                             if (candidateStatus === 'INSIDE') {
                                                 currentInside!.add(gf.id);
-                                                const arrivalBody = `${member.name} has arrived at ${gf.name}`;
                                                 broadcastGeofencePushAlert(
                                                     memberCircleId || currentCircleId || '',
                                                     member.id,
@@ -1031,19 +1064,19 @@ export const useLocationSync = (
                                                     'arrival',
                                                     { lat, lng }
                                                 ).catch(e => console.warn('Could not broadcast member geofence push alert:', e));
-                                                speechService.speak(arrivalBody);
+                                                speechService.playChime('arrival');
                                             } else {
                                                 currentInside!.delete(gf.id);
-                                                const departureBody = `${member.name} left ${gf.name}`;
+                                                const departurePlace = getGeofenceDisplayName(gf);
                                                 broadcastGeofencePushAlert(
                                                     memberCircleId || currentCircleId || '',
                                                     member.id,
                                                     member.name,
-                                                    gf.name,
+                                                    departurePlace,
                                                     'departure',
                                                     { lat, lng }
                                                 ).catch(e => console.warn('Could not broadcast member geofence push alert:', e));
-                                                speechService.speak(departureBody);
+                                                speechService.playChime('turn');
                                             }
                                         }
                                     } else {
@@ -1079,6 +1112,8 @@ export const useLocationSync = (
                     currentPlace: memberPlaceName
                 });
 
+                const isSharing = loc.isSharingLocation !== false && loc.locationSharing !== false && cachedProfile?.settings?.locationSharing !== false;
+
                 return {
                     ...member,
                     location: { lat, lng, label: memberLabel },
@@ -1100,7 +1135,11 @@ export const useLocationSync = (
                     currentTrip: loc.currentTrip || null,
                     circleId: memberCircleId,
                     circleName: memberCircleName,
-                    circleColor: memberCircleColor
+                    circleColor: memberCircleColor,
+                    activeViewerDeviceLabel: cachedProfile?.activeViewerDeviceLabel,
+                    activeViewerDevicePlatform: cachedProfile?.activeViewerDevicePlatform,
+                    isSharingLocation: isSharing,
+                    locationSharing: isSharing
                 };
             }));
 
@@ -1117,7 +1156,11 @@ export const useLocationSync = (
                            m.privacyMode === u.privacyMode &&
                            m.sosActive === u.sosActive &&
                            m.name === u.name &&
-                           m.avatar === u.avatar;
+                           m.avatar === u.avatar &&
+                           m.activeViewerDeviceLabel === u.activeViewerDeviceLabel &&
+                           m.activeViewerDevicePlatform === u.activeViewerDevicePlatform &&
+                           m.isSharingLocation === u.isSharingLocation &&
+                           m.locationSharing === u.locationSharing;
                 })) {
                     return prev;
                 }
@@ -1131,21 +1174,112 @@ export const useLocationSync = (
     // 3. SYNC PROFILE CHANGES TO LOCAL SELF
     useEffect(() => {
         if (!user?.uid || !profile) return;
-        
+
+        const selfSharing = profile.settings?.locationSharing !== false;
         setMembers(prev => {
             const index = prev.findIndex(m => m.id === user.uid);
             if (index === -1) return prev;
-            
+
             const updated = [...prev];
             updated[index] = {
                 ...updated[index],
                 name: profile.displayName || updated[index].name,
                 avatar: getSafeAvatarUrl(profile.photoURL || updated[index].avatar, profile.displayName || updated[index].name || user.uid),
-                membershipTier: profile.membershipTier || updated[index].membershipTier
+                membershipTier: profile.membershipTier || updated[index].membershipTier,
+                activeViewerDeviceLabel: profile.activeViewerDeviceLabel,
+                activeViewerDevicePlatform: profile.activeViewerDevicePlatform,
+                isSharingLocation: selfSharing,
+                locationSharing: selfSharing
             };
             return updated;
         });
-    }, [profile?.displayName, profile?.photoURL, profile?.membershipTier, user?.uid]);
+    }, [profile?.displayName, profile?.photoURL, profile?.membershipTier, profile?.settings?.locationSharing, profile?.activeViewerDeviceLabel, profile?.activeViewerDevicePlatform, user?.uid]);
+
+    const forcePublishLocation = useCallback(async (explicitSharingState?: boolean) => {
+        if (!user?.uid) return;
+        const sharingEnabled = explicitSharingState !== undefined
+            ? explicitSharingState
+            : profile?.settings?.locationSharing !== false;
+
+        const targetCircleIds = (userCircles && userCircles.length > 0)
+            ? Array.from(new Set(userCircles.map(c => c.id)))
+            : (currentCircleId ? [currentCircleId] : []);
+
+        if (targetCircleIds.length === 0) return;
+
+        if (!sharingEnabled) {
+            try {
+                await clearMemberLocations(user.uid, targetCircleIds);
+            } catch (err) {
+                console.warn('[useLocationSync] Failed to clear member locations:', err);
+            }
+            return;
+        }
+
+        const coords = userLocationRef.current || (userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null);
+        if (!coords || (coords.lat === 0 && coords.lng === 0)) return;
+
+        for (const cId of targetCircleIds) {
+            const circlePrivacyMode = getCirclePrivacyMode(cId);
+            let targetLat = coords.lat;
+            let targetLng = coords.lng;
+            let statusText = 'Online';
+            let blurredRadius: number | undefined = undefined;
+
+            if (circlePrivacyMode === 'blurred') {
+                const centroid = getNeighborhoodCentroid(coords.lat, coords.lng, `${user.uid}_${cId}`);
+                targetLat = centroid.lat;
+                targetLng = centroid.lng;
+                blurredRadius = 2400;
+                statusText = 'In Neighborhood (Blurred)';
+            }
+
+            let encrypted: string | null = null;
+            try {
+                encrypted = (targetLat !== 0 && targetLng !== 0)
+                    ? await encryptLocation(targetLat, targetLng, cId)
+                    : null;
+            } catch (e) {
+                // Ignore encryption failure
+            }
+
+            try {
+                await updateMemberLocation(cId, user.uid, {
+                    lat: targetLat,
+                    lng: targetLng,
+                    speed: 0,
+                    heading: 0,
+                    accuracy: circlePrivacyMode === 'blurred' ? 2400 : 15,
+                    timestamp: Date.now(),
+                    battery: batteryService.getBatteryLevel(),
+                    signalQuality: 'strong',
+                    encryptedData: encrypted || undefined,
+                    status: statusText,
+                    privacyMode: circlePrivacyMode,
+                    blurredRadiusMeters: blurredRadius,
+                    displayName: profile?.displayName || user.displayName || 'You',
+                    photoURL: profile?.photoURL || user.photoURL || undefined,
+                    role: profile?.role || 'Member',
+                    isSharingLocation: true,
+                    locationSharing: true
+                });
+            } catch (err) {
+                console.warn('[useLocationSync] Failed to force publish member location for circle:', cId, err);
+            }
+        }
+    }, [user?.uid, user?.displayName, user?.photoURL, profile?.displayName, profile?.photoURL, profile?.role, profile?.settings?.locationSharing, userCircles, currentCircleId, getCirclePrivacyMode, userLocation]);
+
+    const prevLocationSharingRef = useRef<boolean | undefined>(profile?.settings?.locationSharing);
+    useEffect(() => {
+        if (!user?.uid) return;
+        const currentSharing = profile?.settings?.locationSharing !== false;
+        if (prevLocationSharingRef.current !== undefined && prevLocationSharingRef.current !== currentSharing) {
+            prevLocationSharingRef.current = currentSharing;
+            forcePublishLocation(currentSharing);
+        } else {
+            prevLocationSharingRef.current = currentSharing;
+        }
+    }, [profile?.settings?.locationSharing, user?.uid, forcePublishLocation]);
 
     return {
         members,
@@ -1153,6 +1287,7 @@ export const useLocationSync = (
         locationError,
         hasInitiallyCentered,
         setHasInitiallyCentered,
-        userLocation
+        userLocation,
+        forcePublishLocation
     };
 };

@@ -1,4 +1,5 @@
-import React from 'react';
+﻿import React from 'react';
+import { AlertTriangle, CarFront, CheckCircle2, CircleOff, Construction, LightbulbOff, ShieldAlert, Siren, ThumbsUp, Trash2, Waves, X } from 'lucide-react';
 import { IncidentReport } from '../types';
 import { incidentService } from '../services/incidentService';
 import { hapticTick, hapticMilestone, hapticSuccess } from '../utils/haptics';
@@ -27,32 +28,36 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
 
     const getIncidentMeta = (type: string) => {
         switch (type) {
-            case 'police':
-                return { icon: '🚔', title: 'Police Radar Trap', color: '#3b82f6', badge: 'Speed Enforcement' };
-            case 'hazard':
-                return { icon: '⚠️', title: 'Road Hazard', color: '#f59e0b', badge: 'Obstruction Ahead' };
-            case 'shoulder':
-                return { icon: '🚗', title: 'Vehicle on Shoulder', color: '#a855f7', badge: 'Stationary Vehicle' };
-            case 'construction':
-                return { icon: '🚧', title: 'Road Work Zone', color: '#f97316', badge: 'Construction' };
-            case 'traffic':
-                return { icon: '🚙', title: 'Traffic Jam', color: '#ef4444', badge: 'Heavy Congestion' };
-            default:
-                return { icon: '🛡️', title: 'Community Alert', color: '#10b981', badge: 'Road Alert' };
+            case 'police': return { icon: <Siren className="w-6 h-6" />, title: 'Police Radar Trap', color: '#3b82f6', badge: 'Speed Enforcement' };
+            case 'hazard': return { icon: <AlertTriangle className="w-6 h-6" />, title: 'Road Hazard', color: '#f59e0b', badge: 'Obstruction Ahead' };
+            case 'shoulder': return { icon: <CarFront className="w-6 h-6" />, title: 'Vehicle on Shoulder', color: '#a855f7', badge: 'Stationary Vehicle' };
+            case 'construction': return { icon: <Construction className="w-6 h-6" />, title: 'Road Work Zone', color: '#f97316', badge: 'Construction' };
+            case 'traffic': return { icon: <CarFront className="w-6 h-6" />, title: 'Traffic Jam', color: '#ef4444', badge: 'Heavy Congestion' };
+            case 'road_closed': return { icon: <CircleOff className="w-6 h-6" />, title: 'Road Closed', color: '#e11d48', badge: 'Closure / Detour' };
+            case 'signal_out': return { icon: <LightbulbOff className="w-6 h-6" />, title: 'Traffic Signal Out', color: '#ca8a04', badge: 'Use Caution' };
+            case 'safety_alert':
+            case 'alert': return { icon: <Waves className="w-6 h-6" />, title: 'Flooded Road', color: '#0ea5e9', badge: 'Water across road' };
+            case 'speed_bump': return { icon: <ShieldAlert className="w-6 h-6" />, title: 'Speed Bump', color: '#64748b', badge: 'Road Feature' };
+            default: return { icon: <Waves className="w-6 h-6" />, title: 'Flooded Road', color: '#0ea5e9', badge: 'Water across road' };
         }
     };
 
     const meta = getIncidentMeta(incident.type);
     const isReporter = !incident.reporterId || incident.reporterId === currentUserId || incident.reporterId === 'anonymous' || incident.reporterName === 'You';
+    const isRoadFeature = incident.isPermanent === true || incident.type === 'speed_bump';
+    const confirmationCount = incident.upvotes || 1;
+    const verificationLabel = incident.verified
+        ? 'Verified by the community'
+        : `Needs ${Math.max(0, 2 - confirmationCount)} more confirmation`;
 
     const handleRemoveIncident = async () => {
         try {
             hapticTick();
             await incidentService.removeIncident(incident.id, currentUserId);
-            showNotification?.(`🗑️ Removed "${meta.title}" from map`, 3000);
+            showNotification?.(`Removed "${meta.title}" from map`, 3000);
             onClose();
         } catch (e: any) {
-            showNotification?.(`⚠️ Could not remove alert: ${e.message || e}`, 3000);
+            showNotification?.(`Could not remove alert: ${e.message || e}`, 3000);
         }
     };
 
@@ -60,10 +65,10 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
         try {
             hapticMilestone();
             await incidentService.clearIncident(incident.id, currentUserId || 'driver');
-            showNotification?.(`✅ Marked alert as cleared`, 3000);
+            showNotification?.('Marked alert as cleared', 3000);
             onClose();
         } catch (e: any) {
-            showNotification?.(`⚠️ Error: ${e.message || e}`, 3000);
+            showNotification?.(`Error: ${e.message || e}`, 3000);
         }
     };
 
@@ -71,10 +76,10 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
         try {
             hapticSuccess();
             await incidentService.upvoteIncident(incident.id, currentUserId || 'driver');
-            showNotification?.(`👍 Confirmed "${meta.title}" (Verified)`, 3000);
+            showNotification?.(`Confirmed "${meta.title}" (Verified)`, 3000);
             onClose();
         } catch (e: any) {
-            showNotification?.(`⚠️ Error: ${e.message || e}`, 3000);
+            showNotification?.(`Error: ${e.message || e}`, 3000);
         }
     };
 
@@ -124,7 +129,7 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                         onClick={onClose}
                         className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm transition-all cursor-pointer shrink-0"
                     >
-                        ✕
+                        <X className="w-4 h-4" />
                     </button>
                 </div>
 
@@ -150,6 +155,14 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                                 {incident.upvotes || 1} {incident.upvotes === 1 ? 'confirmation' : 'confirmations'}
                             </span>
                         </div>
+                        {isRoadFeature && (
+                            <div className={`pt-2 border-t border-white/5 flex items-center justify-between text-xs`}>
+                                <span className="text-slate-400 font-bold">Feature status:</span>
+                                <span className={`font-black ${incident.verified ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                    {verificationLabel}
+                                </span>
+                            </div>
+                        )}
                         {incident.details && (
                             <div className="pt-2 border-t border-white/5 text-xs text-slate-300">
                                 <span className="text-slate-500 font-bold">Note: </span>
@@ -161,14 +174,14 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                     {/* Actions Grid */}
                     <div className="space-y-2">
                         {/* 1. Direct Remove Button (For accidental placement or creator) */}
-                        <button
+                        {isReporter && <button
                             type="button"
                             onClick={handleRemoveIncident}
                             className="w-full py-3 px-4 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all cursor-pointer"
                         >
-                            <span>🗑️</span>
-                            <span>Remove / Placed by Accident</span>
-                        </button>
+                            <Trash2 className="w-4 h-4" />
+                            <span>{isRoadFeature ? 'Remove feature I added' : 'Remove / Placed by Accident'}</span>
+                        </button>}
 
                         <div className="grid grid-cols-2 gap-2 pt-1">
                             {/* 2. Still There Button */}
@@ -177,8 +190,8 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                                 onClick={handleConfirmIncident}
                                 className="py-2.5 px-3 rounded-2xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
                             >
-                                <span>👍</span>
-                                <span>Still There</span>
+                                <ThumbsUp className="w-4 h-4" />
+                                <span>{isRoadFeature ? 'Confirm feature' : 'Still There'}</span>
                             </button>
 
                             {/* 3. Cleared Button */}
@@ -187,14 +200,16 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                                 onClick={handleClearIncident}
                                 className="py-2.5 px-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
                             >
-                                <span>✅</span>
-                                <span>Cleared</span>
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>{isRoadFeature ? 'Feature removed' : 'Cleared'}</span>
                             </button>
                         </div>
                     </div>
 
                     <p className="text-[10px] text-center text-slate-500 font-medium">
-                        Alerts are shared live with all circle members & nearby drivers.
+                        {isRoadFeature
+                            ? 'Road features remain visible until the community confirms removal.'
+                            : 'Alerts are shared live with all circle members and nearby drivers.'}
                     </p>
                 </div>
             </div>
@@ -203,3 +218,5 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
 };
 
 export default IncidentDetailModal;
+
+

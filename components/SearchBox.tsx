@@ -963,6 +963,15 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                                   ⭐ Saved {place.type === 'home' ? 'Home' : place.type === 'work' ? 'Work' : place.type === 'school' ? 'School' : place.type === 'gym' ? 'Gym' : 'Place'}
                                 </span>
                               )}
+                              {place.category && (
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 border ${
+                                  theme === 'dark'
+                                    ? 'bg-slate-800/80 text-slate-300 border-slate-700/60'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                                }`}>
+                                  {place.category}
+                                </span>
+                              )}
                             </div>
 
                             {/* Compact Branch Distance Badge (e.g. 0.4 mi • Main St) */}

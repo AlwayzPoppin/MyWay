@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Compass } from 'lucide-react';
 import { FamilyMember, Place, CircleTask, Location, TrafficSegment, TrafficControlPoint } from '../types';
 import { MapSkinId, getMapSkin, resolveMapSkinId, applySkinOverrides, SATELLITE_STYLE, TERRAIN_STYLE } from '../services/mapSkinService';
 import { solarService, SolarInfo } from '../services/solarService';
@@ -16,6 +16,7 @@ import { searchMaintenanceAlongRoute, reverseGeocode } from '../services/placesS
 import { osmTrafficService } from '../services/osmTrafficService';
 import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
 import { communityBuildingService, CommunityBuilding } from '../services/communityBuildingService';
+import { getNationalAddressPoints, nationalAddressPointsToGeoJSON } from '../services/nationalAddressService';
 import { UserProfile } from '../services/authService';
 import { extractHouseNumber } from '../utils/addressUtils';
 import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
@@ -83,14 +84,16 @@ const getEffectiveMembersWithSelf = (
     userProfile?: UserProfile | null,
     isNavigating: boolean = false
 ): FamilyMember[] => {
-    const validMembers = (members || []).filter(m => 
-        m && 
-        m.location && 
-        typeof m.location.lat === 'number' && 
-        typeof m.location.lng === 'number' && 
-        !(m.location.lat === 0 && m.location.lng === 0) &&
-        (currentUserId ? (m.id !== 'demo-you' && m.id !== 'local-user' && m.id !== 'current_user') : true)
-    );
+    const validMembers = (members || []).filter(m => {
+        if (!m || !m.location || typeof m.location.lat !== 'number' || typeof m.location.lng !== 'number') return false;
+        if (m.location.lat === 0 && m.location.lng === 0) return false;
+        if (currentUserId && (m.id === 'demo-you' || m.id === 'local-user' || m.id === 'current_user')) return false;
+        const isSelf = checkIsMemberSelf(m.id, currentUserId);
+        if (!isSelf && (m.isSharingLocation === false || m.locationSharing === false)) {
+            return false;
+        }
+        return true;
+    });
 
     const allMembers = [...validMembers];
     const hasSelf = allMembers.some(m => checkIsMemberSelf(m.id, currentUserId));
@@ -273,6 +276,8 @@ interface MapLibre3DViewProps {
     onSelectMapStyle?: (style: 'standard' | 'satellite' | 'terrain') => void;
     onOpenAlerts?: () => void;
     selectedPlaceId?: string | null;
+    remainingDistanceMeters?: number;
+    hasArrived?: boolean;
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
@@ -317,13 +322,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     showTrafficControls = true,
     onToggle3DMode,
     onSelectMapStyle,
-    onOpenAlerts
+    onOpenAlerts,
+    remainingDistanceMeters,
+    hasArrived = false
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
     const [isMapReady, setIsMapReady] = React.useState(false);
     const [styleVersion, setStyleVersion] = React.useState(0); // Track style reloads to re-render layers
     const [mapEpoch, setMapEpoch] = React.useState(0); // Incremented to trigger WebGL context loss recovery reboot
+    const [markerClusterZoom, setMarkerClusterZoom] = React.useState(0);
     const [publicReports, setPublicReports] = React.useState<PublicMapReport[]>(() => publicMapReportService.getCachedReports());
     const [communityBuildings, setCommunityBuildings] = React.useState<CommunityBuilding[]>(() => communityBuildingService.getAllBuildings());
 
@@ -345,6 +353,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const incidentMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const membersMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     const clusterMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const placeClusterMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
     // Smooth Vehicle Puck & Camera 1Hz Linear Interpolation Refs
     const latestLocationRef = useRef<{ lng: number; lat: number } | null>(null);
     const latestBearingRef = useRef<number>(0);
@@ -376,8 +385,20 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const lastMemberSelectTimeRef = useRef<number>(0);
     const isNavigatingRef = useRef(isNavigating);
     isNavigatingRef.current = isNavigating;
+    const onCameraFreeChangeRef = useRef(onCameraFreeChange);
+    onCameraFreeChangeRef.current = onCameraFreeChange;
     const activeRouteRef = useRef(activeRoute);
     activeRouteRef.current = activeRoute;
+
+    // Re-evaluate marker groups after a zoom gesture. Clustering is based on
+    // visible screen distance, so locations remain readable at city scale.
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+        const onZoomEnd = () => setMarkerClusterZoom(Math.round(map.current!.getZoom() * 10) / 10);
+        onZoomEnd();
+        map.current.on('zoomend', onZoomEnd);
+        return () => map.current?.off('zoomend', onZoomEnd);
+    }, [isMapReady, styleVersion]);
     const isMobileRef = useRef(isMobile);
     isMobileRef.current = isMobile;
     const destinationMarkerRef = useRef<maplibregl.Marker | null>(null);
@@ -403,7 +424,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         let isCancelled = false;
         searchMaintenanceAlongRoute(activeRoute.routeGeometry, pending.categoryQuery, userLocation).then(results => {
             if (!isCancelled) {
-                console.log(`🔧 [Maintenance] Found ${results.length} recommended mechanics along route for ${pending.item?.title || 'service'}`);
+                console.log(`ðŸ”§ [Maintenance] Found ${results.length} recommended mechanics along route for ${pending.item?.title || 'service'}`);
                 setMaintenancePlaces(results);
             }
         }).catch(err => {
@@ -454,12 +475,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             // Double rAF ensures the browser compositor and layout engine are fully unthrottled
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
-                    console.warn('🔄 MapLibre3DView: Executing WebGL recovery reboot...');
+                    console.warn('ðŸ”„ MapLibre3DView: Executing WebGL recovery reboot...');
                     renderedGeofenceIdsRef.current.clear();
                     membersMarkersRef.current.forEach(m => m.remove());
                     membersMarkersRef.current.clear();
                     clusterMarkersRef.current.forEach(m => m.remove());
                     clusterMarkersRef.current.clear();
+                    placeClusterMarkersRef.current.forEach(m => m.remove());
+                    placeClusterMarkersRef.current.clear();
                     placesMarkersRef.current.forEach(m => m.remove());
                     placesMarkersRef.current.clear();
                     if (destinationMarkerRef.current) {
@@ -758,7 +781,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 if (map.current!.getLayer('park')) map.current!.setPaintProperty('park', 'fill-color', '#0f1720');
 
                 // 2. Road Arterial Hierarchy
-                // Freeways / Motorways: Vivid amber-orange #f97316, width 4–7px, with 1.5px #000000 border casing
+                // Freeways / Motorways: Vivid amber-orange #f97316, width 4â€“7px, with 1.5px #000000 border casing
                 const freewayFillLayers = ['road_mot_fill_noramp', 'road_mot_fill_ramp', 'bridge_mot_fill', 'tunnel_mot_fill', 'road_trunk_fill_noramp', 'road_trunk_fill_ramp', 'bridge_trunk_fill'];
                 freewayFillLayers.forEach(id => {
                     if (map.current!.getLayer(id)) {
@@ -785,7 +808,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     }
                 });
 
-                // Primary & Secondary Arteries: Luminous warm gold #fbbf24, width 2.5–4.5px
+                // Primary & Secondary Arteries: Luminous warm gold #fbbf24, width 2.5â€“4.5px
                 const arteryFillLayers = ['road_pri_fill_noramp', 'road_pri_fill_ramp', 'bridge_pri_fill', 'road_sec_fill_noramp', 'road_sec_fill_ramp', 'bridge_sec_fill'];
                 arteryFillLayers.forEach(id => {
                     if (map.current!.getLayer(id)) {
@@ -799,7 +822,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     }
                 });
 
-                // Minor & Residential Roads: Clean dark slate #243044, width 1.2–2px
+                // Minor & Residential Roads: Clean dark slate #243044, width 1.2â€“2px
                 if (map.current!.getLayer('road_minor_fill')) {
                     map.current!.setPaintProperty('road_minor_fill', 'line-color', '#243044');
                     map.current!.setPaintProperty('road_minor_fill', 'line-width', [
@@ -1075,10 +1098,45 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const id = layer.id.toLowerCase();
                 const isEmergency = id.includes('hospital') || id.includes('police') || id.includes('emergency') || id.includes('ambulance') || id.includes('fire');
                 const isGasOrStore = id.includes('gas') || id.includes('fuel') || id.includes('petrol') || id.includes('convenience') || id.includes('shop') || id.includes('store') || id.includes('commercial');
+                // CARTO supplies city, state and country labels through its
+                // place layers. They are context, not POIs, so never hide
+                // them behind the close-in POI zoom threshold.
+                const isRegionalPlace =
+                    (id.includes('place') || id.includes('country') || id.includes('state') ||
+                        id.includes('city') || id.includes('town') || id.includes('village') ||
+                        id.includes('region')) &&
+                    !id.includes('poi') && !id.includes('park');
+                const isLocalityLabel = id.includes('city') || id.includes('town') ||
+                    id.includes('village') || id.includes('suburb') || id.includes('neighborhood');
                 const isPlaceOrPoi = isEmergency || isGasOrStore || id.includes('poi') || id.includes('place') || id.includes('park') || 
                                      id.includes('school') || id.includes('suburb') || id.includes('neighborhood');
                 try {
-                    if (isPlaceOrPoi) {
+                    if (isRegionalPlace) {
+                        // Preserve the basemap's native zoom ranges: state
+                        // labels belong at wide zoom, city labels at regional
+                        // zoom, and local places closer in.
+                        map.current!.setLayoutProperty(layer.id, 'visibility', 'visible');
+                        try {
+                            map.current!.setLayoutProperty(layer.id, 'text-pitch-alignment', 'viewport');
+                            map.current!.setLayoutProperty(layer.id, 'text-rotation-alignment', 'viewport');
+                        } catch {}
+                        const regionalColor = isWarmLightSkin ? '#334155' : '#e2e8f0';
+                        const regionalHalo = isWarmLightSkin ? 'rgba(255, 255, 255, 0.98)' : 'rgba(5, 8, 17, 0.98)';
+                        map.current!.setPaintProperty(layer.id, 'text-color', regionalColor);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-color', regionalHalo);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-width', 2.5);
+                        map.current!.setPaintProperty(layer.id, 'text-halo-blur', 0.5);
+                        // At address-level zoom, city/town labels gracefully
+                        // yield the canvas to individual building numbers.
+                        if (isLocalityLabel) {
+                            map.current!.setPaintProperty(layer.id, 'text-opacity', [
+                                'interpolate', ['linear'], ['zoom'],
+                                13, 1,
+                                15, 1,
+                                16.25, 0
+                            ]);
+                        }
+                    } else if (isPlaceOrPoi) {
                         // Strict minzoom restraints: 12.5 for emergency (hospitals/police), 13.5 for gas stations and convenience stores/POIs
                         const poiMinZ = isEmergency ? 12.5 : 13.5;
                         try {
@@ -1139,7 +1197,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     if (layer.type === 'line') {
                         const isDash = layer.id.includes('dash');
                         if (isWarmLightSkin) {
-                            // Light Mode: Clean subtle light slate track with crisp white ties — eliminates black road appearance
+                            // Light Mode: Clean subtle light slate track with crisp white ties â€” eliminates black road appearance
                             map.current!.setPaintProperty(layer.id, 'line-color', isDash ? '#ffffff' : '#cbd5e1');
                             map.current!.setPaintProperty(layer.id, 'line-opacity', isDash ? 0.65 : 0.35);
                             map.current!.setPaintProperty(layer.id, 'line-width', [
@@ -1273,8 +1331,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             if (Date.now() - lastMemberSelectTimeRef.current < 800) return;
             if (e && !e.originalEvent) return;
             onUserInteraction?.();
-            if (isNavigating) {
-                onCameraFreeChange?.(true);
+            if (isNavigatingRef.current) {
+                onCameraFreeChangeRef.current?.(true);
             }
         };
         mapInstance.on('movestart', (e: any) => {
@@ -1297,11 +1355,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         const canvas = mapInstance.getCanvas();
         const handleContextLost = (e: Event) => {
             e.preventDefault(); // Standard requirement to permit recovery
-            console.warn('⚠️ MapLibre3DView: Canvas WebGL context lost!');
+            console.warn('âš ï¸ MapLibre3DView: Canvas WebGL context lost!');
             scheduleMapReboot();
         };
         const handleContextRestored = () => {
-            console.log('✅ MapLibre3DView: Canvas WebGL context restored.');
+            console.log('âœ… MapLibre3DView: Canvas WebGL context restored.');
             scheduleMapReboot();
         };
         canvas.addEventListener('webglcontextlost', handleContextLost, false);
@@ -1312,11 +1370,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const isFatalContextLoss = msg.includes('context lost') || msg.includes('gl_out_of_memory');
 
             if (!isFatalContextLoss) {
-                console.warn('⚠️ MapLibre3DView: Non-fatal WebGL warning on map instance:', e.error);
+                console.warn('âš ï¸ MapLibre3DView: Non-fatal WebGL warning on map instance:', e.error);
                 return;
             }
 
-            console.warn('⚠️ MapLibre3DView: Fatal WebGL context error on map instance:', e.error);
+            console.warn('âš ï¸ MapLibre3DView: Fatal WebGL context error on map instance:', e.error);
             scheduleMapReboot();
         });
 
@@ -1331,7 +1389,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     const c = map.current.getCanvas();
                     const gl = c.getContext('webgl2') || c.getContext('webgl');
                     if (gl && gl.isContextLost()) {
-                        console.warn('⚠️ MapLibre3DView: WebGL context lost detected on app resume.');
+                        console.warn('âš ï¸ MapLibre3DView: WebGL context lost detected on app resume.');
                         scheduleMapReboot();
                     } else {
                         map.current?.triggerRepaint();
@@ -1410,11 +1468,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             'text-ignore-placement': true,
                             'text-optional': false
                         },
-                        paint: {
-                            'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                            'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)',
-                            'text-halo-width': 2.0,
-                            'text-halo-blur': 0.5
+                    paint: {
+                        'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
+                        'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                        'text-halo-width': 2.0,
+                        'text-halo-blur': 0.5,
+                        'text-opacity': ['interpolate', ['linear'], ['zoom'], 14.8, 0, 15.4, 1]
                         }
                     });
                 } catch (layerErr) {
@@ -1453,7 +1512,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             ensureCommunityBuildingLayer();
         });
 
-        // Track user interaction — suppress auto-camera for 5s after manual pan/zoom
+        // Track user interaction â€” suppress auto-camera for 5s after manual pan/zoom
         mapInstance.on('dragstart', (e: any) => {
             if (Date.now() - lastMemberSelectTimeRef.current < 800) return;
             onUserInteraction?.();
@@ -1508,6 +1567,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             membersMarkersRef.current.clear();
             clusterMarkersRef.current.forEach(m => m.remove());
             clusterMarkersRef.current.clear();
+            placeClusterMarkersRef.current.forEach(m => m.remove());
+            placeClusterMarkersRef.current.clear();
             placesMarkersRef.current.forEach(m => m.remove());
             placesMarkersRef.current.clear();
             if (destinationMarkerRef.current) {
@@ -1543,7 +1604,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             // occurring in maplibre-gl when switching between complex style objects.
             map.current.setStyle(styleUrl, { diff: false });
         } catch (err) {
-            console.error('🗺️ Map: setStyle failed', err);
+            console.error('ðŸ—ºï¸ Map: setStyle failed', err);
         }
     }, [styleUrl, mapStyle, isMapReady]);
 
@@ -1646,7 +1707,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         };
 
         const primaryRouteColor = isCarbonAmber 
-            ? '#00f2fe' // Vibrant Electric Cyan — maximum contrast against amber/orange roads
+            ? '#00f2fe' // Vibrant Electric Cyan â€” maximum contrast against amber/orange roads
             : theme === 'dark'
                 ? '#38bdf8' // Luminous Electric Blue in Dark Mode
                 : '#2563eb'; // Vibrant Modern Electric Blue in Daylight
@@ -1661,7 +1722,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             ? '#082f49'
             : theme === 'dark'
                 ? '#0c4a6e'
-                : '#1d4ed8'; // Refined royal navy casing — subtle contrast without harsh black
+                : '#1d4ed8'; // Refined royal navy casing â€” subtle contrast without harsh black
 
         // ZOOM-INTERPOLATED PROPORTIONAL LINE WIDTHS & BLUR
         // Proportional across zooms: clean and non-dominant when zoomed out, crisp and native when zoomed in
@@ -1937,25 +1998,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 map.current.setPaintProperty(routeId, 'line-opacity', 0.98);
             }
 
-            // 4b. ADD / UPDATE DIRECTIONAL CHEVRON ACCENT LAYER (White turn flow on center line)
-            if (!map.current.getLayer(`${routeId}-chevrons`)) {
-                map.current.addLayer({
-                    id: `${routeId}-chevrons`,
-                    type: 'line',
-                    source: routeId,
-                    layout: { 'line-join': 'round', 'line-cap': 'round' },
-                    paint: {
-                        'line-color': '#ffffff',
-                        'line-width': activeRouteChevronWidth as any,
-                        'line-dasharray': [0.4, 2.6],
-                        'line-opacity': 0.85
-                    }
-                });
-            } else {
-                map.current.setPaintProperty(`${routeId}-chevrons`, 'line-color', '#ffffff');
-                map.current.setPaintProperty(`${routeId}-chevrons`, 'line-width', activeRouteChevronWidth as any);
-                map.current.setPaintProperty(`${routeId}-chevrons`, 'line-dasharray', [0.4, 2.6]);
-                map.current.setPaintProperty(`${routeId}-chevrons`, 'line-opacity', 0.85);
+            // The guidance route must stay solid. The former white dashed
+            // accent visually turned the route back into a dotted line.
+            if (map.current.getLayer(`${routeId}-chevrons`)) {
+                map.current.removeLayer(`${routeId}-chevrons`);
             }
 
 
@@ -1967,7 +2013,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 if (map.current.getLayer(`${routeId}-glow`)) map.current.moveLayer(`${routeId}-glow`);
                 if (map.current.getLayer(`${routeId}-casing`)) map.current.moveLayer(`${routeId}-casing`);
                 if (map.current.getLayer(routeId)) map.current.moveLayer(routeId);
-                if (map.current.getLayer(`${routeId}-chevrons`)) map.current.moveLayer(`${routeId}-chevrons`);
             } catch {}
         } catch (err) {
             console.warn('[MapLibre3DView] Error syncing route layers:', err);
@@ -2156,7 +2201,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         z-index: 2;
                         transition: transform 0.15s ease;
                     ">
-                        🏁
+                        ðŸ
                     </div>
                     
                     <!-- Pin Needle Pointer (Seamlessly anchored to pill with matching border & placeColor) -->
@@ -2410,7 +2455,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             <div style="position: absolute; inset: 10px; border-radius: 50%; background: rgba(249, 115, 22, 0.25); border: 2px solid #fbbf24; box-shadow: 0 0 16px rgba(249, 115, 22, 0.75);"></div>
             <!-- High-Contrast Exit Signboard Marker -->
             <div style="position: relative; z-index: 2; padding: 3px 8px; border-radius: 999px; background: #0b0f17; border: 2px solid #f97316; box-shadow: 0 4px 14px rgba(0,0,0,0.85); display: flex; align-items: center; gap: 4px;">
-                <span style="font-size: 11px;">🛣️</span>
+                <span style="font-size: 11px;">ðŸ›£ï¸</span>
                 <span style="font-size: 9px; font-weight: 900; color: #fbbf24; letter-spacing: 0.05em; text-transform: uppercase;">${exitLabel}</span>
             </div>
         `;
@@ -2526,7 +2571,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
                                 <div style="background: #f59e0b; border: 2px solid #000000; border-radius: 4px; transform: rotate(45deg); width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 12px rgba(245,158,11,0.6);">
                                     <div style="transform: rotate(-45deg); font-weight: 900; font-size: 10px; line-height: 1;">
-                                        🚂
+                                        ðŸš‚
                                     </div>
                                 </div>
                                 <div style="margin-top: 3px; background: rgba(0,0,0,0.85); border: 1px solid #f59e0b; border-radius: 3px; padding: 1px 3px; font-size: 6.5px; font-weight: 900; color: #fbbf24; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px;">
@@ -2537,7 +2582,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     } else if (ctrl.type === 'speed_camera') {
                         el.innerHTML = `
                             <div style="background: #4f46e5; border: 1.5px solid #ffffff; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 9px; box-shadow: 0 0 8px rgba(99,102,241,0.5);">
-                                📷
+                                ðŸ“·
                             </div>
                         `;
                     }
@@ -2606,36 +2651,66 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 el.style.filter = 'drop-shadow(0 6px 16px rgba(0,0,0,0.6))';
                 el.style.transform = 'translate3d(0,0,0)';
 
-                const icon = 
-                    inc.type === 'police' ? '🚔' :
-                    inc.type === 'hazard' ? '⚠️' :
-                    inc.type === 'shoulder' ? '🚗' :
-                    inc.type === 'construction' ? '🚧' :
-                    inc.type === 'traffic' ? '🚙' : '🛡️';
+                // Older generic alerts are the predecessor of Flooded Road.
+                // Keep their map presentation useful after the terminology update.
+                const isFloodedRoad = inc.type === 'safety_alert' || ![
+                    'police', 'hazard', 'shoulder', 'construction', 'traffic', 'road_closed', 'signal_out', 'speed_bump'
+                ].includes(inc.type);
+
+                const markerIcon = (() => {
+                    switch (inc.type) {
+                        case 'police':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Police trap" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.8 21 6.4v5.8c0 4.5-2.9 8.2-7 10.6-4.1-2.4-7-6.1-7-10.6V6.4L14 3.8Z" fill="rgba(255,255,255,.18)"/><path d="m14 8 .9 2.1 2.2.2-1.7 1.5.5 2.2-1.9-1.2-1.9 1.2.5-2.2-1.7-1.5 2.2-.2L14 8Z" fill="#ffffff" stroke="none"/></svg>`;
+                        case 'hazard':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Road hazard" fill="none" stroke="#ffffff" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5 24 22H4L14 4.5Z" fill="rgba(255,255,255,.16)"/><path d="M14 10v5.5M14 19h.01"/></svg>`;
+                        case 'shoulder':
+                            return `<svg viewBox="0 0 30 28" width="25" height="24" aria-label="Vehicle on shoulder" fill="none" stroke="#ffffff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22 10 5M12 22 18 5" opacity=".65"/><path d="M14 19v-5l2.7-3.5h6.5l2.8 3.5v5H14Z" fill="rgba(255,255,255,.17)"/><path d="M18 10.5h4l1.5 3H16.5l1.5-3ZM17 19h.01M23 19h.01"/><path d="M5 23h5" stroke-width="3"/></svg>`;
+                        case 'construction':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Construction" fill="none" stroke="#ffffff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11h18v7H5z" fill="rgba(255,255,255,.16)"/><path d="m7 17 5-6m3 6 5-6M9 18v4m10-4v4M5 22h18"/></svg>`;
+                        case 'traffic':
+                            return `<svg viewBox="0 0 36 28" width="27" height="22" aria-label="Traffic jam"><g transform="translate(1 7)"><path d="M2 14v-7l3-5h10l3 5v7H2Z" fill="#ffffff"/><path d="M6 4.5h8l1.6 3H4.4l1.6-3Z" fill="#991b1b"/><circle cx="5.5" cy="14" r="2" fill="#991b1b"/><circle cx="14.5" cy="14" r="2" fill="#991b1b"/></g><g transform="translate(16 1)"><path d="M2 16v-8l3-5h10l3 5v8H2Z" fill="#ffffff"/><path d="M6 5h8l1.6 3H4.4L6 5Z" fill="#991b1b"/><circle cx="5.5" cy="16" r="2" fill="#991b1b"/><circle cx="14.5" cy="16" r="2" fill="#991b1b"/></g></svg>`;
+                        case 'road_closed':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Road closed" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round"><circle cx="14" cy="14" r="9.25"/><path d="M7.45 20.55 20.55 7.45"/></svg>`;
+                        case 'signal_out':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Traffic signal out" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="4" width="10" height="16" rx="2" fill="rgba(255,255,255,.16)"/><circle cx="14" cy="8" r="1.2"/><circle cx="14" cy="12" r="1.2"/><circle cx="14" cy="16" r="1.2"/><path d="M6 23 22 5M14 20v3" stroke-width="2.8"/></svg>`;
+                        case 'speed_bump':
+                            return `<svg viewBox="0 0 24 24" width="24" height="24" aria-label="Speed bump"><rect x="4.2" y="4.2" width="15.6" height="15.6" rx="1.3" transform="rotate(45 12 12)" fill="#facc15" stroke="#ffffff" stroke-width="1.2"/><path d="M6.8 15.2h2.2c.55-2.7 1.5-4.05 3-4.05s2.45 1.35 3 4.05h2.2" fill="none" stroke="#111827" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+                        default:
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Flooded road" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"><path d="M4 9c1.7-1.6 3.4-1.6 5.1 0 1.7 1.6 3.4 1.6 5.1 0 1.7-1.6 3.4-1.6 5.1 0"/><path d="M4 15c1.7-1.6 3.4-1.6 5.1 0 1.7 1.6 3.4 1.6 5.1 0 1.7-1.6 3.4-1.6 5.1 0"/><path d="M4 21c1.7-1.6 3.4-1.6 5.1 0 1.7 1.6 3.4 1.6 5.1 0 1.7-1.6 3.4-1.6 5.1 0"/></svg>`;
+                    }
+                })();
 
                 const label = 
                     inc.type === 'police' ? 'Police' :
                     inc.type === 'hazard' ? 'Hazard' :
                     inc.type === 'shoulder' ? 'Shoulder' :
                     inc.type === 'construction' ? 'Work Zone' :
-                    inc.type === 'traffic' ? 'Traffic' : 'Alert';
+                    inc.type === 'traffic' ? 'Traffic' :
+                    isFloodedRoad ? 'Flooded Road' :
+                    inc.type === 'road_closed' ? 'Road Closed' :
+                    inc.type === 'signal_out' ? 'Signal Out' :
+                    inc.type === 'speed_bump' ? (inc.verified ? 'Verified Speed Bump' : 'Speed Bump') : 'Alert';
 
                 const color = 
                     inc.type === 'police' ? '#3b82f6' :
                     inc.type === 'hazard' ? '#f59e0b' :
                     inc.type === 'shoulder' ? '#a855f7' :
                     inc.type === 'construction' ? '#f97316' :
-                    inc.type === 'traffic' ? '#ef4444' : '#10b981';
+                    inc.type === 'traffic' ? '#ef4444' :
+                    isFloodedRoad ? '#0ea5e9' :
+                    inc.type === 'road_closed' ? '#e11d48' :
+                    inc.type === 'signal_out' ? '#ca8a04' :
+                    inc.type === 'speed_bump' ? (inc.verified ? '#059669' : '#64748b') : '#10b981';
 
                 el.innerHTML = `
                     <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
                         <div style="position: absolute; inset: -4px; border-radius: 50%; background: ${color}; opacity: 0.4; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
                         <div style="width: 38px; height: 38px; border-radius: 50%; background: ${color}; border: 2.5px solid #ffffff; box-shadow: 0 4px 16px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-size: 18px; position: relative;">
-                            ${icon}
+                            ${markerIcon}
                         </div>
                         <div style="margin-top: 3px; background: rgba(0,0,0,0.85); border: 1px solid ${color}; border-radius: 6px; padding: 1px 5px; font-size: 8.5px; font-weight: 900; color: #ffffff; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 3px;">
                             <span>${label}</span>
-                            ${(inc.upvotes || 1) > 1 ? `<span style="color: #4ade80;">+${inc.upvotes}</span>` : ''}
+                            ${inc.type === 'speed_bump' ? `<span style="color: ${inc.verified ? '#86efac' : '#fde68a'};">${inc.verified ? 'Verified' : 'Needs 1'}</span>` : (inc.upvotes || 1) > 1 ? `<span style="color: #4ade80;">+${inc.upvotes}</span>` : ''}
                         </div>
                     </div>
                 `;
@@ -2874,7 +2949,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         align-items: center;
                         gap: 4px;
                     ">
-                        <span style="color: #10b981;">●</span>
+                        <span style="width: 6px; height: 6px; border-radius: 50%; background: #10b981; box-shadow: 0 0 5px #10b981; flex: 0 0 auto;"></span>
                         <span>${occupantsSummary}</span>
                     </div>
                 `;
@@ -3000,8 +3075,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             <span style="font-size: 12px; font-weight: 700; color: #ffffff; white-space: nowrap; text-align: center; letter-spacing: -0.2px;">Parked</span>
                         ` : ''}
                         ${place.isCorrected ? `
-                            <div style="position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; background: #f59e0b; border: 1.5px solid #ffffff; display: flex; align-items: center; justify-content: center; font-size: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.4);" title="Verified Entrance Pin">
-                                ⭐
+                            <div style="position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; background: #f59e0b; border: 1.5px solid #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 5px rgba(0,0,0,0.4);" title="Verified Entrance Pin">
+                                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="#ffffff"><path d="m12 3.4 2.7 5.4 6 .9-4.35 4.23 1.03 5.97L12 17.1l-5.38 2.83 1.03-5.97L3.3 9.7l6-.9L12 3.4Z"/></svg>
                             </div>
                         ` : ''}
                     </div>
@@ -3181,6 +3256,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                 const minZStr = el.dataset.minzoom;
                 if (!minZStr) continue;
+                if (el.dataset.clusterHidden === 'true') {
+                    el.style.display = 'none';
+                    continue;
+                }
                 const minZ = parseFloat(minZStr);
                 if (minZ === 0) {
                     el.style.display = 'flex';
@@ -3212,6 +3291,92 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         };
     }, [places, savedPlaces, isMapReady, theme, styleVersion, onSelectPlace, selectedPlaceId, members, userLocation?.lat, userLocation?.lng, currentUserId, userProfile?.displayName, userProfile?.photoURL, isNavigating, onSelectMember]);
 
+    // Saved places are durable landmarks, but at lower zoom levels their
+    // individual pins often cover one another. Collapse only overlapping saved
+    // places into a single map marker and restore every original pin at street
+    // scale. The marker count is based on what the driver can actually see.
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+        const mapInstance = map.current;
+        const zoom = markerClusterZoom || mapInstance.getZoom();
+        const clusterAtZoom = zoom < 15.2;
+        const activeKeys = new Set<string>();
+
+        const entries = Array.from(placesMarkersRef.current.entries())
+            .map(([id, marker]) => ({ id, marker, place: (marker.getElement() as any)?._place as Place | undefined }))
+            .filter((entry): entry is { id: string; marker: maplibregl.Marker; place: Place } => {
+                const place = entry.place;
+                return !!place && !!place.location && !place.isAmbient &&
+                    place.id !== selectedPlaceId &&
+                    (place.isSaved === true || ['home', 'work', 'school', 'gym', 'saved', 'favorite', 'custom'].includes(place.type || ''));
+            });
+
+        entries.forEach(({ marker }) => {
+            const el = marker.getElement();
+            if (el) delete el.dataset.clusterHidden;
+        });
+
+        if (clusterAtZoom) {
+            const grouped = new Set<string>();
+            for (const entry of entries) {
+                if (grouped.has(entry.id)) continue;
+                const point = mapInstance.project([entry.place.location.lng, entry.place.location.lat]);
+                const group = entries.filter(candidate => {
+                    if (grouped.has(candidate.id)) return false;
+                    const candidatePoint = mapInstance.project([candidate.place.location.lng, candidate.place.location.lat]);
+                    return Math.hypot(point.x - candidatePoint.x, point.y - candidatePoint.y) < 70;
+                });
+                if (group.length < 2) continue;
+
+                group.forEach(item => {
+                    grouped.add(item.id);
+                    const element = item.marker.getElement();
+                    if (element) {
+                        element.dataset.clusterHidden = 'true';
+                        element.style.display = 'none';
+                    }
+                });
+                const key = `place_cluster_${group.map(item => item.id).sort().join('_')}`;
+                activeKeys.add(key);
+                const compactAddress = (place: Place) => {
+                    const address = place.address || place.description || place.location?.label || '';
+                    return address.split(',')[0]?.trim() || place.name;
+                };
+                const addressSummary = group.map(item => compactAddress(item.place));
+                const clusterLabel = group.length === 2
+                    ? addressSummary.join(' / ')
+                    : `${group.length} saved places`;
+                const centroid = group.reduce((sum, item) => ({ lat: sum.lat + item.place.location.lat, lng: sum.lng + item.place.location.lng }), { lat: 0, lng: 0 });
+                centroid.lat /= group.length;
+                centroid.lng /= group.length;
+                let marker = placeClusterMarkersRef.current.get(key);
+                if (!marker) {
+                    const el = document.createElement('button');
+                    el.type = 'button';
+                    el.className = 'myway-place-cluster select-none';
+                    el.setAttribute('aria-label', `${clusterLabel}. Zoom in to view.`);
+                    el.style.cssText = 'display:flex;align-items:center;gap:5px;border:2px solid #ffffff;border-radius:999px;background:#6d3df5;color:#ffffff;padding:7px 10px;font:800 12px system-ui;box-shadow:0 4px 14px rgba(54,28,130,.42);cursor:pointer;white-space:nowrap;';
+                    el.innerHTML = `<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z"/></svg><span>${clusterLabel}</span>`;
+                    el.addEventListener('click', event => {
+                        event.stopPropagation();
+                        mapInstance.flyTo({ center: [centroid.lng, centroid.lat], zoom: Math.max(15.5, mapInstance.getZoom() + 2), duration: 450 });
+                    });
+                    marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([centroid.lng, centroid.lat]).addTo(mapInstance);
+                    placeClusterMarkersRef.current.set(key, marker);
+                } else {
+                    marker.setLngLat([centroid.lng, centroid.lat]);
+                }
+            }
+        }
+
+        for (const [key, marker] of placeClusterMarkersRef.current.entries()) {
+            if (!activeKeys.has(key)) {
+                marker.remove();
+                placeClusterMarkersRef.current.delete(key);
+            }
+        }
+    }, [places, savedPlaces, selectedPlaceId, isMapReady, markerClusterZoom, styleVersion]);
+
     // ==========================================
     // PREDICTIVE AUTONOMOUS MAINTENANCE CORRIDOR LAYER
     // ==========================================
@@ -3228,7 +3393,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     id: p.id,
                     name: p.name,
                     label: `${p.name} (+${p.detourMinutes || 2}m)`,
-                    icon: p.icon || '🔧',
+                    icon: p.icon || 'ðŸ”§',
                     deal: p.deal || 'Recommended Service',
                     detour: `+${p.detourMinutes || 2} min detour`
                 },
@@ -3971,7 +4136,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 source: sourceId,
                 minzoom: 0,
                 layout: {
-                    'text-field': '⚠️',
+                    'text-field': 'âš ï¸',
                     'text-size': 14,
                     'text-allow-overlap': true,
                     'text-ignore-placement': true
@@ -4009,7 +4174,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 properties: {
                     type: evt.type,
                     color: evt.type === 'hard_brake' ? '#ef4444' : evt.type === 'rapid_accel' ? '#f59e0b' : '#eab308',
-                    icon: evt.type === 'hard_brake' ? '🛑' : evt.type === 'rapid_accel' ? '🏎️' : '⚡',
+                    icon: evt.type === 'hard_brake' ? 'ðŸ›‘' : evt.type === 'rapid_accel' ? 'ðŸŽï¸' : 'âš¡',
                     label: evt.type === 'hard_brake' ? 'Hard Brake' : evt.type === 'rapid_accel' ? 'Rapid Acceleration' : 'Speeding Event'
                 },
                 geometry: {
@@ -4087,8 +4252,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     trustScore: r.trustScore,
                     reporterName: r.reporterName || 'Community Driver',
                     color: r.reportType === 'hazard' ? '#ef4444' : r.reportType === 'entrance_fix' ? '#10b981' : '#8b5cf6',
-                    icon: r.reportType === 'hazard' ? '⚠️' : r.reportType === 'entrance_fix' ? '🚪' : '📌',
-                    label: `${r.placeName || 'Community Edit'} (⭐${r.trustScore})`
+                    icon: r.reportType === 'hazard' ? 'âš ï¸' : r.reportType === 'entrance_fix' ? 'ðŸšª' : 'ðŸ“Œ',
+                    label: `${r.placeName || 'Community Edit'} (â­${r.trustScore})`
                 },
                 geometry: {
                     type: 'Point',
@@ -4188,15 +4353,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     <div style="font-family: system-ui, -apple-system, sans-serif;">
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                             <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 2px 6px; border-radius: 6px; background: #ede9fe; color: #6d28d9;">
-                                ${props.icon || '🌐'} ${typeLabel}
+                                ${props.icon || 'ðŸŒ'} ${typeLabel}
                             </span>
                             <span id="popup-trust-${reportId}" style="font-size: 11px; font-weight: 800; color: #f59e0b;">
-                                ⭐ Trust: ${props.trustScore}
+                                â­ Trust: ${props.trustScore}
                             </span>
                         </div>
                         <h4 style="font-size: 13px; font-weight: 800; margin: 0 0 4px 0; color: #0f172a;">${props.placeName}</h4>
                         ${props.details ? `<p style="font-size: 11px; color: #475569; margin: 0 0 6px 0; line-height: 1.3;">${props.details}</p>` : ''}
-                        ${props.entranceNotes ? `<p style="font-size: 11px; font-weight: 600; color: #059669; margin: 0 0 6px 0;">🚪 Note: ${props.entranceNotes}</p>` : ''}
+                        ${props.entranceNotes ? `<p style="font-size: 11px; font-weight: 600; color: #059669; margin: 0 0 6px 0;">ðŸšª Note: ${props.entranceNotes}</p>` : ''}
                         ${props.imageUrl ? `<img src="${props.imageUrl}" style="width: 100%; height: 90px; object-fit: cover; border-radius: 8px; margin-bottom: 8px;" />` : ''}
                         
                         <div style="font-size: 10px; color: #64748b; margin-bottom: 8px;">
@@ -4205,10 +4370,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                         <div style="display: flex; gap: 6px; border-top: 1px solid #e2e8f0; padding-top: 8px;">
                             <button id="vote-up-${reportId}" style="flex: 1; padding: 6px; font-size: 11px; font-weight: 700; border-radius: 8px; border: 1px solid #d1fae5; background: #ecfdf5; color: #065f46; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
-                                👍 Helpful
+                                ðŸ‘ Helpful
                             </button>
                             <button id="vote-down-${reportId}" style="flex: 1; padding: 6px; font-size: 11px; font-weight: 700; border-radius: 8px; border: 1px solid #fee2e2; background: #fef2f2; color: #991b1b; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
-                                👎 Not there
+                                ðŸ‘Ž Not there
                             </button>
                         </div>
                         <div id="vote-status-${reportId}" style="font-size: 10px; text-align: center; color: #64748b; margin-top: 4px;"></div>
@@ -4239,7 +4404,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             hapticMilestone();
                             popup.remove();
                         } else {
-                            if (trustEl) trustEl.textContent = `⭐ Trust: ${res.trustScore}`;
+                            if (trustEl) trustEl.textContent = `â­ Trust: ${res.trustScore}`;
                             if (statusEl) statusEl.textContent = type === 'up' ? 'Thanks for confirming!' : 'Vote recorded!';
                             if (upBtn) (upBtn as HTMLButtonElement).disabled = true;
                             if (downBtn) (downBtn as HTMLButtonElement).disabled = true;
@@ -4289,7 +4454,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         id: 'community-buildings-layer',
                         type: 'symbol',
                         source: 'community-buildings',
-                        minzoom: 16,
+                        minzoom: 15,
                         layout: {
                             'text-field': ['coalesce', ['get', 'houseNumber'], ['get', 'house_number'], ['get', 'housenumber'], ['get', 'addr:housenumber'], ''],
                             'text-size': [
@@ -4461,6 +4626,101 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         };
     }, [communityBuildings, savedPlaces, userProfile, theme, isMapReady, styleVersion, currentUserId]);
+
+    // ==========================================
+    // NATIONAL ADDRESS DATABASE BUILDING NUMBERS
+    // Saved places only cover a handful of addresses. This viewport-backed
+    // source supplies the actual nearby building-number labels.
+    // ==========================================
+    useEffect(() => {
+        if (!map.current || !isMapReady) return;
+
+        const currentMap = map.current;
+        const sourceId = 'national-address-points';
+        const layerId = 'national-address-numbers';
+        let disposed = false;
+        let requestVersion = 0;
+        let refreshTimer: number | undefined;
+
+        const ensureLayer = () => {
+            if (!currentMap.isStyleLoaded()) return false;
+            if (!currentMap.getSource(sourceId)) {
+                currentMap.addSource(sourceId, { type: 'geojson', data: STATIC_EMPTY_FEATURE_COLLECTION });
+            }
+            if (!currentMap.getLayer(layerId)) {
+                currentMap.addLayer({
+                    id: layerId,
+                    type: 'symbol',
+                    source: sourceId,
+                    minzoom: 15,
+                    layout: {
+                        'text-field': ['get', 'houseNumber'],
+                        'text-font': ['Open Sans Bold', 'Open Sans Regular', 'Arial Unicode MS Bold'],
+                        'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10, 17, 12, 20, 14],
+                        'text-anchor': 'center',
+                        'text-pitch-alignment': 'viewport',
+                        'text-rotation-alignment': 'viewport',
+                        // Keeps the labels readable on dense residential blocks.
+                        'text-allow-overlap': false,
+                        'text-ignore-placement': false
+                    },
+                    paint: {
+                        'text-color': theme === 'dark' ? '#e2e8f0' : '#475569',
+                        'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.94)',
+                        'text-halo-width': 1.4,
+                        'text-halo-blur': 0.35,
+                        'text-opacity': ['interpolate', ['linear'], ['zoom'], 14.8, 0, 15.4, 1]
+                    }
+                });
+            }
+            return true;
+        };
+
+        const clear = () => {
+            const source = currentMap.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+            source?.setData(STATIC_EMPTY_FEATURE_COLLECTION);
+        };
+
+        const refresh = async () => {
+            if (disposed || !ensureLayer()) return;
+            const zoom = currentMap.getZoom();
+            if (zoom < 15) {
+                clear();
+                return;
+            }
+
+            const bounds = currentMap.getBounds();
+            const version = ++requestVersion;
+            const points = await getNationalAddressPoints({
+                north: bounds.getNorth(), south: bounds.getSouth(),
+                east: bounds.getEast(), west: bounds.getWest()
+            }, zoom);
+            // A late request may not replace labels from the current viewport.
+            if (disposed || version !== requestVersion) return;
+            const source = currentMap.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+            source?.setData(nationalAddressPointsToGeoJSON(points));
+        };
+
+        const scheduleRefresh = () => {
+            if (refreshTimer) window.clearTimeout(refreshTimer);
+            refreshTimer = window.setTimeout(() => { void refresh(); }, 180);
+        };
+
+        const handleStyleLoad = () => scheduleRefresh();
+        currentMap.on('moveend', scheduleRefresh);
+        currentMap.on('style.load', handleStyleLoad);
+        if (currentMap.isStyleLoaded()) scheduleRefresh();
+        else currentMap.once('load', scheduleRefresh);
+
+        return () => {
+            disposed = true;
+            requestVersion += 1;
+            if (refreshTimer) window.clearTimeout(refreshTimer);
+            currentMap.off('moveend', scheduleRefresh);
+            currentMap.off('style.load', handleStyleLoad);
+            currentMap.off('load', scheduleRefresh);
+        };
+    }, [isMapReady, styleVersion, theme]);
 
     // ==========================================
     // VOLATILE ACTIVE SEARCH LAYER (active-search-source)
@@ -4771,6 +5031,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         puckRafIdRef.current = requestAnimationFrame(animatePuck);
     }, []);
 
+    // Composite key to trigger member marker remounting when location or sharing status updates
+    const membersSharingKey = (members || []).map(m => `${m.id}:${m.isSharingLocation !== false && m.locationSharing !== false}:${m.location?.lat}:${m.location?.lng}:${m.status}`).join('|');
+
     // ==========================================
     // MEMBER AVATARS & LIVE LOCATION PUCK MARKERS
     // ==========================================
@@ -4788,9 +5051,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             isNavigating
         );
 
-        // ── GEOFENCE PLACE OCCUPANT CLUSTERING ───────────────────────
+        // â”€â”€ GEOFENCE PLACE OCCUPANT CLUSTERING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Evaluate if any members (or the local user when !isNavigating) fall within a Saved Place radius.
-        // If so, their standalone floating marker is suppressed and they are absorbed into that Place's occupant cluster.
+        // Place occupant summaries are populated on the Place pins while preserving individual member markers.
         const { clusteredIntoPlaceMemberIds } = computePlaceOccupants(
             (savedPlaces && savedPlaces.length > 0) ? savedPlaces : places,
             dedupedMembers,
@@ -4798,9 +5061,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             isNavigating
         );
 
-        // Filter to members who are NOT inside any saved place radius (and strictly exclude any building IDs)
+        // Filter to members eligible for rendering (strictly exclude any building IDs)
+        // Standalone member markers are not suppressed by saved place geofence occupancy
         const unclusteredMembers = dedupedMembers.filter(m => 
-            !clusteredIntoPlaceMemberIds.has(m.id) &&
             !m.id.startsWith('bld_') &&
             !m.id.startsWith('building_') &&
             !m.id.startsWith('comm_bld_') &&
@@ -4810,10 +5073,28 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         );
         const currentMemberIds = new Set(unclusteredMembers.map(m => m.id));
 
-        // ── CLUSTER DETECTION ──────────────────────────────────────
-        // Group remaining unclustered members within 15m of each other into clusters.
+        // A member cluster is the primary interaction when people and saved
+        // places overlap. Restore place-cluster visibility first; clusters
+        // found below selectively hide the duplicate place bubble.
+        placeClusterMarkersRef.current.forEach(marker => {
+            const element = marker.getElement();
+            if (element) element.style.display = 'flex';
+        });
+
+        // â”€â”€ CLUSTER DETECTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // At street scale preserve separate people. At city scale, cluster by
+        // screen distance so markers never collapse into an unreadable stack.
         // Self-navigating user is always kept solo so the arrow puck is never obscured.
         const CLUSTER_THRESHOLD_METERS = 15;
+        const clusterRadiusPx = markerClusterZoom < 12 ? 100 : markerClusterZoom < 14 ? 82 : markerClusterZoom < 15.2 ? 64 : 0;
+        const shouldClusterMembers = (a: FamilyMember, b: FamilyMember) => {
+            if (clusterRadiusPx > 0 && map.current) {
+                const aPoint = map.current.project([a.location.lng, a.location.lat]);
+                const bPoint = map.current.project([b.location.lng, b.location.lat]);
+                return Math.hypot(aPoint.x - bPoint.x, aPoint.y - bPoint.y) < clusterRadiusPx;
+            }
+            return getDistanceMeters(a.location, b.location) < CLUSTER_THRESHOLD_METERS;
+        };
         type MemberCluster = { members: FamilyMember[]; centroid: Location };
         const clusters: MemberCluster[] = [];
         const clustered = new Set<string>();
@@ -4836,8 +5117,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 const otherIsSelf = checkIsMemberSelf(other.id, currentUserId);
                 const otherIsSelfNav = isNavigating && otherIsSelf;
                 if (otherIsSelfNav) return; // don't cluster with nav puck
-                const dist = getDistanceMeters(member.location, other.location);
-                if (dist < CLUSTER_THRESHOLD_METERS) {
+                if (shouldClusterMembers(member, other)) {
                     group.push(other);
                     clustered.add(other.id);
                 }
@@ -4866,9 +5146,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         });
 
-        // Remove stale individual member markers (not in current unclustered set OR now clustered with members OR now absorbed into saved place)
+        // Remove stale individual member markers (not in current unclustered set OR now clustered with members)
         for (const [id, marker] of membersMarkersRef.current.entries()) {
-            if (!currentMemberIds.has(id) || clusteredMemberIds.has(id) || clusteredIntoPlaceMemberIds.has(id)) {
+            if (!currentMemberIds.has(id) || clusteredMemberIds.has(id)) {
                 marker.remove();
                 membersMarkersRef.current.delete(id);
             }
@@ -4882,13 +5162,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         }
 
-        // ── RENDER CLUSTERS ────────────────────────────────────────
+        // â”€â”€ RENDER CLUSTERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const isLightSkin = effectiveSkin === 'default' || effectiveSkin === 'warm_cream';
         const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
 
         clusters.forEach(cluster => {
             if (cluster.members.length === 1) {
-                // ── SOLO MEMBER ──
+                // â”€â”€ SOLO MEMBER â”€â”€
                 const member = cluster.members[0];
                 const isSelf = checkIsMemberSelf(member.id, currentUserId);
                 const isSelfNavigating = isNavigating && isSelf;
@@ -4919,13 +5199,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     let snappedPoint: Location | null = null;
                     let segBearing = 0;
 
-                    // Scan entire route coordinates to find the exact nearest polyline segment
-                    for (let i = 0; i < routeCoords.length - 1; i++) {
+                    // Forward-monotonic segment search to prevent puck latching backward to earlier route segments
+                    const currentIdx = Math.max(0, typeof splitIndex === 'number' ? splitIndex : 0);
+                    const forwardWindowStart = Math.max(0, currentIdx - 4);
+                    const forwardWindowEnd = Math.min(routeCoords.length - 1, Math.max(forwardWindowStart + 35, currentIdx + 20));
+
+                    // First check forward along the expected direction of travel
+                    for (let i = forwardWindowStart; i < forwardWindowEnd; i++) {
                         const a = routeCoords[i];
                         const b = routeCoords[i + 1];
                         const snap = getPointOnSegmentNearestTo(member.location, a, b);
                         const dist = getDistanceMeters(member.location, snap);
-                        
                         if (dist < minSegDist) {
                             minSegDist = dist;
                             snappedPoint = snap;
@@ -4933,11 +5217,26 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         }
                     }
 
+                    // If not found within immediate forward window, scan entire polyline (fallback for major re-routes)
+                    if (!snappedPoint || minSegDist > SNAPPING_THRESHOLD_METERS) {
+                        for (let i = 0; i < routeCoords.length - 1; i++) {
+                            const a = routeCoords[i];
+                            const b = routeCoords[i + 1];
+                            const snap = getPointOnSegmentNearestTo(member.location, a, b);
+                            const dist = getDistanceMeters(member.location, snap);
+                            if (dist < minSegDist) {
+                                minSegDist = dist;
+                                snappedPoint = snap;
+                                segBearing = getBearing(a, b);
+                            }
+                        }
+                    }
+
                     if (snappedPoint && minSegDist < SNAPPING_THRESHOLD_METERS) {
                         finalLocation = snappedPoint;
 
                         // Align orientation cleanly to the route polyline vector
-                        // If device true heading or delta movement bearing indicates a sharp divergence (> 65°),
+                        // If device true heading or delta movement bearing indicates a sharp divergence (> 65Â°),
                         // honor the vehicle's actual orientation (e.g. U-turns, sharp driveway maneuvers);
                         // otherwise lock smoothly straight along the route polyline vector (segBearing)
                         const candidateBearing = trueHeading ?? movementBearing;
@@ -4960,6 +5259,20 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             displayBearing = movementBearing;
                         } else if (segBearing !== 0) {
                             displayBearing = segBearing;
+                        }
+                    }
+
+                    // Terminal arrival snapping: when nearing destination, smoothly snap to destination coordinate P_dest
+                    const destLoc = activeRoute?.destinationLoc;
+                    if (destLoc && (hasArrived || (typeof remainingDistanceMeters === 'number' && remainingDistanceMeters <= 35) || currentIdx >= routeCoords.length - 3)) {
+                        const distToDest = getDistanceMeters(member.location, destLoc);
+                        if (distToDest <= 40) {
+                            // As vehicle finishes final maneuver (e.g. into driveway/curb), smoothly ease puck directly to destination point
+                            const snapT = Math.max(0, Math.min(1, (40 - distToDest) / 30));
+                            finalLocation = {
+                                lat: finalLocation.lat * (1 - snapT) + destLoc.lat * snapT,
+                                lng: finalLocation.lng * (1 - snapT) + destLoc.lng * snapT
+                            };
                         }
                     }
                 }
@@ -5018,7 +5331,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                                 ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
                                 <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
                             </div>
-                            ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${circleColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                            ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${circleColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">â–²</div>` : ''}
                             ${member.circleName ? `<div style="position: absolute; bottom: -1px; right: -1px; width: 13px; height: 13px; border-radius: 50%; background: ${circleColor}; border: 2px solid #0f172a; box-shadow: 0 2px 6px rgba(0,0,0,0.5);"></div>` : ''}
                         </div>
                         <div style="margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); border: 1px solid ${circleColor}88; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
@@ -5115,7 +5428,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         let deltaB = Math.abs(displayBearing - anim.currentBearing);
                         if (deltaB > 180) deltaB = 360 - deltaB;
 
-                        // If vehicle jumps > 300m or makes a sharp >120° turn/recalculation, reset instantly to avoid slow 1s spinning
+                        // If vehicle jumps > 300m or makes a sharp >120Â° turn/recalculation, reset instantly to avoid slow 1s spinning
                         if (dist > 300 || deltaB > 120) {
                             anim.prevCoords = [finalLocation.lng, finalLocation.lat];
                             anim.targetCoords = [finalLocation.lng, finalLocation.lat];
@@ -5144,7 +5457,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
 
             } else {
-                // ── GROUPED CLUSTER PILL MARKER ──
+                // â”€â”€ GROUPED CLUSTER PILL MARKER â”€â”€
                 const clusterMembers = cluster.members;
                 const clusterKey = 'cluster_' + clusterMembers.map(m => m.id).sort().join('_');
 
@@ -5157,25 +5470,32 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     }
                 });
 
-                // Build group label: "Alice & Bob" or "3 Members" if too long / ≥3 members
-                const names = clusterMembers.map(m => (m.name || 'Member').split(' ')[0]);
-                let groupLabel: string;
-                if (clusterMembers.length >= 3 || names.join(' & ').length > 18) {
-                    groupLabel = `${clusterMembers.length} Members`;
-                } else {
-                    groupLabel = names.join(' & ');
+                // The map label should identify the location, not repeat names
+                // already visible in the avatar stack. Names become available
+                // after tapping and expanding the cluster at street zoom.
+                let placeLabel = '';
+                let nearbyPlaceCount = 0;
+                const savedPlacePool = (savedPlaces && savedPlaces.length > 0) ? savedPlaces : places;
+                if (savedPlacePool && savedPlacePool.length > 0) {
+                    const nearbyPlaces = savedPlacePool.filter(p => p.location && getDistanceMeters(cluster.centroid, p.location) < 50);
+                    nearbyPlaceCount = new Set(nearbyPlaces.map(p => p.id)).size;
+                    const labels: string[] = Array.from(new Set(nearbyPlaces.map(p =>
+                        (p.address || p.description || p.location?.label || p.name || '').split(',')[0]?.trim()
+                    ).filter((label): label is string => Boolean(label))));
+                    // Two nearby saved places need both street identities; cap
+                    // the label so clusters remain compact at city zoom.
+                    placeLabel = labels.length > 1 ? labels.slice(0, 2).join(' / ') : (labels[0] || 'Nearby saved place');
                 }
 
-                // Find if the group is near a saved place for a context badge
-                let nearbyPlaceName = '';
-                if (places && places.length > 0) {
-                    for (const p of places) {
-                        if (p.location && getDistanceMeters(cluster.centroid, p.location) < 50) {
-                            nearbyPlaceName = p.name || '';
-                            break;
-                        }
+                // Do not render a second saved-place cluster directly beneath
+                // this people cluster. The address and place count now live in
+                // this one unified card instead.
+                placeClusterMarkersRef.current.forEach(placeClusterMarker => {
+                    const position = placeClusterMarker.getLngLat();
+                    if (getDistanceMeters(cluster.centroid, { lat: position.lat, lng: position.lng }) < 80) {
+                        placeClusterMarker.getElement().style.display = 'none';
                     }
-                }
+                });
 
                 // Determine a shared accent color from the first member
                 const accentColor = clusterMembers[0].circleColor || '#6366f1';
@@ -5208,23 +5528,22 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             ${avatarStackHtml}
                             ${overflowBadge}
                         </div>
-                        <!-- Group label pill -->
-                        <div style="margin-top: 3px; padding: 1px 8px; border-radius: 999px; background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(6px); border: 1px solid ${accentColor}66; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 3px 12px rgba(0,0,0,0.6);">
-                            <span style="width: 5px; height: 5px; border-radius: 50%; background: ${accentColor}; flex-shrink: 0;"></span>
-                            <span>${groupLabel}</span>
-                            ${nearbyPlaceName ? `<span style="color: rgba(255,255,255,0.5); font-size: 8px; margin-left: 2px;">· ${nearbyPlaceName}</span>` : ''}
+                        <!-- Address-first context; member names stay in the avatar stack. -->
+                        <div style="margin-top: 4px; max-width: 218px; padding: 4px 10px; border-radius: 999px; background: linear-gradient(135deg, #6d3df5, #8b5cf6); border: 2px solid rgba(255,255,255,0.94); color: #ffffff; font-size: 10px; font-weight: 850; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; box-shadow: 0 4px 14px rgba(76,29,149,0.42);">
+                            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z"/></svg>
+                            <span style="overflow:hidden;text-overflow:ellipsis;">${placeLabel || 'Nearby circle members'}</span>
+                        </div>
+                        <div style="margin-top: 3px; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,0.96); color: #334155; font-size: 9px; font-weight: 800; white-space: nowrap; box-shadow: 0 2px 8px rgba(15,23,42,0.2);">
+                            ${clusterMembers.length} ${clusterMembers.length === 1 ? 'person' : 'people'}${nearbyPlaceCount > 0 ? ` / ${nearbyPlaceCount} ${nearbyPlaceCount === 1 ? 'place' : 'places'}` : ' here'}
                         </div>
                     </div>
                 `;
 
-                const selectableClusterMembers = clusterMembers.filter(m => !checkIsMemberSelf(m.id, currentUserId));
-                const isAllClusterSelf = selectableClusterMembers.length === 0;
-
                 let clusterMarker = clusterMarkersRef.current.get(clusterKey);
                 if (!clusterMarker) {
                     const el = document.createElement('div');
-                    el.className = `myway-cluster-marker select-none ${isAllClusterSelf ? 'cursor-default' : 'cursor-pointer'}`;
-                    el.style.cursor = isAllClusterSelf ? 'default' : 'pointer';
+                    el.className = 'myway-cluster-marker select-none cursor-pointer';
+                    el.style.cursor = 'pointer';
                     el.style.display = 'flex';
                     el.style.flexDirection = 'column';
                     el.style.alignItems = 'center';
@@ -5232,19 +5551,21 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     el.innerHTML = clusterMarkerHtml;
                     (el as any)._lastHtml = clusterMarkerHtml;
 
-                    // Click handler: select first non-self member, cycle on repeated taps
-                    let tapIndex = 0;
+                    // A cluster tap expands the map until individual people and
+                    // their own place pins are legible, avoiding a hidden list.
                     const handleClusterClick = (e: Event) => {
                         e.stopPropagation();
                         if ((e as any).originalEvent?.stopPropagation) {
                             (e as any).originalEvent.stopPropagation();
                         }
                         lastMemberSelectTimeRef.current = Date.now();
-                        const currentSelectable = clusterMembers.filter(m => !checkIsMemberSelf(m.id, currentUserId));
-                        if (currentSelectable.length === 0) return;
-                        const targetMember = currentSelectable[tapIndex % currentSelectable.length];
-                        onSelectMemberRef.current?.(targetMember.id);
-                        tapIndex++;
+                        const activeMap = map.current;
+                        if (!activeMap) return;
+                        activeMap.flyTo({
+                            center: [cluster.centroid.lng, cluster.centroid.lat],
+                            zoom: Math.max(16, activeMap.getZoom() + 2),
+                            duration: 420
+                        });
                     };
                     el.addEventListener('click', handleClusterClick);
                     const stopClusterPointerPropagation = (e: Event) => {
@@ -5263,7 +5584,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     clusterMarkersRef.current.set(clusterKey, clusterMarker);
                 } else {
                     const existingClusterEl = clusterMarker.getElement();
-                    existingClusterEl.style.cursor = isAllClusterSelf ? 'default' : 'pointer';
+                    existingClusterEl.style.cursor = 'pointer';
                     // Update HTML only if changed (prevents DOM thrashing)
                     if ((existingClusterEl as any)._lastHtml !== clusterMarkerHtml) {
                         existingClusterEl.innerHTML = clusterMarkerHtml;
@@ -5273,7 +5594,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }
         });
-    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, userProfile?.displayName, userProfile?.photoURL, isMapReady, isNavigating, routeCoords, currentStepIndex, mapSkin, theme, styleVersion, onSelectMember, places, savedPlaces]);
+    }, [members, membersSharingKey, userLocation?.lat, userLocation?.lng, currentUserId, userProfile?.displayName, userProfile?.photoURL, isMapReady, isNavigating, routeCoords, currentStepIndex, splitIndex, remainingDistanceMeters, hasArrived, mapSkin, theme, styleVersion, markerClusterZoom, onSelectMember, places, savedPlaces]);
 
     // ==========================================
     // VEHICLE PUCK INTERPOLATION LIFECYCLE & CLEANUP
@@ -5291,7 +5612,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // ==========================================
     // DYNAMIC NAVIGATION CAMERA TRACKING SYSTEM (3RD PERSON CHASE CAM)
     // ==========================================
-    // When navigation is active: lock 3rd person chase camera behind the driver (60° tilt,
+    // When navigation is active: lock 3rd person chase camera behind the driver (60Â° tilt,
     // following travel heading with forward road padding). Paused when user explores the route ahead.
     useEffect(() => {
         if (!map.current || !isMapReady) return;
@@ -5429,13 +5750,48 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             // Fallback: Standard Single-Vehicle 3rd Person Perspective Chase View
             // Uses duration: 1000 and linear easing: (t) => t matching 1Hz GPS updates for buttery smooth tracking
             if (!isMultiVehicleConvoy) {
+                const destLoc = activeRoute?.destinationLoc;
+                const isFinalApproach = typeof remainingDistanceMeters === 'number' && remainingDistanceMeters <= 65 && !!destLoc; // ~200 ft
+
+                if (hasArrived && destLoc) {
+                    // Arrival terminal sequence: center directly on destination pin, ease pitch to 45Â°, zoom 17.5
+                    map.current.easeTo({
+                        center: [destLoc.lng, destLoc.lat],
+                        bearing: prevBearingRef.current,
+                        pitch: 45,
+                        zoom: 17.5,
+                        duration: 1200,
+                        easing: (t: number) => t * (2 - t)
+                    });
+                    return;
+                }
+
+                let targetPitch = 60;
+                let targetZoom = isMobileRef.current ? 18.2 : 18.4;
+                let targetCenter: [number, number] = [driverLoc.lng, driverLoc.lat];
+
+                if (isFinalApproach && destLoc) {
+                    // Waze approach sequence: as vehicle enters final 200 ft (65m), smoothly tilt camera pitch down from 60Â° to 45Â°,
+                    // slow rotation, and frame destination pin in the viewport
+                    const approachProgress = Math.max(0, Math.min(1, remainingDistanceMeters / 65)); // 1 at 65m, 0 at 0m
+                    targetPitch = 45 + 15 * approachProgress;
+                    targetZoom = 17.6 + (isMobileRef.current ? 0.6 : 0.8) * approachProgress;
+
+                    // Shift camera center toward destination pin for clean framing
+                    const blend = (1 - approachProgress) * 0.40;
+                    targetCenter = [
+                        driverLoc.lng + (destLoc.lng - driverLoc.lng) * blend,
+                        driverLoc.lat + (destLoc.lat - driverLoc.lat) * blend
+                    ];
+                }
+
                 map.current.easeTo({
-                    center: [driverLoc.lng, driverLoc.lat],
+                    center: targetCenter,
                     bearing: prevBearingRef.current,
-                    pitch: 60,
-                    zoom: isMobileRef.current ? 18.2 : 18.4,
+                    pitch: targetPitch,
+                    zoom: targetZoom,
                     padding: {
-                        top: navTopPadding,
+                        top: isFinalApproach ? Math.round(navTopPadding * 0.7) : navTopPadding,
                         bottom: 0,
                         left: isMobileRef.current ? 0 : 120,
                         right: 0
@@ -5446,9 +5802,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
             return;
         }
-    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isNavigating, isMapReady, routeCoords, is3DMode, isCameraFree, currentStepIndex]);
+    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isNavigating, isMapReady, routeCoords, is3DMode, isCameraFree, currentStepIndex, remainingDistanceMeters, hasArrived]);
 
-    // Camera control — initial center and member selection
+    // Camera control â€” initial center and member selection
     useEffect(() => {
         if (map.current && members.length > 0 && !selectedMemberId && !center && !isNavigating) {
             const you = members.find(m => (m.id === 'demo-you' || m.id === members[0].id) && !(m.location.lat === 0 && m.location.lng === 0));
@@ -5584,8 +5940,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 className={`absolute z-40 pointer-events-auto flex flex-col items-center gap-3 transition-all duration-300 map-controls-cluster ${
                     isMobile
                         ? (isNavigating 
-                            ? 'right-[max(0.875rem,env(safe-area-inset-right,0px))] bottom-32' 
-                            : 'right-[max(1rem,env(safe-area-inset-right,0px))] bottom-48 sm:bottom-52')
+                            ? 'right-[max(0.875rem,env(safe-area-inset-right,0px))] bottom-[calc(14rem+env(safe-area-inset-bottom,0px))]' 
+                            : 'right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[calc(12rem+env(safe-area-inset-bottom,0px))] sm:bottom-52')
                         : (isNavigating ? 'right-6 bottom-32' : 'right-6 bottom-36')
                 } landscape:!bottom-[max(6rem,calc(env(safe-area-inset-bottom,0px)+5rem))] landscape:!top-auto landscape:!right-[max(1rem,calc(env(safe-area-inset-right,0px)+0.75rem))]`}
             >
@@ -5600,13 +5956,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         <AlertTriangle className="w-5 h-5" />
                     </button>
                 )}
+
+                <button
+                    type="button"
+                    onClick={() => map.current?.easeTo({ bearing: 0, duration: 350 })}
+                    title="North up"
+                    aria-label="Reset map to north up"
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center bg-white hover:bg-indigo-50 border border-gray-100 text-indigo-600 active:scale-95 shadow-md transition-all"
+                >
+                    <Compass className="w-5 h-5" />
+                </button>
                 {/* Map Style Radial / Layer Picker (slides out to the left when held/toggled) */}
                 {showStylePicker && (
                     <div className="absolute right-14 bottom-0 flex items-center gap-1.5 bg-white rounded-2xl p-1.5 border border-gray-100 shadow-xl animate-in slide-in-from-right duration-200">
                         {[
-                            { id: 'standard' as const, label: '🗺️', name: 'Standard' },
-                            { id: 'satellite' as const, label: '🛰️', name: 'Satellite' },
-                            { id: 'terrain' as const, label: '⛰️', name: 'Terrain' },
+                            { id: 'standard' as const, label: 'ðŸ—ºï¸', name: 'Standard' },
+                            { id: 'satellite' as const, label: 'ðŸ›°ï¸', name: 'Satellite' },
+                            { id: 'terrain' as const, label: 'â›°ï¸', name: 'Terrain' },
                         ].map(opt => (
                             <button
                                 key={opt.id}
@@ -5647,7 +6013,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         title="Zoom Out"
                         className="w-10 h-10 flex items-center justify-center text-gray-700 hover:text-gray-900 hover:bg-gray-50 active:scale-95 transition-all text-xl font-bold select-none cursor-pointer"
                     >
-                        −
+                        -
                     </button>
 
                     {/* 3D / 2D & Map Style Toggle Button */}
@@ -5656,7 +6022,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         onPointerDown={handleStylePointerDown}
                         onPointerUp={handleStylePointerUp}
                         onPointerLeave={handleStylePointerLeave}
-                        title="Tap: Toggle 3D/2D View • Hold: Change Map Layer"
+                        title="Tap: Toggle 3D/2D View â€¢ Hold: Change Map Layer"
                         className={`w-10 h-10 flex flex-col items-center justify-center transition-all active:scale-95 select-none cursor-pointer ${
                             is3DMode 
                                 ? 'bg-white text-orange-500 font-bold hover:bg-orange-50/50' 
@@ -5681,3 +6047,4 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 };
 
 export default React.memo(MapLibre3DView);
+

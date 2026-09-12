@@ -712,23 +712,26 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             };
             setCurrentCoords(nextCoords);
 
+            // Moving the preview map must not recreate a legacy driveway box
+            // while the user has Standard (circle-only) selected.
+            const hasEntranceBox = entranceTypeRef.current !== 'none';
             const innerSource = mapInstanceRef.current.getSource('reticle-geofence-source') as maplibregl.GeoJSONSource;
             if (innerSource) {
-                const bCoords = getRotatedBoxCoords(nextCoords, entranceBoxRef.current);
+                const bCoords = hasEntranceBox ? getRotatedBoxCoords(nextCoords, entranceBoxRef.current) : [];
                 innerSource.setData({
                     type: 'Feature',
                     properties: {},
-                    geometry: { type: 'Polygon', coordinates: [bCoords] }
+                    geometry: { type: 'Polygon', coordinates: bCoords.length > 0 ? [bCoords] : [] }
                 });
             }
 
             const hystSource = mapInstanceRef.current.getSource('reticle-hysteresis-source') as maplibregl.GeoJSONSource;
             if (hystSource) {
-                const hCoords = getRotatedBoxCoords(nextCoords, entranceBoxRef.current, 5);
+                const hCoords = hasEntranceBox ? getRotatedBoxCoords(nextCoords, entranceBoxRef.current, 5) : [];
                 hystSource.setData({
                     type: 'Feature',
                     properties: {},
-                    geometry: { type: 'Polygon', coordinates: [hCoords] }
+                    geometry: { type: 'Polygon', coordinates: hCoords.length > 0 ? [hCoords] : [] }
                 });
             }
             return nextCoords;
@@ -885,7 +888,11 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             entranceLocation: hasBox ? finalCoords : (null as any),
             entrancePrecision: hasBox ? precisionData : (null as any),
             entranceBox: hasBox ? activeBox : (null as any),
-            imageUrl: finalPhotoUrl
+            imageUrl: finalPhotoUrl,
+            // Saving a geofence/pin edit makes this record authoritative if a
+            // legacy duplicate exists in another synced store.
+            isCorrected: true,
+            correctedAt: Date.now()
         });
         onClose();
     };

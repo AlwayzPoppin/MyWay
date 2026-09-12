@@ -22,23 +22,74 @@ export const getOffRouteThresholdMeters = (speedMph: number = 0): number => {
 // Default fallback constant for backward compatibility
 const OFF_ROUTE_THRESHOLD_METERS = 38;
 
-// Driving Behavior Thresholds
-const HARD_BRAKE_THRESHOLD = 4.5; // m/s² (~10 mph/s)
-const RAPID_ACCEL_THRESHOLD = 3.5; // m/s² (~8 mph/s)
+// Driving Behavior Thresholds (Calibrated for real-world automotive telematics)
+const HARD_BRAKE_THRESHOLD = 3.6; // m/s² (~8.1 mph/s deceleration)
+const RAPID_ACCEL_THRESHOLD = 2.8; // m/s² (~6.3 mph/s aggressive acceleration)
 const SPEEDING_THRESHOLD = 38.0; // m/s (~85 mph)
 
 // Arrival Geofence & Speed Thresholds
-export const ARRIVAL_RADIUS_METERS = 150; // ~500 feet (covers parking lots near destination)
+export const ARRIVAL_RADIUS_METERS = 30; // ~98 feet (precise curb / driveway arrival threshold, prevents premature lock)
 export const ARRIVAL_SPEED_THRESHOLD_MPS = 2; // meters/second (~4.47 mph, walking or stationary)
 export const ARRIVAL_CONSECUTIVE_TICKS = 3; // consecutive ticks required inside radius under speed threshold
 
 export interface NavigationState {
     currentStepIndex: number;
     distanceToNextStep: number; // in meters
+    remainingDistanceMeters?: number; // distance along the active route from the snapped position to the destination
+    remainingDurationSeconds?: number; // live ETA based on remaining road distance
     isOffRoute: boolean;
     hasArrived: boolean;
     splitIndex?: number; // Pre-calculated route split index for completed vs remaining line rendering
 }
+
+const remainingPolylineDistanceCache = new WeakMap<NavigationRoute, number[]>();
+
+/**
+ * Calculates road distance still ahead of the driver. The cumulative segment cache
+ * makes this safe to call on every accepted GPS update.
+ */
+export const getRemainingRouteDistanceMeters = (
+    currentLocation: Location,
+    route: NavigationRoute,
+    splitIndex: number = 0
+): number | null => {
+    const geometry = route.routeGeometry;
+    if (!geometry || geometry.length < 2) return null;
+
+    const { nearestIndex } = getDistanceToPolylineMeters(currentLocation, geometry, splitIndex);
+    const segmentIndex = Math.max(0, Math.min(geometry.length - 2, nearestIndex));
+    const segmentStart = { lat: geometry[segmentIndex][1], lng: geometry[segmentIndex][0] };
+    const segmentEnd = { lat: geometry[segmentIndex + 1][1], lng: geometry[segmentIndex + 1][0] };
+    const snappedPoint = getPointOnSegmentNearestTo(currentLocation, segmentStart, segmentEnd);
+
+    let segmentTotals = remainingPolylineDistanceCache.get(route);
+    if (!segmentTotals || segmentTotals.length !== geometry.length) {
+        segmentTotals = Array.from({ length: geometry.length }, () => 0);
+        for (let index = geometry.length - 2; index >= 0; index -= 1) {
+            const start = { lat: geometry[index][1], lng: geometry[index][0] };
+            const end = { lat: geometry[index + 1][1], lng: geometry[index + 1][0] };
+            segmentTotals[index] = getDistanceMeters(start, end) + (segmentTotals[index + 1] || 0);
+        }
+        remainingPolylineDistanceCache.set(route, segmentTotals);
+    }
+
+    return Math.max(0, getDistanceMeters(snappedPoint, segmentEnd) + (segmentTotals[segmentIndex + 1] || 0));
+};
+
+/**
+ * Converts the original route duration into a live ETA using the same
+ * road-following distance calculation used by the navigation display.
+ */
+const getRemainingRouteDurationSeconds = (
+    route: NavigationRoute,
+    remainingDistanceMeters: number | null
+): number | undefined => {
+    if (remainingDistanceMeters === null || !Number.isFinite(remainingDistanceMeters)) return undefined;
+    const originalSeconds = route.totalDurationSec || (route.durationMinutes ? route.durationMinutes * 60 : 0);
+    const originalDistance = route.distanceMeters || 0;
+    if (originalSeconds <= 0 || originalDistance <= 0) return undefined;
+    return Math.max(0, Math.round(originalSeconds * Math.min(1, remainingDistanceMeters / originalDistance)));
+};
 
 // Helper to calculate distance from a point to a line segment
 const getDistanceToSegmentMeters = (p: Location, a: Location, b: Location): number => {
@@ -206,13 +257,15 @@ export const updateNavigationState = (
     }
 
     const isOffRoute = distToRoute > offRouteThreshold;
+    const remainingDistanceMeters = getRemainingRouteDistanceMeters(currentLocation, route, splitIndex);
+    const remainingDurationSeconds = getRemainingRouteDurationSeconds(route, remainingDistanceMeters);
 
     // Safety check
     if (!steps || steps.length === 0 || currentStepIndex >= steps.length) {
         const distToFinal = route.destinationLoc ? getDistanceMeters(currentLocation, route.destinationLoc) : 0;
         const speedMps = speedMph / 2.23694;
         const hasActuallyArrived = distToFinal <= completionRadius || (distToFinal < ARRIVAL_RADIUS_METERS && speedMps < ARRIVAL_SPEED_THRESHOLD_MPS);
-        return { ...currentState, splitIndex, isOffRoute, hasArrived: hasActuallyArrived };
+        return { ...currentState, splitIndex, remainingDistanceMeters: hasActuallyArrived ? 0 : remainingDistanceMeters ?? undefined, remainingDurationSeconds: hasActuallyArrived ? 0 : remainingDurationSeconds, isOffRoute, hasArrived: hasActuallyArrived };
     }
 
     const currentStep = steps[currentStepIndex];
@@ -222,7 +275,7 @@ export const updateNavigationState = (
     const segmentStart = prevStep.endLocation || startLoc || currentLocation;
     const segmentEnd = currentStep.endLocation || (currentStepIndex === steps.length - 1 ? route.destinationLoc : null);
 
-    if (!segmentStart || !segmentEnd) return { ...currentState, splitIndex, isOffRoute };
+    if (!segmentStart || !segmentEnd) return { ...currentState, splitIndex, remainingDistanceMeters: remainingDistanceMeters ?? undefined, remainingDurationSeconds, isOffRoute };
 
     const distToTarget = getDistanceMeters(currentLocation, segmentEnd);
 
@@ -239,6 +292,8 @@ export const updateNavigationState = (
                 return {
                     currentStepIndex: currentStepIndex + 1,
                     distanceToNextStep: distToNextStep,
+                    remainingDistanceMeters: remainingDistanceMeters ?? undefined,
+                    remainingDurationSeconds,
                     isOffRoute: false,
                     hasArrived: false,
                     splitIndex
@@ -260,6 +315,8 @@ export const updateNavigationState = (
                 return {
                     currentStepIndex: steps.length - 1,
                     distanceToNextStep: 0,
+                    remainingDistanceMeters: 0,
+                    remainingDurationSeconds: 0,
                     isOffRoute: false,
                     hasArrived: true,
                     splitIndex: route.routeGeometry ? route.routeGeometry.length - 1 : splitIndex
@@ -269,6 +326,8 @@ export const updateNavigationState = (
                 return {
                     currentStepIndex: steps.length - 1,
                     distanceToNextStep: distToFinalDest,
+                    remainingDistanceMeters: remainingDistanceMeters ?? undefined,
+                    remainingDurationSeconds,
                     isOffRoute: false,
                     hasArrived: false,
                     splitIndex
@@ -279,6 +338,8 @@ export const updateNavigationState = (
             return {
                 currentStepIndex: nextIndex,
                 distanceToNextStep: getDistanceMeters(currentLocation, steps[nextIndex].endLocation || route.destinationLoc),
+                remainingDistanceMeters: remainingDistanceMeters ?? undefined,
+                remainingDurationSeconds,
                 isOffRoute: false,
                 hasArrived: false,
                 splitIndex
@@ -289,6 +350,8 @@ export const updateNavigationState = (
     return {
         ...currentState,
         distanceToNextStep: distToTarget,
+        remainingDistanceMeters: remainingDistanceMeters ?? undefined,
+        remainingDurationSeconds,
         isOffRoute,
         splitIndex
     };
@@ -302,17 +365,17 @@ export const analyzeDrivingBehavior = (
     previousSpeed: number, // meters per second
     timeDeltaMs: number // milliseconds
 ): 'hard_brake' | 'rapid_accel' | 'speeding' | null => {
-    // Filter out noise from very small time intervals
-    if (timeDeltaMs < 500) return null;
+    // Filter out noise from very small or excessively delayed intervals
+    if (timeDeltaMs < 400 || timeDeltaMs > 5000) return null;
 
     const timeSeconds = timeDeltaMs / 1000;
     const acceleration = (currentSpeed - previousSpeed) / timeSeconds;
 
     if (currentSpeed > SPEEDING_THRESHOLD) {
         return 'speeding';
-    } else if (acceleration < -HARD_BRAKE_THRESHOLD) {
+    } else if (acceleration < -HARD_BRAKE_THRESHOLD && previousSpeed >= 3.5) {
         return 'hard_brake';
-    } else if (acceleration > RAPID_ACCEL_THRESHOLD) {
+    } else if (acceleration > RAPID_ACCEL_THRESHOLD && currentSpeed >= 2.5) {
         return 'rapid_accel';
     }
 

@@ -27,6 +27,7 @@ export class CrashDetectionService extends EventTarget {
     private speedGetter: SpeedGetter | null = null;
     private currentSpeedMph = 0;
     private lastKnownLocation: Location | null = null;
+    private lastLocationFixAt = 0;
     private lastImpact: CrashImpactMetadata | null = null;
 
     // Threshold: 4G = ~39.2 m/s² — typical car crash produces 20-60G
@@ -52,8 +53,9 @@ export class CrashDetectionService extends EventTarget {
     }
 
     /** Update last known location */
-    public updateLocation(location: Location): void {
+    public updateLocation(location: Location, gpsTimestamp = Date.now()): void {
         this.lastKnownLocation = location;
+        this.lastLocationFixAt = gpsTimestamp;
     }
 
     /** Get the effective speed dynamically */
@@ -62,14 +64,30 @@ export class CrashDetectionService extends EventTarget {
     }
 
     /** Headless background crash trigger (e.g. from native background GPS deceleration) */
-    public triggerHeadlessCrash(location: Location, speedMph: number): void {
+    public triggerHeadlessCrash(location: Location, speedMph: number, deceleration = 0, currentSpeedMph = 0, gpsTimestamp = Date.now()): void {
         const now = Date.now();
+        const freshFix = Math.abs(now - gpsTimestamp) <= 10_000;
+        const wasDriving = speedMph >= 20;
+        const meaningfulStop = currentSpeedMph <= Math.max(5, speedMph * 0.4);
+        const severeDeceleration = deceleration >= 12;
+        // GPS speed alone is noisy. A candidate needs a fresh fix, active driving,
+        // a substantial speed drop, and severe deceleration before it starts a countdown.
+        if (!this.isMonitoring || !freshFix || !wasDriving || !meaningfulStop || !severeDeceleration || this.countdownTimer) {
+            return;
+        }
         if (now - this.lastCrashTime < this.COOLDOWN_MS) return;
         this.lastCrashTime = now;
         this.lastKnownLocation = location;
+        this.lastLocationFixAt = gpsTimestamp;
+        this.lastImpact = {
+            speed: Math.round(speedMph),
+            gForce: Number((deceleration / 9.81).toFixed(1)),
+            deceleration: Number(deceleration.toFixed(1)),
+            severity: deceleration >= 25 ? 'critical' : 'severe'
+        };
 
-        console.warn(`🚨 Headless Crash Triggered: ${speedMph.toFixed(0)} mph sudden stop at (${location.lat.toFixed(4)}, ${location.lng.toFixed(4)})`);
-        this.dispatchEvent(new CustomEvent('crash', { detail: { speed: speedMph, deceleration: 30 } }));
+        console.warn(`🚨 Possible crash: ${speedMph.toFixed(0)} mph to ${currentSpeedMph.toFixed(0)} mph, ${deceleration.toFixed(1)} m/s²`);
+        this.dispatchEvent(new CustomEvent('crash', { detail: { speed: speedMph, deceleration, impact: this.lastImpact } }));
         this.startCountdown();
     }
 
@@ -104,7 +122,10 @@ export class CrashDetectionService extends EventTarget {
         const speed = this.getSpeed();
 
         // Skip if not driving fast enough (prevents "dropped phone" false positives)
-        if (speed < this.MIN_SPEED_MPH) return;
+        if (!this.isMonitoring || speed < this.MIN_SPEED_MPH || this.countdownTimer) return;
+        // Do not turn an accelerometer spike into an SOS if we no longer have a
+        // recent location fix to share with the circle.
+        if (Date.now() - this.lastLocationFixAt > 15_000) return;
 
         // Calculate total acceleration magnitude (minus gravity ~9.81)
         const magnitude = Math.sqrt(x * x + y * y + z * z);
@@ -149,14 +170,14 @@ export class CrashDetectionService extends EventTarget {
     private startCountdown(): void {
         this.countdownSeconds = 30;
         this.countdownCallback?.(this.countdownSeconds);
-        audioService.speak('Crash detected. Sending SOS in 30 seconds.');
+        audioService.speak('Possible crash detected. Are you okay? Sending SOS in 30 seconds.');
 
         if (Capacitor.isNativePlatform()) {
             LocalNotifications.schedule({
                 notifications: [{
                     id: 911,
-                    title: '🚨 Crash Detected — SOS Alert',
-                    body: 'High impact detected. Sending emergency SOS in 30s. Tap to cancel if safe.',
+                    title: '🚨 Possible crash detected — Are you okay?',
+                    body: 'Tap I\'m OK to cancel, or Get Help to alert your circle now. SOS sends in 30 seconds.',
                     sound: 'beep.wav'
                 }]
             }).catch(err => console.warn('Local notification error:', err));
@@ -310,6 +331,10 @@ export class CrashDetectionService extends EventTarget {
     public getRemainingSeconds(): number {
         return this.countdownSeconds;
     }
+
+    public getLastImpact(): CrashImpactMetadata | null {
+        return this.lastImpact;
+    }
 }
 
 // Singleton Service Instance
@@ -332,3 +357,4 @@ export const isCrashMonitoringActive = (): boolean => crashDetectionService.isMo
 export const isCountdownActive = (): boolean => crashDetectionService.isCountdownInProgress();
 export const getCountdownRemaining = (): number => crashDetectionService.getRemainingSeconds();
 export const requestMotionPermission = (): Promise<boolean> => crashDetectionService.requestMotionPermission();
+export const getLastCrashImpact = (): CrashImpactMetadata | null => crashDetectionService.getLastImpact();

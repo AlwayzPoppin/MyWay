@@ -121,6 +121,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     {isSignUp && (
                         <input
                             type="text"
+                            name="displayName"
+                            autoComplete="nickname"
+                            aria-label="Display Name"
                             placeholder="Display Name"
                             value={displayName}
                             onChange={(e) => setDisplayName(e.target.value)}
@@ -133,6 +136,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     )}
                     <input
                         type="email"
+                        name="email"
+                        autoComplete="username"
+                        aria-label="Email Address"
                         placeholder="Email Address"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
@@ -146,6 +152,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                         <div>
                             <input
                                 type="password"
+                                name="password"
+                                autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                                aria-label="Password"
                                 placeholder="Password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}

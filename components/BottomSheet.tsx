@@ -9,6 +9,8 @@ import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { FamilyCircle, getCircleColor } from '../services/authService';
 import { MemberStatusText } from '../utils/memberStatus';
 import { MemberAvatarWithRing, AddMemberButton } from './MemberCard';
+import { isAtHomePlace } from '../services/locationService';
+import { isOlderCircleSyncProtocol } from '../services/appVersionService';
 import {
     Shield,
     Fuel,
@@ -53,6 +55,7 @@ const BOTTOM_SHEET_PLACE_CATEGORIES = [
 
 interface BottomSheetProps {
     members: FamilyMember[];
+    currentUserId?: string;
     selectedId: string | null;
     onSelect: (id: string) => void;
     theme: 'light' | 'dark';
@@ -92,6 +95,7 @@ interface BottomSheetProps {
 
 const BottomSheet: React.FC<BottomSheetProps> = ({
     members,
+    currentUserId,
     selectedId,
     onSelect,
     theme,
@@ -226,8 +230,10 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         }
     };
 
-    const renderStatusIcon = (status: string, currentPlace?: string) => {
-        if (currentPlace && status === 'Stationary') return <Home className="w-2.5 h-2.5 text-indigo-400 shrink-0" />;
+    const renderStatusIcon = (status: string, currentPlace?: string, location?: Location) => {
+        // A Home glyph is reserved for the actual Home geofence. currentPlace
+        // may be from a previous fix and must never make a moving member appear home.
+        if (status === 'Stationary' && location && isAtHomePlace(location)) return <Home className="w-2.5 h-2.5 text-indigo-400 shrink-0" />;
         switch (status) {
             case 'Driving': return <Car className="w-2.5 h-2.5 text-sky-400 shrink-0" />;
             case 'Walking':
@@ -262,7 +268,25 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     };
 
     const isDark = theme === 'dark';
-    const activeCount = members.filter(m => m.status !== 'Offline').length;
+    // Keep the Hub summary tied to the same GPS freshness contract used by the
+    // live map. A stale last-known pin is useful context, but never "active now".
+    const isLocationStale = (member: FamilyMember) => {
+        if (member.locationStale) return true;
+        const updatedAt = Date.parse(member.lastUpdated || '');
+        return !Number.isFinite(updatedAt) || Date.now() - updatedAt > 90_000;
+    };
+    const activeCount = members.filter(member => member.status !== 'Offline' && !isLocationStale(member)).length;
+    const homeCount = members.filter(member =>
+        member.status === 'Stationary' &&
+        !isLocationStale(member) &&
+        Boolean(member.location) &&
+        isAtHomePlace(member.location, userPlaces)
+    ).length;
+    const drivingCount = members.filter(member => member.status === 'Driving' && !isLocationStale(member)).length;
+    const movingCount = members.filter(member =>
+        (member.status === 'Moving' || member.status === 'Walking') && !isLocationStale(member)
+    ).length;
+    const staleLocationCount = members.filter(isLocationStale).length;
 
     return (
         <>
@@ -309,7 +333,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                     {/* Avatars Carousel */}
                     <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-2 px-1">
                         {members.map((member, index) => {
-                            const isUnresolved = !member.location || (member.location.lat === 0 && member.location.lng === 0);
+                            const isUnresolved = !member.companionDeviceLabel && (!member.location || (member.location.lat === 0 && member.location.lng === 0));
                             return (
                             <button
                                 key={member.id}
@@ -358,7 +382,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                     ) : member.currentTrip ? (
                                         <Car className="w-2.5 h-2.5 text-white" />
                                     ) : (
-                                        renderStatusIcon(member.status, member.currentPlace)
+                                        renderStatusIcon(member.status, member.currentPlace, member.location)
                                     )}
                                 </div>
                             </button>
@@ -465,7 +489,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 }`}
                             >
                                 <Users className="w-3.5 h-3.5 shrink-0" />
-                                <span>CIRCLE ({members.length})</span>
+                                <span>{hasCircle ? `MEMBERS (${members.length})` : 'CIRCLE'}</span>
                             </button>
 
                             <button
@@ -527,6 +551,26 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         <h3 className={`text-sm font-black truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
                                             {activeCount} Active Now
                                         </h3>
+                                        <div className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`} aria-label="Live circle status">
+                                            <span className="inline-flex items-center gap-1">
+                                                <Home className="w-2.5 h-2.5 text-indigo-400" />
+                                                {homeCount} home
+                                            </span>
+                                            <span className="inline-flex items-center gap-1">
+                                                <Car className="w-2.5 h-2.5 text-sky-400" />
+                                                {drivingCount} driving
+                                            </span>
+                                            <span className="inline-flex items-center gap-1">
+                                                <Navigation className="w-2.5 h-2.5 text-emerald-400" />
+                                                {movingCount} moving
+                                            </span>
+                                            {staleLocationCount > 0 && (
+                                                <span className="inline-flex items-center gap-1 text-amber-500" title="Members with an older last-known location">
+                                                    <Clock className="w-2.5 h-2.5" />
+                                                    {staleLocationCount} stale
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
 
                                     <div className="flex items-center gap-2 shrink-0">
@@ -606,7 +650,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 <div className="space-y-2">
                                     {members.map(member => {
                                         const memberCircleHex = member.circleColor || '#6366f1';
-                                        const isUnresolved = !member.location || (member.location.lat === 0 && member.location.lng === 0);
+                                        const isUnresolved = !member.companionDeviceLabel && (!member.location || (member.location.lat === 0 && member.location.lng === 0));
+                                        const needsSyncUpdate = isOlderCircleSyncProtocol(member.syncProtocolVersion);
                                         return (
                                         <div
                                             key={member.id}
@@ -639,10 +684,27 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                 <div className="flex-1 text-left min-w-0">
                                                     <div className="flex items-center justify-between gap-1">
                                                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                                                            <h4 className={`font-black text-sm truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                                                                {member.name}
-                                                                {member.name === 'You' && <span className="ml-1 text-xs text-indigo-400 font-bold">(You)</span>}
-                                                            </h4>
+                                                            {(() => {
+                                                                const isSelf = Boolean(
+                                                                    (currentUserId && member.id === currentUserId) ||
+                                                                    member.id === 'demo-you' ||
+                                                                    (member as any).isSelf
+                                                                );
+                                                                return (
+                                                                    <>
+                                                                        <h4 className={`font-black text-sm truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                                                                            {member.name}
+                                                                        </h4>
+                                                                        {isSelf && (
+                                                                            <span className={`text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border shrink-0 ${
+                                                                                isDark ? 'bg-indigo-500/20 border-indigo-400/35 text-indigo-200' : 'bg-indigo-50 border-indigo-200 text-indigo-600'
+                                                                            }`}>
+                                                                                You
+                                                                            </span>
+                                                                        )}
+                                                                    </>
+                                                                );
+                                                            })()}
                                                             {isUnresolved ? (
                                                                 <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
                                                                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
@@ -678,7 +740,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             ) : null}
                                                         </div>
                                                         <div className="flex items-center gap-1.5 shrink-0">
-                                                            {onOpenMessages && (
+                                                            {onOpenMessages && !(
+                                                                (currentUserId && member.id === currentUserId) ||
+                                                                member.id === 'demo-you' ||
+                                                                (member as any).isSelf
+                                                            ) && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={(e) => {
@@ -695,7 +761,12 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                             )}
                                                         </div>
                                                     </div>
-                                                    {isUnresolved ? (
+                                                    {member.companionDeviceLabel ? (
+                                                        <div className="text-[11px] font-medium text-sky-400/90 flex items-center gap-1.5 truncate mt-0.5">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block shrink-0" />
+                                                            <span className="truncate">{member.companionDeviceLabel}</span>
+                                                        </div>
+                                                    ) : isUnresolved ? (
                                                         <div className="text-[11px] font-medium text-amber-400/90 flex items-center gap-1.5 truncate mt-0.5">
                                                             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block shrink-0" />
                                                             <span className="truncate">Waiting for device signal…</span>
@@ -708,6 +779,12 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                                     isDark ? 'text-slate-400' : 'text-slate-500'
                                                                 }`}
                                                             />
+                                                        </div>
+                                                    )}
+                                                    {needsSyncUpdate && (
+                                                        <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-black text-amber-500">
+                                                            <AlertTriangle className="h-3 w-3" />
+                                                            Update needed for live sync
                                                         </div>
                                                     )}
                                                 </div>

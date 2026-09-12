@@ -48,7 +48,7 @@ export function formatParkedStatus(streetOrZone: string): string {
 /**
  * Loads known places from memory or synchronously reads from localStorage:
  * - myway_user_places
- * - myway_precise_home_location
+ * - myway_precise_home_location (migration fallback only)
  */
 export function getKnownPlaces(explicitPlaces?: Place[]): Place[] {
     const placesMap = new Map<string, Place>();
@@ -91,7 +91,13 @@ export function getKnownPlaces(explicitPlaces?: Place[]): Place[] {
             const rawHome = localStorage.getItem('myway_precise_home_location');
             if (rawHome) {
                 const home = JSON.parse(rawHome);
-                if (home && typeof home.lat === 'number' && typeof home.lng === 'number' && !placesMap.has('precise_home')) {
+                // A saved Home is the source of truth. The profile/local-storage
+                // coordinate exists only for older accounts that have not yet
+                // created a saved place; rendering both creates two Home radii.
+                const hasSavedHome = Array.from(placesMap.values()).some(place =>
+                    place.type === 'home' || place.name?.trim().toLowerCase() === 'home'
+                );
+                if (home && typeof home.lat === 'number' && typeof home.lng === 'number' && !hasSavedHome && !placesMap.has('precise_home')) {
                     placesMap.set('precise_home', {
                         id: 'precise_home',
                         name: 'Home',
@@ -345,8 +351,8 @@ export function shouldExecuteReverseGeocode(
 }
 
 /**
- * Resolves comprehensive location status for a member or coordinates
- * following the strict 3-tier hierarchy:
+ * Resolves the member's current movement or place status. A parked status is
+ * only carried through when the parking tracker has explicitly confirmed it.
  */
 export function resolveLocationStatus(
     coords: { lat?: number; lng?: number } | null | undefined,
@@ -357,9 +363,36 @@ export function resolveLocationStatus(
         reverseStreet?: string | null;
         lastUpdated?: string;
         currentPlace?: string;
+        /** Arrival is one accurate fix inside; at is the confirmed second fix. */
+        placePhase?: 'arriving' | 'at';
     } = {}
 ): string {
     const speedMph = Math.round(options.speed || 0);
+    let savedPlaceName: string | null = null;
+
+    if (coords && coords.lat != null && coords.lng != null && !isNaN(coords.lat) && !isNaN(coords.lng)) {
+        const pt = { lat: coords.lat, lng: coords.lng };
+        const allPlaces = getKnownPlaces(options.places);
+
+        if (isAtHomePlace(pt, allPlaces)) {
+            savedPlaceName = 'Home';
+        } else {
+            const microZone = checkTier1MicroZone(pt, allPlaces);
+            const savedPlace = checkTier2SavedPlace(pt, allPlaces);
+            savedPlaceName = microZone?.place.name || savedPlace?.place.name || savedPlace?.streetName || null;
+        }
+    }
+
+    // The geofence engine is authoritative for an arrival. Do not turn the
+    // first boundary crossing into a completed arrival or let motion overwrite
+    // a confirmed saved-place label.
+    if (options.placePhase === 'arriving' && savedPlaceName) {
+        return `Arriving at ${savedPlaceName}`;
+    }
+    if (options.placePhase === 'at' && savedPlaceName) {
+        return `At ${savedPlaceName}`;
+    }
+
     const isMoving = options.status === 'Driving'
         || options.status === 'Moving'
         || options.status === 'Walking'
@@ -376,21 +409,13 @@ export function resolveLocationStatus(
         return speedMph > 0 ? `${activity} • ${speedMph} MPH` : activity;
     }
 
-    if (coords && coords.lat != null && coords.lng != null && !isNaN(coords.lat) && !isNaN(coords.lng)) {
-        const pt = { lat: coords.lat, lng: coords.lng };
-        const allPlaces = getKnownPlaces(options.places);
-
-        // TIER 1: Micro-Zones (Driveway bounding box, parking zone)
-        const microZone = checkTier1MicroZone(pt, allPlaces);
-        if (microZone) {
-            return microZone.status; // e.g. "Parked in Driveway"
+    if (savedPlaceName) {
+        // A device only reports Parked after its own parking tracker confirms
+        // a parking zone that it has not left.
+        if (/^parked\b/i.test(options.status || '')) {
+            return options.status!;
         }
-
-        // TIER 2: Saved Place Address (known street, e.g. "Carson Drive")
-        const savedPlace = checkTier2SavedPlace(pt, allPlaces);
-        if (savedPlace) {
-            return savedPlace.status; // e.g. "Parked on Carson Drive"
-        }
+        return `At ${savedPlaceName}`;
     }
 
     // Existing place indicator if available
@@ -399,15 +424,16 @@ export function resolveLocationStatus(
     }
 
     // TIER 3: Raw Reverse-Geocode Fallback (completely outside saved places)
-    if (options.reverseStreet) {
-        return formatParkedStatus(options.reverseStreet);
+    const isGenericTelemetryLabel = /^(stationary|moving|walking|driving|offline)$/i.test((options.reverseStreet || '').trim());
+    if (options.reverseStreet && !isGenericTelemetryLabel) {
+        return `Stationary near ${options.reverseStreet}`;
     }
 
     if (options.status === 'Offline') {
         return 'Offline';
     }
 
-    return 'Parked';
+    return 'Stationary';
 }
 
 /**
@@ -464,4 +490,3 @@ export function isAtHomePlace(
 
     return false;
 }
-

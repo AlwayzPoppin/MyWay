@@ -144,6 +144,480 @@ const mapQueryToOverpassType = (query: string): string | null => {
     return null;
 };
 
+export const GAS_AND_CONVENIENCE_BRANDS = [
+    '7-eleven', '7 eleven', '7eleven', 'seven eleven',
+    'circle k', 'circlek', 'kangaroo express',
+    'wawa', 'sheetz', 'speedway', 'quiktrip', 'qt',
+    'racetrac', 'buc-ee', 'casey', 'cumberland farms',
+    'royal farms', 'pilot', 'flying j', 'loves travel',
+    'love\'s', 'murphy usa', 'murphy express', 'scotchman',
+    'fastrip', 'family fare', 'bp', 'shell', 'exxon',
+    'mobil', 'chevron', 'texaco', 'citgo', 'marathon',
+    'sunoco', 'valero', 'phillips 66', 'conoco', 'sinclair',
+    'sam\'s club gas', 'costco gas', 'kroger fuel'
+];
+
+export const FAST_FOOD_AND_BURGER_BRANDS = [
+    'mcdonald', 'burger king', 'wendy', 'chick-fil-a', 'chickfila',
+    'taco bell', 'kfc', 'popeyes', 'bojangles', 'subway',
+    'domino', 'pizza hut', 'papa john', 'little caesar', 'chipotle',
+    'sonic', 'cook out', 'cookout', 'culver', 'five guys',
+    'jack in the box', 'hardee', 'carl\'s jr', 'carls jr', 'arby',
+    'dairy queen', 'panda express', 'ihop', 'denny', 'waffle house',
+    'cracker barrel', 'golden corral', 'applebee', 'chili\'s', 'chilis',
+    'olive garden', 'red lobster', 'outback'
+];
+
+export const PHARMACY_BRANDS = [
+    'walgreens', 'cvs', 'rite aid', 'duane reade', 'pharmacy', 'drugstore'
+];
+
+export const AUTO_SERVICE_BRANDS = [
+    'jiffy lube', 'valvoline', 'take 5', 'firestone', 'goodyear',
+    'discount tire', 'pep boys', 'midas', 'meineke', 'autozone',
+    'advance auto', 'o\'reilly auto', 'oreilly auto', 'napa auto',
+    'carquest', 'safelite', 'maaco', 'aamco', 'express oil'
+];
+
+export const SUPERMARKET_BRANDS = [
+    'walmart', 'target', 'costco', 'sam\'s club', 'sams club', 'bj\'s', 'bjs',
+    'food lion', 'harris teeter', 'kroger', 'publix', 'aldi', 'lidl',
+    'trader joe', 'whole foods', 'piggly wiggly', 'lowes foods', 'carlie c',
+    'sprouts', 'safeway', 'heb', 'meijer', 'wegmans', 'winco'
+];
+
+export const HOME_IMPROVEMENT_BRANDS = [
+    'home depot', 'lowe\'s', 'lowes', 'ace hardware', 'harbor freight',
+    'tractor supply', 'menards', 'true value'
+];
+
+export const BANK_BRANDS = [
+    'wells fargo', 'bank of america', 'chase', 'citibank', 'pnc',
+    'truist', 'first citizens', 'td bank', 'us bank', 'capital one',
+    'navy federal', 'state employees credit union', 'secu'
+];
+
+export const GYM_BRANDS = [
+    'planet fitness', 'la fitness', 'anytime fitness', 'crunch fitness',
+    'gold\'s gym', 'equinox', 'ymca', 'orangetheory', 'f45', 'crossfit'
+];
+
+export const HOTEL_BRANDS = [
+    'hotel', 'motel', 'inn', 'suites', 'marriott', 'hilton', 'holiday inn',
+    'hampton inn', 'comfort inn', 'best western', 'hyatt', 'courtyard',
+    'fairfield', 'la quinta', 'super 8', 'motel 6', 'days inn', 'extended stay'
+];
+
+export const COFFEE_BRANDS = [
+    'starbucks', 'dunkin', 'dutch bros', 'peet', 'caribou coffee',
+    'tim horton', 'scooter', 'biggby', 'black rifle coffee'
+];
+
+/**
+ * Safely checks if a brand/term exists in the place name using word-boundary matching.
+ * Prevents substring collisions like "Cinnabon" matching "inn", "Headquarters" matching "qt",
+ * or "Subpoena" matching "bp".
+ */
+export function matchesWordBoundary(text: string, term: string): boolean {
+    if (!text || !term) return false;
+    const cleanText = text.replace(/[\u2018\u2019`]/g, "'").trim();
+    const cleanTerm = term.replace(/[\u2018\u2019`]/g, "'").trim();
+    const escaped = cleanTerm.replace(/[-[\]{}()*+?.,\\^$|#]/g, '\\$&');
+    const pattern = new RegExp(`(^|[^a-zA-Z0-9])${escaped}('?s)?([^a-zA-Z0-9]|$)`, 'i');
+    return pattern.test(cleanText);
+}
+
+export const isGasOrConvenienceBrand = (name?: string): boolean => {
+    if (!name) return false;
+    return GAS_AND_CONVENIENCE_BRANDS.some(b => matchesWordBoundary(name, b));
+};
+
+export const resolvePlaceCategory = (
+    name: string,
+    types: string[] = [],
+    osmProps: { osmValue?: string; amenity?: string; shop?: string } = {}
+): { placeType: Place['type']; icon: string; category?: string } => {
+    const rawName = name || '';
+    const nLower = rawName.toLowerCase().replace(/[\u2018\u2019`]/g, "'").trim();
+    const osmVal = (osmProps.osmValue || osmProps.amenity || osmProps.shop || '').toLowerCase().trim();
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. EXACT / WORD-BOUNDARY BRAND & DEPARTMENT MATCHING (IDENTITY FIRST)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // A. Big-Box Department Checks (Walmart Auto Care, Costco Tire Center, etc.)
+    // Specific service departments MUST be classified as maintenance/pharmacy/gas
+    // BEFORE parent-place big box protection applies!
+    const isBigBoxBrand = ['walmart', 'target', 'costco', "sam's club", 'sams club', "bj's", 'bjs', 'meijer'].some(
+        b => matchesWordBoundary(nLower, b)
+    );
+
+    if (isBigBoxBrand) {
+        if (
+            matchesWordBoundary(nLower, 'auto care') ||
+            matchesWordBoundary(nLower, 'tire') ||
+            matchesWordBoundary(nLower, 'tire & lube') ||
+            matchesWordBoundary(nLower, 'tire center') ||
+            matchesWordBoundary(nLower, 'lube') ||
+            matchesWordBoundary(nLower, 'car care')
+        ) {
+            return {
+                placeType: 'maintenance',
+                icon: '🔧',
+                category: 'Auto Care / Tire'
+            };
+        }
+
+        if (
+            matchesWordBoundary(nLower, 'gas') ||
+            matchesWordBoundary(nLower, 'gasoline') ||
+            matchesWordBoundary(nLower, 'fuel')
+        ) {
+            return {
+                placeType: 'gas',
+                icon: '⛽',
+                category: 'Gas Station'
+            };
+        }
+
+        if (
+            matchesWordBoundary(nLower, 'pharmacy') ||
+            matchesWordBoundary(nLower, 'drugstore') ||
+            matchesWordBoundary(nLower, 'rx')
+        ) {
+            return {
+                placeType: 'pharmacy',
+                icon: '💊',
+                category: 'Pharmacy'
+            };
+        }
+
+        // Parent-place big box protection: general Walmart Supercenters/Targets are department stores
+        return {
+            placeType: 'grocery',
+            icon: '🛒',
+            category: 'Department Store'
+        };
+    }
+
+    // B. Specific Automotive Service Brands (Jiffy Lube, AutoZone, Firestone, etc.)
+    const isAutoBrand = AUTO_SERVICE_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isAutoBrand) {
+        let cat = 'Auto Service';
+        let ic = '🔧';
+        if (matchesWordBoundary(nLower, 'parts') || matchesWordBoundary(nLower, 'auto parts')) {
+            cat = 'Auto Parts';
+        } else if (matchesWordBoundary(nLower, 'wash') || matchesWordBoundary(nLower, 'car wash')) {
+            cat = 'Car Wash';
+            ic = '🚿';
+        } else if (matchesWordBoundary(nLower, 'tire') || matchesWordBoundary(nLower, 'tires')) {
+            cat = 'Tire Service';
+        } else if (matchesWordBoundary(nLower, 'oil') || matchesWordBoundary(nLower, 'lube')) {
+            cat = 'Oil Change';
+        }
+        return {
+            placeType: 'maintenance',
+            icon: ic,
+            category: cat
+        };
+    }
+
+    // C. Specific Pharmacy Brands (Walgreens, CVS, Rite Aid, etc.)
+    // Checked before convenience store so Walgreens is never labeled a generic bodega
+    const isPharmacyBrand = PHARMACY_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isPharmacyBrand) {
+        return {
+            placeType: 'pharmacy',
+            icon: '💊',
+            category: 'Pharmacy'
+        };
+    }
+
+    // D. Specific Fast Food, Pizza, Mexican & Restaurant Brands (McDonald's, Wendy's, Domino's, etc.)
+    // Checked before Coffee/Cafe so McDonald's McCafé never gets labeled Coffee Shop
+    const isFastFoodBrand = FAST_FOOD_AND_BURGER_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isFastFoodBrand) {
+        let foodIcon = '🍔';
+        let foodCategory = 'Fast Food';
+        if (matchesWordBoundary(nLower, 'pizza') || ['domino', 'pizza hut', 'papa john', 'little caesar'].some(b => matchesWordBoundary(nLower, b))) {
+            foodIcon = '🍕';
+            foodCategory = 'Pizza';
+        } else if (matchesWordBoundary(nLower, 'taco') || matchesWordBoundary(nLower, 'burrito') || matchesWordBoundary(nLower, 'chipotle') || matchesWordBoundary(nLower, 'taco bell')) {
+            foodIcon = '🌮';
+            foodCategory = 'Mexican';
+        } else if (['bojangles', 'chick-fil-a', 'chickfila', 'kfc', 'popeyes', 'zaxby', 'raising cane'].some(b => matchesWordBoundary(nLower, b))) {
+            foodIcon = '🍗';
+            foodCategory = 'Chicken & Fast Food';
+        } else if (matchesWordBoundary(nLower, 'panera')) {
+            foodIcon = '🥖';
+            foodCategory = 'Bakery & Cafe';
+        } else if (matchesWordBoundary(nLower, 'subway') || matchesWordBoundary(nLower, 'jersey mike') || matchesWordBoundary(nLower, 'jimmy john') || matchesWordBoundary(nLower, 'firehouse subs')) {
+            foodIcon = '🥪';
+            foodCategory = 'Sub & Sandwich';
+        }
+        return {
+            placeType: 'food',
+            icon: foodIcon,
+            category: foodCategory
+        };
+    }
+
+    // E. Specific Coffee Brands (Starbucks, Dunkin', Dutch Bros, etc.)
+    const isCoffeeBrand = COFFEE_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isCoffeeBrand) {
+        return {
+            placeType: 'coffee',
+            icon: '☕',
+            category: matchesWordBoundary(nLower, 'dunkin') ? 'Coffee & Donuts' : 'Coffee Shop'
+        };
+    }
+
+    // F. Specific Gas & Convenience Brands (7-Eleven, Circle K, Wawa, Sheetz, BP, etc.)
+    const isGasBrand = isGasOrConvenienceBrand(nLower);
+    if (isGasBrand) {
+        return {
+            placeType: 'gas',
+            icon: '⛽',
+            category: 'Gas & Convenience'
+        };
+    }
+
+    // G. Specific Supermarket / Grocery Brands (Food Lion, Publix, Kroger, Aldi, etc.)
+    const isSupermarketBrand = SUPERMARKET_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isSupermarketBrand) {
+        return {
+            placeType: 'grocery',
+            icon: '🛒',
+            category: 'Supermarket'
+        };
+    }
+
+    // H. Specific Home Improvement Brands (Home Depot, Lowe's, Ace Hardware, etc.)
+    const isHomeBrand = HOME_IMPROVEMENT_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isHomeBrand) {
+        return {
+            placeType: 'search_result',
+            icon: '🔨',
+            category: 'Home Improvement'
+        };
+    }
+
+    // I. Specific Bank Brands (Wells Fargo, Chase, PNC, etc.)
+    const isBankBrand = BANK_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isBankBrand) {
+        return {
+            placeType: 'search_result',
+            icon: '🏦',
+            category: 'Bank & ATM'
+        };
+    }
+
+    // J. Specific Gym Brands (Planet Fitness, LA Fitness, etc.)
+    const isGymBrand = GYM_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isGymBrand) {
+        return {
+            placeType: 'gym',
+            icon: '💪',
+            category: 'Gym & Fitness'
+        };
+    }
+
+    // K. Specific Hotel Brands (Holiday Inn, Marriott, Hilton, etc.)
+    const isHotelBrand = HOTEL_BRANDS.some(b => matchesWordBoundary(nLower, b));
+    if (isHotelBrand) {
+        return {
+            placeType: 'search_result',
+            icon: '🏨',
+            category: 'Hotel / Lodging'
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. EXPLICIT PROVIDER TYPES (Google types / OSM tags)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Explicit Gas Station / Fuel
+    if (types.includes('gas_station') || osmVal === 'fuel') {
+        return {
+            placeType: 'gas',
+            icon: '⛽',
+            category: 'Gas Station'
+        };
+    }
+
+    // Explicit Pharmacy / Drugstore
+    if (types.includes('pharmacy') || types.includes('drugstore') || osmVal === 'pharmacy') {
+        return {
+            placeType: 'pharmacy',
+            icon: '💊',
+            category: 'Pharmacy'
+        };
+    }
+
+    // Explicit Hospital, Emergency Room, or Urgent Care
+    if (
+        types.includes('hospital') ||
+        osmVal === 'hospital' ||
+        osmVal === 'clinic' ||
+        matchesWordBoundary(nLower, 'urgent care') ||
+        matchesWordBoundary(nLower, 'emergency room') ||
+        matchesWordBoundary(nLower, 'emergency department') ||
+        matchesWordBoundary(nLower, 'er')
+    ) {
+        const isUrgent = matchesWordBoundary(nLower, 'urgent care') || matchesWordBoundary(nLower, 'walk-in') || matchesWordBoundary(nLower, 'clinic');
+        return {
+            placeType: 'hospital',
+            icon: '🏥',
+            category: isUrgent ? 'Urgent Care' : 'Hospital / ER'
+        };
+    }
+
+    // Explicit Automotive Repair, Parts & Wash
+    if (
+        types.includes('car_repair') ||
+        types.includes('auto_parts_store') ||
+        types.includes('car_wash') ||
+        osmVal.includes('car_repair') ||
+        osmVal === 'car_wash'
+    ) {
+        let cat = 'Auto Service';
+        let ic = '🔧';
+        if (types.includes('auto_parts_store') || matchesWordBoundary(nLower, 'parts')) {
+            cat = 'Auto Parts';
+        } else if (types.includes('car_wash') || osmVal === 'car_wash' || matchesWordBoundary(nLower, 'wash')) {
+            cat = 'Car Wash';
+            ic = '🚿';
+        }
+        return {
+            placeType: 'maintenance',
+            icon: ic,
+            category: cat
+        };
+    }
+
+    // Explicit Supermarket / Grocery
+    if (
+        types.includes('grocery_or_supermarket') ||
+        types.includes('supermarket') ||
+        osmVal.includes('supermarket') ||
+        osmVal.includes('grocery')
+    ) {
+        return {
+            placeType: 'grocery',
+            icon: '🛒',
+            category: 'Supermarket'
+        };
+    }
+
+    // Explicit Coffee / Cafe
+    if (types.includes('cafe') || types.includes('coffee') || osmVal === 'cafe' || matchesWordBoundary(nLower, 'coffee') || matchesWordBoundary(nLower, 'espresso')) {
+        return {
+            placeType: 'coffee',
+            icon: '☕',
+            category: 'Coffee Shop'
+        };
+    }
+
+    // Explicit Restaurant / Dining
+    if (
+        types.includes('restaurant') ||
+        types.includes('meal_takeaway') ||
+        types.includes('meal_delivery') ||
+        osmVal === 'restaurant' ||
+        osmVal === 'fast_food'
+    ) {
+        let foodIcon = '🍔';
+        let foodCategory = 'Food & Dining';
+        if (matchesWordBoundary(nLower, 'pizza')) { foodIcon = '🍕'; foodCategory = 'Pizza'; }
+        else if (matchesWordBoundary(nLower, 'taco') || matchesWordBoundary(nLower, 'burrito') || matchesWordBoundary(nLower, 'mexican')) { foodIcon = '🌮'; foodCategory = 'Mexican'; }
+        else if (matchesWordBoundary(nLower, 'chinese') || matchesWordBoundary(nLower, 'wok') || matchesWordBoundary(nLower, 'asian') || matchesWordBoundary(nLower, 'panda')) { foodIcon = '🥡'; foodCategory = 'Asian Dining'; }
+        else if (matchesWordBoundary(nLower, 'sushi') || matchesWordBoundary(nLower, 'ramen') || matchesWordBoundary(nLower, 'japanese')) { foodIcon = '🍣'; foodCategory = 'Japanese'; }
+        else if (matchesWordBoundary(nLower, 'burger')) { foodIcon = '🍔'; foodCategory = 'Burgers & Fries'; }
+        else if (matchesWordBoundary(nLower, 'bakery')) { foodIcon = '🥖'; foodCategory = 'Bakery'; }
+
+        return {
+            placeType: 'food',
+            icon: foodIcon,
+            category: foodCategory
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. PARENT-PLACE PROTECTION FOR BIG-BOX / DEPARTMENT STORES
+    // ─────────────────────────────────────────────────────────────────────────
+    if (types.includes('department_store') || osmVal === 'department_store') {
+        return {
+            placeType: 'grocery',
+            icon: '🛒',
+            category: 'Department Store'
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 4. GENERIC CATEGORY FALLBACK
+    // ─────────────────────────────────────────────────────────────────────────
+    if (types.includes('food')) {
+        return {
+            placeType: 'food',
+            icon: '🍔',
+            category: 'Food & Dining'
+        };
+    }
+
+    if (types.includes('convenience_store') || osmVal === 'convenience' || matchesWordBoundary(nLower, 'dollar')) {
+        return {
+            placeType: 'grocery',
+            icon: '🏪',
+            category: matchesWordBoundary(nLower, 'dollar') ? 'Discount Store' : 'Convenience Store'
+        };
+    }
+
+    if (types.includes('gym') || osmVal === 'fitness_centre' || matchesWordBoundary(nLower, 'gym') || matchesWordBoundary(nLower, 'fitness')) {
+        return {
+            placeType: 'gym',
+            icon: '💪',
+            category: 'Gym & Fitness'
+        };
+    }
+
+    if (types.includes('bank') || (types.includes('atm') && types.includes('finance')) || osmVal === 'bank') {
+        return {
+            placeType: 'search_result',
+            icon: '🏦',
+            category: 'Bank & ATM'
+        };
+    }
+
+    if (types.includes('hair_care') || osmVal === 'hairdresser' || matchesWordBoundary(nLower, 'barber') || matchesWordBoundary(nLower, 'salon')) {
+        return {
+            placeType: 'search_result',
+            icon: '💈',
+            category: 'Barber / Salon'
+        };
+    }
+
+    if (types.includes('hardware_store') || osmVal === 'hardware') {
+        return {
+            placeType: 'search_result',
+            icon: '🔨',
+            category: 'Home Improvement'
+        };
+    }
+
+    if (types.includes('lodging') || osmVal === 'hotel' || osmVal === 'motel' || matchesWordBoundary(nLower, 'hotel') || matchesWordBoundary(nLower, 'motel')) {
+        return {
+            placeType: 'search_result',
+            icon: '🏨',
+            category: 'Hotel / Lodging'
+        };
+    }
+
+    return {
+        placeType: 'search_result',
+        icon: '📍'
+    };
+};
+
 // In-memory LRU Cache for geocoding queries (max 50 entries, 15-minute TTL)
 interface CacheEntry {
     results: Place[];
@@ -475,39 +949,23 @@ const searchViaPhoton = async (
             const osmValue = (props.osm_value || props.type || '').toLowerCase();
             const isStreetOrHighway = osmValue === 'highway' || props.type === 'street' || props.osm_key === 'highway';
             const hasVerifiedHouseNum = Boolean(props.housenumber) && !isStreetOrHighway;
-            let placeType: Place['type'] = 'search_result';
-            if (osmValue === 'fuel') placeType = 'gas';
-            else if (osmValue === 'cafe') placeType = 'coffee';
-            else if (osmValue === 'restaurant' || osmValue === 'fast_food') placeType = 'food';
 
-            let icon = '📍';
-            if (osmValue === 'fuel') icon = '⛽';
-            else if (osmValue === 'cafe') icon = '☕';
-            else if (osmValue === 'restaurant' || osmValue === 'fast_food') icon = '🍔';
-            
-            const nLower = (props.name || '').toLowerCase();
-            if (nLower.includes('taco') || nLower.includes('burrito') || nLower.includes('mexican')) icon = '🌮';
-            else if (nLower.includes('pizza')) icon = '🍕';
-            else if (nLower.includes('chinese') || nLower.includes('wok') || nLower.includes('asian') || nLower.includes('dragon') || nLower.includes('panda')) icon = '🥡';
-            else if (nLower.includes('sushi') || nLower.includes('ramen') || nLower.includes('japanese')) icon = '🍣';
-            else if (nLower.includes('mcdonald') || nLower.includes('burger') || nLower.includes('wendy') || nLower.includes('jack in the box') || nLower.includes('sonic') || nLower.includes('cook out') || nLower.includes('cookout')) icon = '🍔';
-            else if (nLower.includes('bojangles') || nLower.includes('chick-fil-a') || nLower.includes('kfc') || nLower.includes('popeyes') || nLower.includes('chicken')) icon = '🍗';
-            else if (nLower.includes('coffee') || nLower.includes('starbucks') || nLower.includes('dunkin')) icon = '☕';
-            else if (nLower.includes('fuel') || nLower.includes('gas') || nLower.includes('shell') || nLower.includes('exxon') || nLower.includes('chevron') || nLower.includes('bp') || nLower.includes('speedway') || nLower.includes('sheetz') || nLower.includes('circle k') || nLower.includes('wawa')) icon = '⛽';
-            else if (nLower.includes('food lion') || nLower.includes('carlie c') || nLower.includes('harris teeter') || nLower.includes('publix') || nLower.includes('piggly wiggly') || nLower.includes('lowes foods') || nLower.includes('fresh market') || nLower.includes('lidl') || nLower.includes('aldi') || nLower.includes('trader joe') || nLower.includes('whole foods') || nLower.includes('walmart') || nLower.includes('target') || nLower.includes('costco') || nLower.includes('kroger') || nLower.includes('market') || nLower.includes('grocery') || nLower.includes('supermarket')) icon = '🛒';
-            else if (nLower.includes('pharmacy') || nLower.includes('walgreens') || nLower.includes('cvs')) icon = '💊';
-            else if (nLower.includes('bank') || nLower.includes('atm') || nLower.includes('chase') || nLower.includes('wells fargo') || nLower.includes('bank of america')) icon = '🏦';
-
-
+            const { placeType, icon, category } = resolvePlaceCategory(
+                displayName,
+                [],
+                { osmValue, shop: props.osm_key === 'shop' ? props.osm_value : undefined }
+            );
 
             return {
                 id: `photon-${props.osm_id || i}`,
                 name: displayName,
                 type: placeType,
+                category,
                 icon,
                 location: { lat, lng },
                 radius: 0.15,
                 brandColor: '#6366f1',
+                address: cleanAddress,
                 description: cleanAddress,
                 houseNumber: hasVerifiedHouseNum ? String(props.housenumber) : undefined,
                 isRooftop: hasVerifiedHouseNum,
@@ -542,7 +1000,11 @@ const searchViaOverpass = async (
             nw["shop"~"${patterns.namePattern}",i](around:25000, {{lat}}, {{lng}});
         );`;
     } else if (typeOrQuery === 'gas_station') {
-        amenityQuery = 'nw["amenity"="fuel"](around:8000, {{lat}}, {{lng}});';
+        amenityQuery = `(
+            nw["amenity"="fuel"](around:8000, {{lat}}, {{lng}});
+            nw["shop"="convenience"]["fuel"="yes"](around:8000, {{lat}}, {{lng}});
+            nw["shop"="convenience"]["name"~"7-Eleven|Circle K|Wawa|Sheetz|Speedway|QuikTrip|RaceTrac|Buc-ee|Casey|Pilot|Love|Murphy|Exxon|Shell|BP|Valero",i](around:8000, {{lat}}, {{lng}});
+        );`;
     } else if (typeOrQuery === 'cafe') {
         amenityQuery = 'nw["amenity"="cafe"](around:8000, {{lat}}, {{lng}});';
     } else if (typeOrQuery === 'restaurant') {
@@ -593,47 +1055,36 @@ const searchViaOverpass = async (
                 const cleanAddress = addrParts.length > 0 ? addrParts.join(', ') : (tags['addr:full'] || 'Nearby');
 
                 const amenity = tags.amenity || tags.shop || tags.leisure || '';
-                let placeType: Place['type'] = 'other';
-                if (amenity === 'fuel') placeType = 'gas';
-                else if (amenity === 'cafe') placeType = 'coffee';
-                else if (amenity === 'restaurant' || amenity === 'fast_food') placeType = 'food';
-
-                let icon = '📍';
-                if (amenity === 'fuel') icon = '⛽';
-                else if (amenity === 'cafe') icon = '☕';
-                else if (amenity === 'restaurant' || amenity === 'fast_food') icon = '🍔';
-                else if (amenity.includes('supermarket') || amenity.includes('grocery')) icon = '🛒';
-                else if (amenity === 'hairdresser') icon = '💈';
-                else if (amenity === 'pharmacy') icon = '💊';
-                else if (amenity.includes('fitness')) icon = '💪';
-                else if (amenity.includes('bar') || amenity.includes('pub')) icon = '🍺';
-
-                const nLower = (tags.name || '').toLowerCase();
-                if (nLower.includes('chinese') || nLower.includes('wok') || nLower.includes('asian') || nLower.includes('sino') || nLower.includes('panda')) icon = '🥡';
-                else if (nLower.includes('taco') || nLower.includes('mexican')) icon = '🌮';
-                else if (nLower.includes('pizza')) icon = '🍕';
-                else if (nLower.includes('sushi') || nLower.includes('japanese') || nLower.includes('ramen')) icon = '🍣';
+                const pName = tags.name || (
+                    typeOrQuery === 'gas_station' ? 'Gas Station' : 
+                    typeOrQuery === 'cafe' ? 'Coffee Shop' : 
+                    typeOrQuery === 'restaurant' ? 'Restaurant' : 
+                    typeOrQuery === 'hairdresser' ? 'Barber / Salon' : 
+                    typeOrQuery === 'grocery_or_supermarket' ? 'Grocery Store' : 
+                    typeOrQuery === 'pharmacy' ? 'Pharmacy' : 
+                    typeOrQuery === 'gym' ? 'Gym / Fitness' : 
+                    typeOrQuery
+                );
+                
+                const { placeType, icon: pIcon, category } = resolvePlaceCategory(
+                    pName,
+                    [amenity],
+                    { osmValue: amenity, amenity: tags.amenity, shop: tags.shop }
+                );
 
                 return {
                     id: `overpass-${el.id || i}`,
-                    name: tags.name || (
-                        typeOrQuery === 'gas_station' ? 'Gas Station' : 
-                        typeOrQuery === 'cafe' ? 'Coffee Shop' : 
-                        typeOrQuery === 'restaurant' ? 'Restaurant' : 
-                        typeOrQuery === 'hairdresser' ? 'Barber / Salon' : 
-                        typeOrQuery === 'grocery_or_supermarket' ? 'Grocery Store' : 
-                        typeOrQuery === 'pharmacy' ? 'Pharmacy' : 
-                        typeOrQuery === 'gym' ? 'Gym / Fitness' : 
-                        typeOrQuery
-                    ),
+                    name: pName,
                     type: placeType,
-                    icon,
+                    category,
+                    icon: pIcon,
                     location: {
                         lat: el.lat ?? el.center?.lat ?? 0,
                         lng: el.lon ?? el.center?.lon ?? 0
                     },
                     radius: 0.15,
                     brandColor: '#6366f1',
+                    address: cleanAddress !== 'Nearby' ? cleanAddress : undefined,
                     description: cleanAddress
                 };
             });
@@ -811,16 +1262,11 @@ const searchViaNominatim = async (
             const state = addr.state || 'NC';
             const cleanAddress = `${displayName}, ${city}, ${state}`;
 
-            let placeType: Place['type'] = 'search_result';
-            if (r.type === 'fuel') placeType = 'gas';
-            else if (r.type === 'cafe') placeType = 'coffee';
-            else if (r.type === 'restaurant' || r.type === 'fast_food') placeType = 'food';
-
-            let icon = '📍';
-            if (r.type === 'university') icon = '🏫';
-            else if (r.type === 'restaurant' || r.type === 'fast_food') icon = '🍔';
-            else if (r.type === 'fuel') icon = '⛽';
-            else if (r.type === 'cafe') icon = '☕';
+            const { placeType, icon: pIcon, category } = resolvePlaceCategory(
+                displayName,
+                [r.type, r.class],
+                { osmValue: r.type }
+            );
 
             return {
                 id: `nominatim-${r.place_id || i}`,
@@ -832,7 +1278,8 @@ const searchViaNominatim = async (
                 address: cleanAddress,
                 description: cleanAddress,
                 type: placeType,
-                icon,
+                category,
+                icon: pIcon,
                 rating: 4.5,
                 source: 'nominatim',
                 houseNumber: hasVerifiedHouseNum ? verifiedHouseNum : undefined,
@@ -971,15 +1418,7 @@ export const searchPlacesText = async (
                                             }
 
                                             const types = [...(pred.types || []), ...(r.types || [])];
-                                            let placeType: Place['type'] = 'search_result';
-                                            let icon = '📍';
-                                            if (types.includes('gas_station')) { placeType = 'gas'; icon = '⛽'; }
-                                            else if (types.includes('cafe') || types.includes('coffee')) { placeType = 'coffee'; icon = '☕'; }
-                                            else if (types.includes('restaurant') || types.includes('food')) { placeType = 'food'; icon = '🍔'; }
-                                            else if (types.includes('grocery_or_supermarket') || types.includes('supermarket')) { placeType = 'grocery'; icon = '🛒'; }
-                                            else if (types.includes('pharmacy') || types.includes('drugstore')) { placeType = 'pharmacy'; icon = '💊'; }
-                                            else if (types.includes('hospital')) { placeType = 'hospital'; icon = '🏥'; }
-                                            else if (types.includes('bank') || types.includes('atm')) { icon = '🏦'; }
+                                            const { placeType, icon: pIcon, category } = resolvePlaceCategory(mainText, types);
 
                                             resResolve({
                                                 id: `google-${pred.place_id}`,
@@ -987,7 +1426,8 @@ export const searchPlacesText = async (
                                                 location: { lat, lng },
                                                 radius: 0.15,
                                                 type: placeType,
-                                                icon,
+                                                category,
+                                                icon: pIcon,
                                                 brandColor: '#4285F4',
                                                 description: formattedAddress,
                                                 address: formattedAddress,
@@ -1006,7 +1446,8 @@ export const searchPlacesText = async (
 
                         const validMapped = resolved.filter((p): p is Place => p !== null);
                         if (validMapped.length > 0) {
-                            const verifiedPlaces = await applyCommunityPinsToPlaces(validMapped);
+                            const correctedMapped = placeCorrectionService.applyCorrectionsToPlaces(validMapped);
+                            const verifiedPlaces = await applyCommunityPinsToPlaces(correctedMapped);
                             const uniquePlaces = deduplicatePlaces(verifiedPlaces);
                             setCachedResults(cacheKey, uniquePlaces);
                             return uniquePlaces;
@@ -1065,15 +1506,7 @@ export const searchPlacesText = async (
                             }
 
                             const types = [...(pred.types || []), ...(res.types || [])];
-                            let placeType: Place['type'] = 'search_result';
-                            let icon = '📍';
-                            if (types.includes('gas_station')) { placeType = 'gas'; icon = '⛽'; }
-                            else if (types.includes('cafe') || types.includes('coffee')) { placeType = 'coffee'; icon = '☕'; }
-                            else if (types.includes('restaurant') || types.includes('food')) { placeType = 'food'; icon = '🍔'; }
-                            else if (types.includes('grocery_or_supermarket') || types.includes('supermarket')) { placeType = 'grocery'; icon = '🛒'; }
-                            else if (types.includes('pharmacy') || types.includes('drugstore')) { placeType = 'pharmacy'; icon = '💊'; }
-                            else if (types.includes('hospital')) { placeType = 'hospital'; icon = '🏥'; }
-                            else if (types.includes('bank') || types.includes('atm')) { icon = '🏦'; }
+                            const { placeType, icon: pIcon, category } = resolvePlaceCategory(mainText, types);
 
                             return {
                                 id: `google-${pred.place_id}`,
@@ -1081,7 +1514,8 @@ export const searchPlacesText = async (
                                 location: { lat: loc.lat, lng: loc.lng },
                                 radius: 0.15,
                                 type: placeType,
-                                icon,
+                                category,
+                                icon: pIcon,
                                 brandColor: '#4285F4',
                                 description: formattedAddress,
                                 address: formattedAddress,
@@ -1098,7 +1532,8 @@ export const searchPlacesText = async (
 
                 const validMapped = resolvedPlaces.filter((p): p is Place => p !== null);
                 if (validMapped.length > 0) {
-                    const verifiedPlaces = await applyCommunityPinsToPlaces(validMapped);
+                    const correctedMapped = placeCorrectionService.applyCorrectionsToPlaces(validMapped);
+                    const verifiedPlaces = await applyCommunityPinsToPlaces(correctedMapped);
                     const uniquePlaces = deduplicatePlaces(verifiedPlaces);
                     setCachedResults(cacheKey, uniquePlaces);
                     return uniquePlaces;
@@ -1154,7 +1589,8 @@ export const searchPlacesText = async (
                         };
                     });
 
-                    const verifiedPlaces = await applyCommunityPinsToPlaces(mappedResults);
+                    const correctedMapped = placeCorrectionService.applyCorrectionsToPlaces(mappedResults);
+                    const verifiedPlaces = await applyCommunityPinsToPlaces(correctedMapped);
                     const uniquePlaces = deduplicatePlaces(verifiedPlaces);
                     setCachedResults(cacheKey, uniquePlaces);
                     return uniquePlaces;
@@ -1169,7 +1605,8 @@ export const searchPlacesText = async (
 
     // 2. Fallback: Proxy search via Firebase Functions / OSM if Google key is unavailable or restricted
     const fallbackResults = await searchViaProxy(validLoc, query);
-    const verifiedFallback = await applyCommunityPinsToPlaces(fallbackResults);
+    const correctedFallback = placeCorrectionService.applyCorrectionsToPlaces(fallbackResults);
+    const verifiedFallback = await applyCommunityPinsToPlaces(correctedFallback);
     const uniqueFallbackPlaces = deduplicatePlaces(verifiedFallback);
 
     if (uniqueFallbackPlaces.length > 0) {
@@ -1285,14 +1722,176 @@ export const searchMaintenanceAlongRoute = async (
 };
 
 /**
+ * Search gas stations or EV charging stations along a route corridor.
+ * Returns sorted list of stations with detour minutes and miles computed.
+ */
+export const searchGasStationsAlongRoute = async (
+    routeGeometry: Array<{ lat: number; lng: number } | [number, number]> | undefined,
+    userLocation?: { lat: number; lng: number } | null,
+    isEv: boolean = false
+): Promise<Place[]> => {
+    const query = isEv ? 'EV charging station' : 'gas station';
+    const icon = isEv ? '⚡' : '⛽';
+    const brandColor = isEv ? '#10b981' : '#f59e0b';
+
+    if (!routeGeometry || routeGeometry.length === 0) {
+        const center = userLocation || DEFAULT_COORDS;
+        const results = await searchViaProxy(center, query);
+        return results.map(p => ({
+            ...p,
+            type: (isEv ? 'charging_station' : 'gas_station') as any,
+            icon,
+            brandColor
+        }));
+    }
+
+    // Convert routeGeometry to normalized {lat, lng} array
+    const normalizedCoords: Array<{ lat: number; lng: number }> = routeGeometry.map(pt => {
+        if (Array.isArray(pt)) return { lng: pt[0], lat: pt[1] };
+        return { lat: (pt as any).lat, lng: (pt as any).lng };
+    });
+
+    // Sample corridor anchor points along route (user location/start, 25%, 50%, 75%)
+    const samplePoints: Array<{ lat: number; lng: number }> = [];
+    if (userLocation) samplePoints.push(userLocation);
+    const step = Math.max(1, Math.floor(normalizedCoords.length / 4));
+    for (let i = 0; i < normalizedCoords.length; i += step) {
+        samplePoints.push(normalizedCoords[i]);
+    }
+
+    try {
+        const apiKey = getActiveGoogleKey();
+
+        // 1. Google Places corridor search (if API key available)
+        const googlePromises = (apiKey && !googleMapsAuthFailed)
+            ? samplePoints.slice(0, 4).map(async (pt) => {
+                try {
+                    const gUrl = `${getGoogleApiBase()}/maps/api/place/nearbysearch/json?location=${pt.lat},${pt.lng}&radius=3500&type=${isEv ? 'charging_station' : 'gas_station'}&key=${apiKey}`;
+                    const res = await fetch(gUrl, { signal: AbortSignal.timeout(3500) });
+                    if (!res.ok) return [];
+                    const data = await res.json();
+                    if (!Array.isArray(data.results)) return [];
+                    return data.results.map((r: any): Place => ({
+                        id: `google-${r.place_id}`,
+                        name: r.name,
+                        location: { lat: r.geometry?.location?.lat, lng: r.geometry?.location?.lng },
+                        radius: 0.15,
+                        type: (isEv ? 'charging_station' : 'gas_station') as any,
+                        icon,
+                        brandColor,
+                        rating: r.rating || 4.5,
+                        address: r.vicinity || r.formatted_address,
+                        description: r.vicinity || r.formatted_address,
+                        category: isGasOrConvenienceBrand(r.name) ? 'Gas & Convenience' : 'Gas Station'
+                    }));
+                } catch {
+                    return [];
+                }
+            })
+            : [];
+
+        // 2. High-speed OSM / Proxy corridor searches
+        const osmPromises = samplePoints.slice(0, 4).map(pt => searchViaProxy(pt, query).catch(() => []));
+
+        const [googleArrays, osmArrays] = await Promise.all([
+            Promise.all(googlePromises),
+            Promise.all(osmPromises)
+        ]);
+        const allResults = [...googleArrays.flat(), ...osmArrays.flat()];
+
+        const seen = new Set<string>();
+        const uniquePlaces: Place[] = [];
+
+        for (const p of allResults) {
+            if (!p.location || isNaN(p.location.lat) || isNaN(p.location.lng)) continue;
+
+            const latKey = p.location.lat.toFixed(3);
+            const lngKey = p.location.lng.toFixed(3);
+            const coordKey = `${latKey}_${lngKey}`;
+            const nameKey = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+            if (seen.has(nameKey) || seen.has(coordKey)) continue;
+            seen.add(nameKey);
+            seen.add(coordKey);
+
+            // Compute exact minimum distance to route corridor
+            let minMeters = Infinity;
+            for (const coord of normalizedCoords) {
+                const d = getDistanceMeters(p.location.lat, p.location.lng, coord.lat, coord.lng);
+                if (d < minMeters) minMeters = d;
+            }
+
+            // Keep within 4 miles of the route corridor
+            if (minMeters > 6400) continue;
+
+            const detourMiles = Math.round((minMeters / 1609.34) * 2 * 10) / 10;
+            const detourMinutes = Math.max(0, Math.round(detourMiles * 2.2));
+
+            uniquePlaces.push({
+                ...p,
+                type: (isEv ? 'charging_station' : 'gas_station') as any,
+                icon,
+                brandColor,
+                rating: p.rating || 4.5,
+                detourMiles,
+                detourMinutes,
+                description: p.address || `${p.name} • +${detourMinutes} min detour`
+            });
+
+            if (uniquePlaces.length >= 20) break;
+        }
+
+        // Sort by fastest detour time (0 min detour first!)
+        uniquePlaces.sort((a, b) => (a.detourMinutes || 0) - (b.detourMinutes || 0));
+
+        // Enrich top 5 stations with real street addresses and brand names if missing
+        await Promise.all(uniquePlaces.slice(0, 5).map(async (station) => {
+            const hasValidAddress = station.address &&
+                station.address !== 'Nearby' &&
+                station.address !== station.name &&
+                !/^\s*-?\d+\.\d+/.test(station.address) &&
+                /\b(st|rd|ave|dr|blvd|hwy|pkwy|ln|way|ct|cir|ter|road|street|avenue|drive|boulevard|highway|parkway|lane)\b/i.test(station.address) &&
+                station.address.length > 5;
+
+            if (!hasValidAddress && station.location) {
+                try {
+                    const rev = await reverseGeocode(station.location);
+                    if (rev) {
+                        if (rev.address && !rev.address.startsWith('Location (') && !/^\s*-?\d+\.\d+/.test(rev.address)) {
+                            const parts = rev.address.split(',');
+                            const cleanStreet = parts.length >= 2
+                                ? `${parts[0].trim()}, ${parts[1].trim()}`
+                                : rev.address;
+                            station.address = cleanStreet;
+                            station.description = cleanStreet;
+                        }
+                        if ((station.name === 'Gas Station' || station.name === 'Nearby') && rev.name && rev.name !== 'Gas Station' && !rev.name.startsWith('Location (')) {
+                            station.name = rev.name;
+                        }
+                    }
+                } catch (err) {
+                    console.debug('[PlacesService] Failed to reverse geocode station:', err);
+                }
+            }
+        }));
+
+        return uniquePlaces;
+    } catch (e) {
+        console.warn('[PlacesService] Failed to search gas stations along route:', e);
+        return [];
+    }
+};
+
+/**
  * Reverse-geocode geographic coordinates into a high-accuracy Place representation
  * Tier 1: Local community buildings cache (0ms instant lookup)
  * Tier 2: Google Maps Geocoder (SDK or REST)
- * Tier 3: Nominatim / Photon OpenStreetMap reverse geocoder fallback
+ * Tier 3: Photon Fast OpenStreetMap reverse geocoder (instant sub-200ms)
+ * Tier 4: Nominatim OpenStreetMap reverse geocoder fallback
  */
-export const reverseGeocode = async (
+export async function reverseGeocode(
     coordinates: { lat: number; lng: number }
-): Promise<Place | null> => {
+): Promise<Place | null> {
     if (!coordinates || typeof coordinates.lat !== 'number' || typeof coordinates.lng !== 'number') {
         return null;
     }
@@ -1429,7 +2028,49 @@ export const reverseGeocode = async (
         }
     }
 
-    // --- Tier 3: Nominatim / Photon Fallback ---
+    // --- Tier 3: Photon Fast OpenStreetMap Reverse Geocoder (sub-200ms) ---
+    try {
+        const photonUrl = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}`;
+        const pRes = await fetch(photonUrl, { signal: AbortSignal.timeout(2500) });
+        if (pRes.ok) {
+            const pData = await pRes.json();
+            const feat = pData.features?.[0];
+            if (feat && feat.properties) {
+                const props = feat.properties;
+                const hn = props.housenumber;
+                const road = props.street || '';
+                const streetPart = hn && road ? `${hn} ${road}` : (road || '');
+                const cityState = [props.city || props.district, props.state].filter(Boolean).join(', ');
+                const cleanAddr = [streetPart, cityState].filter(Boolean).join(', ');
+                const brandOrVenue = (props.name && !/^\d+$/.test(props.name)) ? props.name : '';
+                const cleanName = brandOrVenue || streetPart || cityState || 'Nearby';
+
+                if (cleanAddr) {
+                    return {
+                        id: `photon-rev-${props.osm_id || `${lat.toFixed(5)}_${lng.toFixed(5)}`}`,
+                        name: cleanName,
+                        address: cleanAddr,
+                        description: cleanAddr,
+                        location: {
+                            lat: feat.geometry?.coordinates?.[1] || lat,
+                            lng: feat.geometry?.coordinates?.[0] || lng
+                        },
+                        radius: 0.15,
+                        houseNumber: hn || undefined,
+                        isRooftop: Boolean(hn),
+                        geocodePrecision: hn ? 'rooftop' : 'street',
+                        type: 'search_result',
+                        icon: '📍',
+                        brandColor: '#6366f1'
+                    };
+                }
+            }
+        }
+    } catch (e) {
+        console.debug('[PlacesService] Photon reverse geocode error:', e);
+    }
+
+    // --- Tier 4: Nominatim Fallback ---
     try {
         const nomUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`;
         const nomRes = await fetch(nomUrl, { 
@@ -1441,14 +2082,18 @@ export const reverseGeocode = async (
             if (nomData && nomData.address) {
                 const addr = nomData.address;
                 const hn = addr.house_number;
-                const road = addr.road || addr.pedestrian || addr.suburb || '';
-                const cleanName = hn && road ? `${hn} ${road}` : (road || nomData.display_name?.split(',')[0] || 'Unknown Location');
+                const road = addr.road || addr.pedestrian || addr.suburb || addr.neighbourhood || '';
+                const brandOrVenue = nomData.name || addr.amenity || addr.shop || '';
+                const cleanName = brandOrVenue || (hn && road ? `${hn} ${road}` : (road || nomData.display_name?.split(',')[0] || 'Unknown Location'));
+                const cityState = [addr.city || addr.town || addr.village || addr.hamlet, addr.state].filter(Boolean).join(', ');
+                const streetPart = hn && road ? `${hn} ${road}` : (road || '');
+                const cleanAddr = [streetPart, cityState].filter(Boolean).join(', ') || nomData.display_name;
 
                 return {
                     id: `nominatim-rev-${nomData.place_id || `${lat.toFixed(5)}_${lng.toFixed(5)}`}`,
                     name: cleanName,
-                    address: nomData.display_name,
-                    description: nomData.display_name,
+                    address: cleanAddr,
+                    description: cleanAddr,
                     location: {
                         lat: parseFloat(nomData.lat) || lat,
                         lng: parseFloat(nomData.lon) || lng
@@ -1479,4 +2124,4 @@ export const reverseGeocode = async (
         icon: '📍',
         brandColor: '#6366f1'
     };
-};
+}

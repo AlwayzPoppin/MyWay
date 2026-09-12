@@ -253,6 +253,25 @@ export function generateAlternativeCorridors(start: Location, end: Location): Ar
             waypoints: [{ lat: midLat + perpLat, lng: midLng + perpLng }]
         });
     }
+    // For ordinary city trips, the provider can legitimately return only its
+    // fastest option. Probe both sides of the direct path so a driver can see
+    // real street-level choices when the road network supports them.
+    else if (distDeg > 0.012) {
+        const midLat = (start.lat + end.lat) / 2;
+        const midLng = (start.lng + end.lng) / 2;
+        const perpLat = -dLng * 0.18;
+        const perpLng = dLat * 0.18;
+        corridors.push({
+            name: 'Local Streets Alternate',
+            type: 'shortest',
+            waypoints: [{ lat: midLat + perpLat, lng: midLng + perpLng }]
+        });
+        corridors.push({
+            name: 'Main Road Alternate',
+            type: 'scenic',
+            waypoints: [{ lat: midLat - perpLat, lng: midLng - perpLng }]
+        });
+    }
 
     return corridors;
 }

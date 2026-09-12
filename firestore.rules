@@ -1,34 +1,81 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // User Profiles
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Written only by the trusted syncCircleMembership function after it
+    // verifies the authoritative RTDB Circle membership with Admin SDK.
+    function isCircleMember(circleId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/circleMemberships/$(circleId)/members/$(request.auth.uid));
+    }
+
+    match /circleMemberships/{circleId}/members/{userId} {
+      allow read, write: if false;
+    }
+
+    match /familyCircles/{circleId}/messages/{messageId} {
+      allow read: if isCircleMember(circleId);
+      allow create: if isCircleMember(circleId)
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.circleId == circleId
+        && request.resource.data.timestamp is timestamp;
+      // Members may only append delivery/read receipts. Core message fields
+      // remain immutable after the sender creates the message.
+      allow update: if isCircleMember(circleId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['deliveryReceipts', 'readReceipts']);
+      allow delete: if isCircleMember(circleId) && resource.data.senderId == request.auth.uid;
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null;
-    }
-    
-    // Community Buildings and verified locations
-    match /community_buildings/{buildingId} {
-      allow read: if true;
-      allow write: if request.auth != null;
-    }
-    
-    // Circles and Chat Messages
-    match /circles/{circleId} {
-      allow read, write: if request.auth != null;
-      match /{allSubcollections=**} {
-        allow read, write: if request.auth != null;
+      allow read, create, update, delete: if signedIn() && request.auth.uid == userId;
+      match /{document=**} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
       }
     }
-    
-    // Public incident and safety reports
-    match /incidents/{incidentId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+
+    match /customers/{userId}/checkout_sessions/{sessionId} {
+      allow read, create: if signedIn() && request.auth.uid == userId;
     }
-    
-    // Default fallback: require authentication
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    // RTDB remains the source of truth for saved places. This mirror is private.
+    match /places/{placeId} {
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow read, update, delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+    }
+
+    // These are deliberately community-visible to signed-in My Way users.
+    match /community_buildings/{buildingId} {
+      allow read, create, update, delete: if signedIn();
+    }
+    match /community_pins/{pinId} {
+      allow read, create, update, delete: if signedIn();
+    }
+    match /public_map_reports/{reportId} {
+      allow read, create, update, delete: if signedIn();
+    }
+    match /incidents/{incidentId} {
+      allow read, create, update, delete: if signedIn();
+    }
+
+    // Building photos are community contributions. Only the author may alter one.
+    match /photos/{photoId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /sharedTrips/{driverId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.participantIds;
+      allow create, update: if signedIn() && request.auth.uid == driverId
+        && request.resource.data.driverId == driverId
+        && request.resource.data.participantIds is list
+        && request.auth.uid in request.resource.data.participantIds
+        && request.resource.data.status in ['active', 'arrived', 'ended'];
+      allow delete: if signedIn() && request.auth.uid == driverId;
     }
   }
 }

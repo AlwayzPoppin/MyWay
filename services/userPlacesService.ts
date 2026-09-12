@@ -28,8 +28,39 @@ function sanitizeForFirebase<T>(data: T): T {
     return clean as T;
 }
 
+const normalizePlaceText = (value?: string): string =>
+    (value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+
+const isSamePlaceLocation = (a: UserPlace, b: UserPlace): boolean => {
+    if (!a.location || !b.location) return false;
+    // About 35 m. Older releases sometimes saved a slightly different
+    // rooftop/driveway coordinate into each mirrored copy.
+    return Math.hypot(a.location.lat - b.location.lat, a.location.lng - b.location.lng) < 0.00032;
+};
+
+const isSameOwnerMirror = (a: UserPlace, b: UserPlace, userId?: string): boolean => {
+    if (!userId || a.createdBy !== userId || b.createdBy !== userId || !isSamePlaceLocation(a, b)) return false;
+    const aAddress = normalizePlaceText(a.address || a.description || a.location?.label);
+    const bAddress = normalizePlaceText(b.address || b.description || b.location?.label);
+    const aName = normalizePlaceText(a.name);
+    const bName = normalizePlaceText(b.name);
+    return Boolean((aAddress && aAddress === bAddress) || (aName && aName === bName));
+};
+
+const preferPlaceRecord = (current: UserPlace, candidate: UserPlace, personalKey: string): UserPlace => {
+    const score = (place: UserPlace) =>
+        (place.circleId === personalKey ? 4 : 0) +
+        (place.address ? 2 : 0) +
+        (place.radius ? 1 : 0) +
+        (place.createdAt ? 1 : 0) +
+        (place.createdBy ? 1 : 0);
+    return score(candidate) > score(current) ? candidate : current;
+};
+
 /**
- * Subscribe to user places across multiple circles and user's personal store
+ * Subscribe to user places across multiple circles and the owner's personal
+ * store. New saves are mirrored to both locations, so reconcile mirror copies
+ * for display without deleting any existing user data.
  */
 export const subscribeToUserPlacesMulti = (
     circleIds: string[],
@@ -39,22 +70,26 @@ export const subscribeToUserPlacesMulti = (
     const validCircleIds = Array.from(new Set(circleIds.filter(id => !!id)));
     const placesMap: Record<string, UserPlace[]> = {};
     const unsubs: (() => void)[] = [];
+    const personalKey = userId ? `user_${userId}` : '';
 
     const notifyCombined = () => {
-        const combinedMap = new Map<string, UserPlace>();
+        const uniquePlaces: UserPlace[] = [];
 
-        Object.values(placesMap).forEach(list => {
-            list.forEach(p => {
-                // Deduplicate by place ID or exact name + lat/lng coordinate match
-                const coordKey = `${p.name.toLowerCase().trim()}_${p.location.lat.toFixed(4)}_${p.location.lng.toFixed(4)}`;
-                if (!combinedMap.has(p.id) && !combinedMap.has(coordKey)) {
-                    combinedMap.set(p.id, p);
-                    combinedMap.set(coordKey, p);
-                }
-            });
+        Object.values(placesMap).flat().forEach(place => {
+            const existingIndex = uniquePlaces.findIndex(existing =>
+                // Same generated ID is a definite mirror copy.
+                existing.id === place.id ||
+                // Legacy different-ID mirrors require both ownership and a
+                // matching saved-place identity. Other members' Homes remain
+                // distinct even if they share the same address.
+                isSameOwnerMirror(existing, place, userId)
+            );
+            if (existingIndex < 0) {
+                uniquePlaces.push(place);
+            } else {
+                uniquePlaces[existingIndex] = preferPlaceRecord(uniquePlaces[existingIndex], place, personalKey);
+            }
         });
-
-        const uniquePlaces = Array.from(new Set(combinedMap.values()));
         callback(uniquePlaces);
     };
 
@@ -88,7 +123,10 @@ export const subscribeToUserPlacesMulti = (
                 const places: UserPlace[] = Object.entries(data).map(([id, place]: [string, any]) => ({
                     ...place,
                     id,
-                    circleId: place.circleId || 'personal'
+                    circleId: place.circleId || 'personal',
+                    // Early mobile releases did not persist createdBy in the
+                    // personal mirror. This is in-memory metadata only.
+                    createdBy: place.createdBy || userId
                 }));
                 placesMap[userPlacesKey] = places;
             } else {

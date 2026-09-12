@@ -62,11 +62,11 @@ const CrashCountdownOverlay: React.FC<CrashCountdownOverlayProps> = ({
                         <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-base animate-bounce">🚨</span>
                             <h2 className="text-xs sm:text-sm font-black text-white truncate uppercase tracking-wide">
-                                Crash Impact Detected
+                                Possible crash detected
                             </h2>
                         </div>
                         <p className={`text-[11px] sm:text-xs truncate font-bold mt-0.5 ${isUrgent ? 'text-red-300 animate-pulse' : 'text-amber-300'}`}>
-                            Auto-dispatching SOS in <span className="underline">{remainingSeconds}s</span>
+                            Are you okay? SOS sends in <span className="underline">{remainingSeconds}s</span>
                         </p>
                     </div>
 
@@ -111,7 +111,7 @@ const CrashCountdownOverlay: React.FC<CrashCountdownOverlayProps> = ({
                                 title="Dispatch emergency beacon immediately"
                             >
                                 <span>⚡</span>
-                                <span>Send SOS Now</span>
+                                <span>Get Help</span>
                             </button>
                         )}
                     </div>

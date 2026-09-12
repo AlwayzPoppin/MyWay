@@ -15,6 +15,11 @@ import {
     Flame,
     MapPin,
     Car,
+    Wrench,
+    Landmark,
+    Hotel,
+    Hammer,
+    Sparkles,
     LucideIcon
 } from 'lucide-react';
 import { Place } from '../types';
@@ -65,6 +70,11 @@ export function getPlaceColor(place: Partial<Place>): string {
     if (type === 'police' || cat === 'police') return '#2563eb'; // Deep Blue
     if (type === 'grocery' || cat === 'grocery' || type === 'supermarket') return '#10b981'; // Emerald
     if (type === 'pharmacy' || cat === 'pharmacy') return '#06b6d4'; // Cyan
+    if (type === 'maintenance' || type === 'mechanic' || cat.includes('auto') || cat.includes('repair') || cat.includes('oil') || cat.includes('service') || cat.includes('parts')) return '#0284c7'; // Sky Blue
+    if (cat.includes('bank') || cat.includes('atm')) return '#059669'; // Emerald Green
+    if (cat.includes('hotel') || cat.includes('lodging')) return '#6366f1'; // Indigo
+    if (cat.includes('hardware') || cat.includes('home improvement')) return '#ea580c'; // Rust Orange
+    if (cat.includes('barber') || cat.includes('salon')) return '#8b5cf6'; // Purple
 
     return '#8b5cf6'; // Default Purple
 }
@@ -106,13 +116,18 @@ export function getPlaceLucideIcon(place: Partial<Place>): LucideIcon {
     }
 
     // Food / Restaurant
-    if (iconStr === '🍔' || iconStr === 'food' || type === 'food' || cat === 'food' || type === 'restaurant' || type === 'dining') {
+    if (iconStr === '🍔' || iconStr === 'food' || type === 'food' || cat === 'food' || type === 'restaurant' || type === 'dining' || iconStr === '🍕' || iconStr === '🌮' || iconStr === '🍗' || iconStr === '🥡' || iconStr === '🍣') {
         return Utensils;
     }
 
     // Coffee / Cafe
     if (iconStr === '☕' || iconStr === 'coffee' || type === 'coffee' || cat === 'coffee' || type === 'cafe') {
         return Coffee;
+    }
+
+    // Auto Service & Parts / Mechanic
+    if (iconStr === '🔧' || iconStr === 'wrench' || iconStr === '🚿' || type === 'maintenance' || type === 'mechanic' || cat.includes('auto') || cat.includes('repair') || cat.includes('parts')) {
+        return Wrench;
     }
 
     // Grocery / Supermarket
@@ -125,9 +140,29 @@ export function getPlaceLucideIcon(place: Partial<Place>): LucideIcon {
         return Pill;
     }
 
-    // Hospital / Emergency
+    // Hospital / Emergency / Urgent Care
     if (iconStr === '🏥' || iconStr === 'hospital' || type === 'hospital' || cat === 'hospital' || type === 'emergency' || cat === 'emergency') {
         return Hospital;
+    }
+
+    // Bank / ATM
+    if (iconStr === '🏦' || cat.includes('bank') || cat.includes('atm')) {
+        return Landmark;
+    }
+
+    // Hotel / Lodging
+    if (iconStr === '🏨' || cat.includes('hotel') || cat.includes('lodging')) {
+        return Hotel;
+    }
+
+    // Home Improvement / Hardware
+    if (iconStr === '🔨' || cat.includes('hardware') || cat.includes('home improvement')) {
+        return Hammer;
+    }
+
+    // Barber / Salon
+    if (iconStr === '💈' || cat.includes('barber') || cat.includes('salon')) {
+        return Sparkles;
     }
 
     // Police

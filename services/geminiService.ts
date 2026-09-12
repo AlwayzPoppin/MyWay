@@ -48,10 +48,11 @@ export const callGeminiProxy = async (prompt: any, config?: any, model: string =
     }
   }
 
-  // 2. Try Firebase Cloud Function proxy (callGeminiAI) if available
+  // 2. Try Firebase Cloud Function proxy. v2 is a clean callable endpoint;
+  // the original endpoint is retained server-side only for backward safety.
   if (isCloudProxyAvailable !== false && functions) {
     try {
-      const callable = httpsCallable(functions, 'callGeminiAI');
+      const callable = httpsCallable(functions, 'callGeminiAIv2');
       const res: any = await callable({ prompt: contentsPayload, config, model });
       isCloudProxyAvailable = true;
       return {

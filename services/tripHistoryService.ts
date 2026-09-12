@@ -6,10 +6,32 @@ import { maintenanceAlertService } from './maintenanceAlertService';
 
 // In-memory active trip + localStorage persistence for history
 const TRIPS_STORAGE_KEY = 'myway_trip_history';
+const ACTIVE_TRIP_STORAGE_KEY = 'myway_active_trip';
 const MAX_STORED_TRIPS = 50;
 
 let activeTrip: Trip | null = null;
 let lastRecordedPoint: TripPoint | null = null;
+
+const persistActiveTrip = (): void => {
+    try {
+        if (activeTrip) localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(activeTrip));
+    } catch {}
+};
+
+const hydrateActiveTrip = (): Trip | null => {
+    if (activeTrip) return activeTrip;
+    try {
+        const stored = localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
+        if (!stored) return null;
+        const parsed = JSON.parse(stored) as Trip;
+        if (!parsed?.id || !parsed.isActive || !parsed.startTime || !Array.isArray(parsed.path)) return null;
+        activeTrip = parsed;
+        lastRecordedPoint = parsed.path[parsed.path.length - 1] || null;
+        return activeTrip;
+    } catch {
+        return null;
+    }
+};
 
 /** Start recording a new trip */
 export const startTrip = (startLocation: Location, destinationName?: string): Trip => {
@@ -36,6 +58,7 @@ export const startTrip = (startLocation: Location, destinationName?: string): Tr
 
     activeTrip = trip;
     lastRecordedPoint = trip.path[0];
+    persistActiveTrip();
     console.log(`🛣️ Trip started: ${destinationName || 'Free drive'}`);
     return trip;
 };
@@ -69,6 +92,7 @@ export const recordTripPoint = (
 
     activeTrip.path.push(point);
     lastRecordedPoint = point;
+    persistActiveTrip();
 };
 
 /** Record a driving event during active trip */
@@ -78,6 +102,7 @@ export const recordDriveEvent = (
 ): void => {
     if (!activeTrip) return;
     activeTrip.driveEvents.push({ type, timestamp: Date.now(), location });
+    persistActiveTrip();
 
     // Penalty per event
     const penalty = type === 'hard_brake' ? 3 : type === 'speeding' ? 5 : 2;
@@ -85,7 +110,8 @@ export const recordDriveEvent = (
 };
 
 /** End the active trip and save it */
-export const endTrip = (endLocation?: Location): Trip | null => {
+export const endTrip = (endLocation?: Location, actualFuelGallons?: number): Trip | null => {
+    hydrateActiveTrip();
     if (!activeTrip) return null;
 
     activeTrip.endTime = Date.now();
@@ -93,13 +119,23 @@ export const endTrip = (endLocation?: Location): Trip | null => {
     activeTrip.isActive = false;
     activeTrip.totalDistanceMiles = Math.round(activeTrip.totalDistanceMiles * 100) / 100;
 
-    // Calculate exact fuel usage & cost based on active vehicle
+    // Calculate exact fuel usage & cost based on active vehicle (using live-tracked fuel burn when available)
     try {
         const activeVeh = vehicleFuelService.getActiveVehicle();
         const fuelCalc = vehicleFuelService.calculateTripFuel(activeTrip.totalDistanceMiles, activeVeh);
-        activeTrip.fuelGallons = fuelCalc.gallons;
-        activeTrip.fuelCost = fuelCalc.cost;
-        activeTrip.moneySaved = parseFloat((fuelCalc.cost * 0.12).toFixed(2)); // ~12% optimal routing savings
+        const gallonsToRecord = (actualFuelGallons && actualFuelGallons > 0)
+            ? Math.round(actualFuelGallons * 1000) / 1000
+            : fuelCalc.gallons;
+        const gasPrice = vehicleFuelService.getGasPrice();
+        const costToRecord = (actualFuelGallons && actualFuelGallons > 0)
+            ? parseFloat((gallonsToRecord * gasPrice).toFixed(2))
+            : fuelCalc.cost;
+        activeTrip.fuelGallons = gallonsToRecord;
+        activeTrip.fuelCost = costToRecord;
+        // Fuel range is only tracked after the driver records an actual tank
+        // level or fill-up. This prevents a made-up "low fuel" warning.
+        vehicleFuelService.recordTripConsumption(gallonsToRecord, activeVeh, activeTrip.totalDistanceMiles);
+        activeTrip.moneySaved = parseFloat((costToRecord * 0.12).toFixed(2)); // ~12% optimal routing savings
         activeTrip.vehicleName = `${activeVeh.year ? activeVeh.year + ' ' : ''}${activeVeh.make} ${activeVeh.model}`.trim();
         
         // Check predictive maintenance milestones and trigger alerts if due
@@ -124,11 +160,26 @@ export const endTrip = (endLocation?: Location): Trip | null => {
 
     activeTrip = null;
     lastRecordedPoint = null;
+    try { localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY); } catch {}
     return completedTrip;
 };
 
 /** Get the active trip (null if no trip in progress) */
-export const getActiveTrip = (): Trip | null => activeTrip;
+export const getActiveTrip = (): Trip | null => hydrateActiveTrip();
+
+/** Reconnect navigation to an interrupted active trip instead of creating a duplicate. */
+export const resumeTrip = (fallbackStartLocation: Location, destinationName?: string): Trip => {
+    const existing = hydrateActiveTrip();
+    if (existing) return existing;
+    return startTrip(fallbackStartLocation, destinationName);
+};
+
+/** Drop an interrupted trip that the user explicitly chose not to continue. */
+export const discardActiveTrip = (): void => {
+    activeTrip = null;
+    lastRecordedPoint = null;
+    try { localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY); } catch {}
+};
 
 /** Get saved trip history from localStorage */
 export const getSavedTrips = (): Trip[] => {
