@@ -11,7 +11,7 @@ import { SchoolZoneAdvisory } from '../services/schoolZoneService';
 import { incidentService } from '../services/incidentService';
 import { communityFuelPriceService, CommunityFuelPriceEstimate } from '../services/communityFuelPriceService';
 import { getDistanceMeters, getDistanceMiles } from '../utils/geo';
-import { getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
+import { formatRemainingDistance, getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
 import { searchCoffeeShops, searchGasStations, searchGroceryStores, searchPlacesText, searchRestaurants } from '../services/placesService';
 import { geocodePlace } from '../services/osrmService';
 import IncidentReporter from './IncidentReporter';
@@ -1525,9 +1525,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
     ? `${Math.max(0, Math.ceil(remainingDurationSeconds / 60))} min`
     : (activeLeg?.duration || route.totalTime);
   const displayDist = typeof remainingDistanceMeters === 'number' && Number.isFinite(remainingDistanceMeters)
-    ? (remainingDistanceMeters >= 1609.34
-      ? `${(remainingDistanceMeters / 1609.34).toFixed(1)} mi`
-      : `${Math.max(0, Math.round(remainingDistanceMeters * 3.28084))} ft`)
+    ? formatRemainingDistance(remainingDistanceMeters)
     : (activeLeg?.distance || route.totalDistance);
 
   return (

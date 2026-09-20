@@ -87,6 +87,15 @@ export function formatManeuverDistance(meters: number, isArrival: boolean = fals
     return `${Math.max(25, Math.round(feet))} ft`;
 }
 
+/** Formats the remaining trip distance consistently across the driving HUD and Android Auto. */
+export function formatRemainingDistance(meters: number): string {
+    if (!Number.isFinite(meters) || meters <= 0) return '0 ft';
+    // A route summary becomes much easier to scan in miles before a full mile.
+    // Keep the threshold aligned with the maneuver banner.
+    if (meters >= 402) return `${(meters / 1609.34).toFixed(1)} mi`;
+    return `${Math.max(0, Math.round(meters * 3.28084))} ft`;
+}
+
 /**
  * Extracts target road name from instruction string
  */

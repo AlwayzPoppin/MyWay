@@ -3,7 +3,7 @@ import { FamilyMember, Place, NavigationRoute, ArrivalTripData, Location, RouteW
 import { getDistanceMeters } from '../utils/geo';
 import { getRouteFromOSRM, geocodePlace, fetchRouteOptions, clearRouteCache } from '../services/osrmService';
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText, searchMaintenanceAlongRoute, searchGasStationsAlongRoute } from '../services/placesService';
-import { updateNavigationState, NavigationState, analyzeDrivingBehavior, ARRIVAL_RADIUS_METERS, ARRIVAL_APPROACH_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS, getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
+import { updateNavigationState, NavigationState, analyzeDrivingBehavior, ARRIVAL_RADIUS_METERS, ARRIVAL_APPROACH_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS, formatRemainingDistance, getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
 import { geolocationService } from '../services/geolocationService';
 
 export { ARRIVAL_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS };
@@ -1321,9 +1321,7 @@ export const useNavigation = (
             const remainDistStr = isArrived
                 ? '0 ft'
                 : (typeof newNavState.remainingDistanceMeters === 'number' && Number.isFinite(newNavState.remainingDistanceMeters)
-                    ? (newNavState.remainingDistanceMeters >= 1609.34
-                        ? `${(newNavState.remainingDistanceMeters / 1609.34).toFixed(1)} mi`
-                        : `${Math.round(newNavState.remainingDistanceMeters * 3.28084)} ft`)
+                    ? formatRemainingDistance(newNavState.remainingDistanceMeters)
                     : (currentStep
                         ? (distToStep > 1000
                             ? `${(distToStep / 1609.34).toFixed(1)} mi`
