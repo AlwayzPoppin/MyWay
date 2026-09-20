@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { FamilyMember, Place } from '../types';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
-import { MemberStatusText } from '../utils/memberStatus';
+import { getMemberViewerLabel, MemberStatusText } from '../utils/memberStatus';
+import { classifyMovementMode, getMovementVisuals } from '../utils/movementUtils';
 import { checkTier2SavedPlace } from '../services/locationService';
 import {
     Radio,
@@ -18,7 +19,8 @@ import {
     Zap,
     UserPlus,
     Briefcase,
-    Clock
+    Clock,
+    Monitor
 } from 'lucide-react';
 
 /**
@@ -30,6 +32,7 @@ import {
  * - Default: border-2 border-transparent p-0.5 (preserves layout spacing)
  */
 export function getMemberStatusRingClass(user: {
+    id?: string;
     isStationary?: boolean;
     atSavedPlace?: boolean;
     isDriving?: boolean;
@@ -57,23 +60,23 @@ export function getMemberStatusRingClass(user: {
         return 'border-2 border-red-600 p-0.5';
     }
 
-    // 2. Driving/Moving (Blue Pulsing): If user.isDriving is true (speed over threshold)
-    if (isDriving) {
-        return 'border-2 border-blue-500 p-0.5 animate-pulse';
-    }
-
-    // 3. Safely at Geofenced Place (Green): If user.isStationary is true AND user.atSavedPlace is true
-    if (isStationary && atSavedPlace) {
-        return 'border-2 border-emerald-500 p-0.5';
-    }
-
-    // 4. Stale/Offline (Muted Gray): Subtle border indicating cached location
+    // 2. Stale/Offline (Muted Gray): Subtle border indicating cached location
     if (isStale) {
         return 'border-2 border-slate-400/40 p-0.5';
     }
 
-    // 5. Default: Preserve layout with matching 2px border and 2px padding
-    return 'border-2 border-transparent p-0.5';
+    const mode = classifyMovementMode(user.id || 'default', user.speed || 0);
+    switch (mode) {
+        case 'driving':
+            return 'border-2 border-blue-500 p-0.5 animate-pulse';
+        case 'vehicle_stopped':
+            return 'border-2 border-amber-500 p-0.5';
+        case 'walking':
+            return 'border-2 border-emerald-500 p-0.5';
+        case 'standing':
+        default:
+            return 'border-2 border-teal-500/80 dark:border-teal-400/80 p-0.5';
+    }
 }
 
 /**
@@ -82,6 +85,7 @@ export function getMemberStatusRingClass(user: {
  */
 export const MemberStatusRing: React.FC<{
     user: {
+        id?: string;
         isStationary?: boolean;
         atSavedPlace?: boolean;
         isDriving?: boolean;
@@ -105,6 +109,29 @@ export const MemberStatusRing: React.FC<{
 };
 
 /**
+ * Circle identity is intentionally separate from a member's live/offline state.
+ * The color strip and label remain readable even when a member has a cached location.
+ */
+export const CircleMembershipBadge: React.FC<{ name: string; color: string; className?: string }> = ({
+    name,
+    color,
+    className = ''
+}) => (
+    <span
+        title={`Circle: ${name}`}
+        style={{
+            background: `linear-gradient(90deg, ${color}2e, ${color}12)`,
+            borderColor: `${color}88`,
+            color
+        }}
+        className={`inline-flex max-w-[112px] items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide shadow-sm ${className}`}
+    >
+        <span className="h-2 w-1 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+        <span className="truncate">{name}</span>
+    </span>
+);
+
+/**
  * Circular Member Avatar with Dedicated Status Ring Wrapper
  * Provides instant visual feedback on member state:
  * - Safely at Geofenced Place: solid green border (border-2 border-emerald-500 p-0.5)
@@ -119,7 +146,6 @@ export const MemberAvatarWithRing: React.FC<{
     theme?: 'light' | 'dark';
     isSelected?: boolean;
     isUnresolved?: boolean;
-    circleColor?: string;
     renderStatusBadge?: boolean;
     renderBatteryBadge?: boolean;
     children?: React.ReactNode;
@@ -130,7 +156,6 @@ export const MemberAvatarWithRing: React.FC<{
     theme = 'dark',
     isSelected = false,
     isUnresolved = false,
-    circleColor,
     renderStatusBadge = true,
     renderBatteryBadge = true,
     children,
@@ -141,14 +166,17 @@ export const MemberAvatarWithRing: React.FC<{
     const lastFixMs = Date.parse(member.lastUpdated || '');
     const locationAgeMs = Number.isFinite(lastFixMs) ? Math.max(0, Date.now() - lastFixMs) : Infinity;
     const isStale = member.locationStale === true || locationAgeMs > 90_000 || member.status === 'Offline';
+    const viewerLabel = getMemberViewerLabel(member);
+    const isDesktopViewer = viewerLabel === 'Desktop';
     const matchedSavedPlace = member.location ? checkTier2SavedPlace(member.location) : null;
-    const ringClass = getMemberStatusRingClass({
+    const ringClass = isDesktopViewer
+        ? 'border-2 border-sky-400/80 p-0.5'
+        : getMemberStatusRingClass({
         ...member,
         locationStale: isStale,
         atSavedPlace: Boolean(matchedSavedPlace)
     });
     const sizeClasses = size === 'sm' ? 'w-10 h-10' : size === 'lg' ? 'w-14 h-14' : 'w-12 h-12';
-    const memberCircleHex = circleColor || member.circleColor || '#6366f1';
     const memberInitial = (member.name || 'M').trim().charAt(0).toUpperCase() || 'M';
     const hasCustomAvatarUrl = Boolean(
         member.avatar &&
@@ -159,14 +187,25 @@ export const MemberAvatarWithRing: React.FC<{
 
     const batteryVal = member.batteryLevel !== undefined ? member.batteryLevel : (member.battery !== undefined ? member.battery : 100);
     const isLow = batteryVal < 20;
-    const isCharging = Boolean(member.isCharging);
-    const batteryColorClass = isLow
-        ? 'bg-red-600 text-white'
-        : 'bg-emerald-600 text-white';
+    const isOffline = member.status === 'Offline' || isStale || locationAgeMs > 180_000;
+    const isCharging = !isOffline && (
+        (member as any).batteryCharging === true ||
+        (member.isCharging === true && (member as any).batteryCharging !== false)
+    );
+    const batteryColorClass = isOffline
+        ? (theme === 'dark'
+            ? 'bg-zinc-800 text-zinc-200 border-zinc-700 shadow-sm'
+            : 'bg-zinc-100 text-zinc-700 border-zinc-300 shadow-sm')
+        : isLow
+            ? 'bg-red-600 text-white border-white dark:border-slate-900 shadow-sm'
+            : 'bg-emerald-600 text-white border-white dark:border-slate-900 shadow-sm';
+
+    const statusBadgeSize = size === 'sm' ? 'w-5 h-5' : size === 'lg' ? 'w-6 h-6' : 'w-5.5 h-5.5';
+    const batteryPillPos = size === 'sm' ? 'text-[8px] px-1 py-0.2 -bottom-1.5' : size === 'lg' ? 'text-[10px] px-2 py-0.5 -bottom-2.5' : 'text-[9px] px-1.5 py-0.5 -bottom-2';
 
     return (
         /* Parent container wrapping the avatar and its status ring with relative positioning */
-        <div className={`relative shrink-0 ${className}`}>
+        <div className={`relative shrink-0 flex items-center justify-center ${className}`}>
             {/* Status Ring Container Wrapper */}
             <div className={`rounded-full shrink-0 transition-all ${ringClass}`}>
                 {children ? (
@@ -187,20 +226,22 @@ export const MemberAvatarWithRing: React.FC<{
                                 src={getSafeAvatarUrl(member.avatar, member.name || member.id)}
                                 onError={() => setImgFailed(true)}
                                 alt={member.name}
-                                style={{ borderColor: isUnresolved ? '#f59e0b' : memberCircleHex }}
-                                className={`w-full h-full rounded-full object-cover transition-all border-2 ${
+                                className={`w-full h-full rounded-full object-cover transition-all border-2 border-white dark:border-slate-900 ${
                                     theme === 'dark' ? 'bg-slate-800' : 'bg-slate-100'
                                 } ${member.isGhostMode ? 'blur-sm grayscale opacity-70' : ''} ${
+                                    isOffline ? 'grayscale brightness-75 opacity-70' : ''
+                                } ${
                                     isUnresolved ? 'saturate-75' : ''
                                 }`}
                             />
                         ) : (
                             /* Circular member avatar fallback (teal div with character letter 'M' / initial) */
                             <div
-                                style={{ borderColor: isUnresolved ? '#f59e0b' : memberCircleHex }}
-                                className={`w-full h-full rounded-full flex items-center justify-center font-black text-white border-2 select-none transition-all shadow-inner bg-gradient-to-tr from-teal-600 to-teal-400 ${
+                                className={`w-full h-full rounded-full flex items-center justify-center font-black text-white border-2 border-white dark:border-slate-900 select-none transition-all shadow-inner bg-gradient-to-tr from-teal-600 to-teal-400 ${
                                     size === 'sm' ? 'text-xs' : size === 'lg' ? 'text-base' : 'text-sm'
                                 } ${member.isGhostMode ? 'blur-sm grayscale opacity-70' : ''} ${
+                                    isOffline ? 'grayscale brightness-75 opacity-70' : ''
+                                } ${
                                     isUnresolved ? 'saturate-75' : ''
                                 }`}
                             >
@@ -218,55 +259,43 @@ export const MemberAvatarWithRing: React.FC<{
                 )}
             </div>
 
-            {/* Stacked Corner Badges: Distinct Location Badge (Top) right-aligned directly above Battery Indicator (Bottom) */}
-            {(renderBatteryBadge || renderStatusBadge) && (
-                <div
-                    className="absolute -bottom-1.5 -right-1.5 z-10 flex flex-col items-end gap-0.5 select-none shrink-0"
-                    title={`${matchedSavedPlace?.place.name ? `${matchedSavedPlace.place.name} • ` : ''}${member.status || 'Location'} • Battery: ${batteryVal}%${isCharging ? ' (Charging)' : ''}`}
-                >
-                    {/* Location Badge (Top): Enlarged circular badge brought down slightly above the battery pill */}
-                    {renderStatusBadge && (
+            {/* Physical Movement Activity Status Badge */}
+            {renderStatusBadge && (
+                (() => {
+                    const mode = classifyMovementMode(member.id, member.speed || 0);
+                    const visuals = getMovementVisuals(mode, member.speed || 0);
+                    return (
                         <div
-                            className="w-6 h-6 rounded-full bg-white dark:bg-slate-800 border-2 border-white dark:border-slate-900 shadow-md flex items-center justify-center shrink-0 translate-y-1 z-10 transition-transform hover:scale-110"
-                            title={matchedSavedPlace?.place.name || member.status || 'Location'}
+                            className={`absolute -top-1 -right-1 z-20 ${statusBadgeSize} rounded-full border-2 border-white dark:border-slate-900 shadow-md flex items-center justify-center shrink-0 transition-transform hover:scale-110 pointer-events-auto`}
+                            style={{ backgroundColor: isDesktopViewer ? '#0284c7' : isUnresolved ? '#f59e0b' : (isStale || member.status === 'Offline') ? '#64748b' : visuals.badgeBg }}
+                            title={isDesktopViewer ? 'Desktop companion' : isUnresolved ? 'Locating…' : (isStale || member.status === 'Offline') ? 'Offline' : visuals.label}
                         >
-                            {isUnresolved ? (
-                                <Radio className="w-3.5 h-3.5 text-amber-500 animate-pulse shrink-0" />
+                            {isDesktopViewer ? (
+                                <Monitor className="w-3.5 h-3.5 text-white shrink-0" />
+                            ) : isUnresolved ? (
+                                <Radio className="w-3.5 h-3.5 text-slate-950 animate-pulse shrink-0" />
                             ) : (isStale || member.status === 'Offline') ? (
-                                <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            ) : member.currentTrip ? (
-                                <Car className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                            ) : matchedSavedPlace && member.status === 'Stationary' ? (
-                                (matchedSavedPlace.place.type?.toLowerCase() === 'work' || matchedSavedPlace.place.name?.toLowerCase().includes('work') || matchedSavedPlace.place.name?.toLowerCase().includes('office')) ? (
-                                    <Briefcase className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-                                ) : matchedSavedPlace.place.type?.toLowerCase() === 'home' || matchedSavedPlace.place.name?.toLowerCase() === 'home' ? (
-                                    <Home className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                                ) : (
-                                    <MapPin className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                                )
-                            ) : member.status === 'Driving' ? (
-                                <Navigation className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-                            ) : member.status === 'Walking' ? (
-                                <Footprints className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                            ) : member.status === 'Stationary' ? (
-                                <MapPin className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                                <Clock className="w-3.5 h-3.5 text-white shrink-0" />
                             ) : (
-                                <Circle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                <div
+                                    className="w-full h-full flex items-center justify-center"
+                                    dangerouslySetInnerHTML={{ __html: visuals.iconSvg }}
+                                />
                             )}
                         </div>
-                    )}
+                    );
+                })()
+            )}
 
-                    {/* Battery Pill (Bottom): Standalone pill with dynamic color logic (green/red) and charging bolt */}
-                    {renderBatteryBadge && (
-                        <div
-                            className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border border-white dark:border-gray-900 font-bold leading-none shadow-sm select-none shrink-0 whitespace-nowrap ${batteryColorClass}`}
-                            title={`Battery: ${batteryVal}%${isCharging ? ' (Charging)' : ''}`}
-                        >
-                            <span>{batteryVal}%</span>
-                            {isCharging && (
-                                <Zap className="w-2.5 h-2.5 shrink-0 fill-current text-amber-300 animate-pulse" />
-                            )}
-                        </div>
+            {/* Battery Indicator Pill (Strictly horizontally centered directly beneath the circular avatar) */}
+            {renderBatteryBadge && !viewerLabel && (
+                <div
+                    className={`absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-0.5 font-bold leading-none select-none shrink-0 whitespace-nowrap pointer-events-none rounded-full border ${batteryPillPos} ${batteryColorClass}`}
+                    title={`Battery: ${batteryVal}%${isCharging ? ' (Charging)' : ''}`}
+                >
+                    <span>{batteryVal}%</span>
+                    {isCharging && (
+                        <Zap className="w-2.5 h-2.5 shrink-0 fill-current text-amber-300 animate-pulse" />
                     )}
                 </div>
             )}
@@ -278,12 +307,15 @@ export interface MemberCardProps {
     member: FamilyMember;
     places?: Place[];
     selectedId?: string | null;
-    onSelectMember?: (memberId: string) => void;
-    onOpenMessages?: (memberId: string) => void;
+    currentUserId?: string | null;
     theme?: 'light' | 'dark';
     circleColor?: string;
+    onSelect: (id: string) => void;
+    onOpenContacts?: (memberId: string) => void;
     isCollapsed?: boolean;
-    currentUserId?: string;
+    className?: string;
+    showDistance?: boolean;
+    userLocation?: { lat: number; lng: number } | null;
 }
 
 /**
@@ -292,165 +324,171 @@ export interface MemberCardProps {
  */
 export const MemberCard: React.FC<MemberCardProps> = ({
     member,
-    places,
+    places = [],
     selectedId,
-    onSelectMember,
-    onOpenMessages,
+    currentUserId,
     theme = 'dark',
     circleColor,
+    onSelect,
+    onOpenContacts,
     isCollapsed = false,
-    currentUserId,
+    className = '',
+    showDistance = true,
+    userLocation = null,
 }) => {
-    const lastFixMs = Date.parse(member.lastUpdated || '');
-    const locationAgeMs = Number.isFinite(lastFixMs) ? Math.max(0, Date.now() - lastFixMs) : Infinity;
-    const isUnresolved = member.locationStale === true || locationAgeMs > 90_000;
-    const staleLocationLabel = locationAgeMs < 60_000
-        ? 'Locating…'
-        : locationAgeMs < 3_600_000
-            ? `Updated ${Math.floor(locationAgeMs / 60_000)}m ago`
-            : `Updated ${Math.floor(locationAgeMs / 3_600_000)}h ago`;
     const isSelected = selectedId === member.id;
-    const memberCircleHex = circleColor || member.circleColor || '#6366f1';
     const isSelf = Boolean((currentUserId && member.id === currentUserId) || member.id === 'demo-you' || (member as any).isSelf);
+    const memberCircleHex = circleColor || member.circleColor || '#6366f1';
+    const isUnresolved = !member.companionDeviceLabel && (!member.location || (member.location.lat === 0 && member.location.lng === 0));
+    const isStale = member.locationStale === true;
+    const staleLocationLabel = isStale ? 'Stale Signal' : 'Locating…';
+    const viewerLabel = getMemberViewerLabel(member);
+    const isDesktopViewer = viewerLabel === 'Desktop';
+
+    const circleBadgesList = (member.circleBadges && member.circleBadges.length > 0)
+        ? member.circleBadges
+        : member.circleName
+            ? [{ id: member.circleId || 'primary', name: member.circleName, color: memberCircleHex }]
+            : [];
 
     return (
         <div
             role="button"
             tabIndex={0}
-            onClick={() => {
-                if (onSelectMember) onSelectMember(member.id);
-            }}
+            onClick={() => onSelect(member.id)}
             onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    if (onSelectMember) onSelectMember(member.id);
+                    onSelect(member.id);
                 }
             }}
-            className={`w-full p-2.5 rounded-2xl border transition-all cursor-pointer group text-left ${
-                isUnresolved
-                    ? theme === 'dark'
-                        ? 'bg-amber-950/15 border-amber-500/30 border-dashed opacity-85 hover:opacity-100'
-                        : 'bg-amber-50/50 border-amber-300/60 border-dashed opacity-90 hover:opacity-100 shadow-sm'
-                    : isSelected
-                        ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border-indigo-500/60 shadow-md'
-                        : theme === 'dark'
-                            ? 'bg-white/[0.03] hover:bg-white/[0.07] border-white/5 hover:border-white/10'
-                            : 'bg-white hover:bg-slate-50 border-slate-200/80 hover:border-slate-300 shadow-xs'
-            }`}
+            className={`group relative flex items-center gap-3 rounded-2xl transition-all cursor-pointer border select-none
+            ${isCollapsed ? 'p-1.5 justify-center' : 'p-3'}
+            ${isUnresolved
+                ? theme === 'dark'
+                    ? 'bg-amber-950/10 border-amber-500/30 border-dashed opacity-80 hover:opacity-100'
+                    : 'bg-amber-50/50 border-amber-300/60 border-dashed opacity-85 hover:opacity-100 shadow-sm'
+                : isSelected
+                    ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border-indigo-500/50 glow-primary'
+                    : theme === 'dark'
+                        ? 'glass-card'
+                        : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
+            } ${className}`}
+            style={!isCollapsed ? {
+                borderColor: isSelected ? memberCircleHex : `${memberCircleHex}55`,
+                boxShadow: `inset 4px 0 0 ${memberCircleHex}`
+            } : undefined}
         >
-            <div className="flex items-center gap-3">
-                {/* Avatar with Status Ring */}
+            <div
+                className={`cursor-pointer shrink-0 transition-transform group-hover:scale-105 active:scale-95 flex items-center justify-center relative ${
+                    isCollapsed ? 'w-10' : 'w-12'
+                }`}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect(member.id);
+                }}
+            >
                 <MemberAvatarWithRing
                     member={member}
                     size={isCollapsed ? 'sm' : 'md'}
                     theme={theme}
                     isSelected={isSelected}
                     isUnresolved={isUnresolved}
-                    circleColor={memberCircleHex}
                 />
+            </div>
 
-                {!isCollapsed && (
-                    <div className="flex-1 text-left min-w-0">
-                        {/* Header Row: Name, Circle badges, Battery pill */}
-                        <div className="flex items-center justify-between gap-1">
-                            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                                <h4 className={`font-black text-sm tracking-tight truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                    {member.name}
-                                </h4>
-                                {isSelf && (
-                                    <span className={`text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border shrink-0 ${
-                                        theme === 'dark' ? 'bg-indigo-500/20 border-indigo-400/35 text-indigo-200' : 'bg-indigo-50 border-indigo-200 text-indigo-600'
-                                    }`}>
-                                        You
-                                    </span>
-                                )}
-                                {isUnresolved ? (
-                                    <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                                        <span>{staleLocationLabel}</span>
-                                    </span>
-                                ) : member.circleBadges && member.circleBadges.length > 0 ? (
-                                    member.circleBadges.map(b => (
-                                        <span
-                                            key={b.id}
-                                            style={{
-                                                backgroundColor: `${b.color}22`,
-                                                borderColor: `${b.color}44`,
-                                                color: b.color
-                                            }}
-                                            className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
-                                        >
-                                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: b.color }} />
-                                            <span className="truncate max-w-[70px]">{b.name}</span>
-                                        </span>
-                                    ))
-                                ) : member.circleName ? (
-                                    <span
-                                        style={{
-                                            backgroundColor: `${memberCircleHex}22`,
-                                            borderColor: `${memberCircleHex}44`,
-                                            color: memberCircleHex
-                                        }}
-                                        className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
-                                    >
-                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: memberCircleHex }} />
-                                        <span className="truncate max-w-[70px]">{member.circleName}</span>
-                                    </span>
-                                ) : null}
-                            </div>
-
-                            <div className="flex items-center gap-1 shrink-0">
-                                {onOpenMessages && !isSelf && (
-                                    <button
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            onOpenMessages(member.id);
-                                        }}
-                                        className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all hover:scale-110 active:scale-95 shrink-0 ${
-                                            theme === 'dark'
-                                                ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/30'
-                                                : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100 shadow-sm'
-                                        }`}
-                                        title={`Direct message with ${member.name}`}
-                                    >
-                                        <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                                    </button>
-                                )}
-                            </div>
+            {!isCollapsed && (
+                <div className="flex-1 text-left min-w-0">
+                    {/* Header Row: Name, Circle badges, YOU, Desktop badge */}
+                    <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap">
+                            <h4 className={`font-black text-sm tracking-tight truncate max-w-[110px] shrink-0 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                {member.name}
+                            </h4>
+                            {isSelf && (
+                                <span className={`text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border shrink-0 ${
+                                    theme === 'dark' ? 'bg-indigo-500/20 border-indigo-400/35 text-indigo-200' : 'bg-indigo-50 border-indigo-200 text-indigo-600'
+                                }`}>
+                                    You
+                                </span>
+                            )}
+                            {isUnresolved ? (
+                                <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 ${
+                                    theme === 'dark'
+                                        ? 'bg-amber-500/25 border-amber-400/50 text-amber-300 font-extrabold shadow-sm'
+                                        : 'bg-amber-100 border-amber-400 text-amber-900 font-extrabold shadow-sm'
+                                }`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${theme === 'dark' ? 'bg-amber-300' : 'bg-amber-700'} animate-pulse`} />
+                                    <span>{staleLocationLabel}</span>
+                                </span>
+                            ) : circleBadgesList.length > 0 ? (
+                                circleBadgesList.map(b => (
+                                    <CircleMembershipBadge key={b.id} name={b.name} color={b.color || memberCircleHex} />
+                                ))
+                            ) : null}
+                            {viewerLabel && (
+                                <span className={`text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border shrink-0 flex items-center gap-1 ${
+                                    theme === 'dark' ? 'bg-sky-500/20 border-sky-400/35 text-sky-300' : 'bg-sky-50 border-sky-200 text-sky-600'
+                                }`}>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                                    <span>{viewerLabel}</span>
+                                </span>
+                            )}
                         </div>
 
-                        {/* Status Row: Contextual Telemetry Text & Privacy Badges */}
-                        {isUnresolved ? (
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                                <div className="text-[10px] font-medium text-amber-400/90 flex items-center gap-1.5 truncate">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block shrink-0" />
-                                    <span className="truncate">Waiting for device signal…</span>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                                <MemberStatusText
-                                    member={member}
-                                    places={places}
-                                    className={`text-[10px] font-medium truncate ${
-                                        theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+                        <div className="flex items-center gap-1 shrink-0">
+                            {onOpenContacts && !isSelf && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onOpenContacts(member.id);
+                                    }}
+                                    className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-105 active:scale-95 shrink-0 cursor-pointer ${
+                                        theme === 'dark'
+                                            ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/25 hover:border-indigo-400/50'
+                                            : 'bg-indigo-50 border-indigo-200/80 text-indigo-600 hover:bg-indigo-100 hover:border-indigo-300 shadow-xs'
                                     }`}
-                                />
+                                    title={`Text or call ${member.name}`}
+                                >
+                                    <MessageSquare className="w-4 h-4 shrink-0" />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Status Row: Contextual Telemetry Text & Privacy Badges */}
+                    {isUnresolved ? (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                            <div className={`text-[10px] font-semibold flex items-center gap-1.5 truncate ${theme === 'dark' ? 'text-amber-300/90' : 'text-amber-800'}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full animate-ping inline-block shrink-0 ${theme === 'dark' ? 'bg-amber-400' : 'bg-amber-600'}`} />
+                                <span className="truncate">Waiting for device signal…</span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                            <MemberStatusText
+                                member={member}
+                                places={places}
+                                hasDesktopBadge={isDesktopViewer}
+                                className={`text-[10px] font-medium truncate ${
+                                    theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+                                }`}
+                            />
                                 {member.privacyMode === 'blurred' && (
-                                    <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-purple-500/20 text-purple-300 flex items-center gap-1 shrink-0">
+                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 ${theme === 'dark' ? 'bg-purple-500/20 text-purple-200 border-purple-400/30' : 'bg-purple-100 text-purple-800 border-purple-300'}`}>
                                         <EyeOff className="w-2.5 h-2.5 shrink-0" />
                                         <span>~1.5 mi</span>
                                     </span>
                                 )}
                                 {member.privacyMode === 'status_only' && (
-                                    <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 flex items-center gap-1 shrink-0">
+                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 ${theme === 'dark' ? 'bg-amber-500/20 text-amber-200 border-amber-400/30' : 'bg-amber-100 text-amber-900 border-amber-300'}`}>
                                         <GraduationCap className="w-2.5 h-2.5 shrink-0" />
                                         <span>Milestones</span>
                                     </span>
                                 )}
                                 {member.privacyMode === 'frozen' && (
-                                    <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-sky-500/20 text-sky-300 flex items-center gap-1 shrink-0">
+                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 ${theme === 'dark' ? 'bg-sky-500/20 text-sky-200 border-sky-400/30' : 'bg-sky-100 text-sky-900 border-sky-300'}`}>
                                         <Shield className="w-2.5 h-2.5 shrink-0" />
                                         <span>Frozen</span>
                                     </span>
@@ -460,7 +498,6 @@ export const MemberCard: React.FC<MemberCardProps> = ({
                     </div>
                 )}
             </div>
-        </div>
     );
 };
 

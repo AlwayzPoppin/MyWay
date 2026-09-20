@@ -32,7 +32,7 @@ interface SearchBoxProps {
   onLocate?: () => void;
   onQuickStop?: () => void;
   onTestDrive?: () => void;
-  onOpenMessages?: () => void;
+  onOpenContacts?: () => void;
   onCategorySearch?: (type: 'gas' | 'coffee' | 'food' | 'grocery') => void;
   theme: 'light' | 'dark';
   userPlaces?: Place[];
@@ -165,7 +165,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   onLocate,
   onQuickStop,
   onTestDrive,
-  onOpenMessages,
+  onOpenContacts,
   onCategorySearch,
   theme,
   userPlaces = [],
@@ -183,7 +183,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   const [showDrawer, setShowDrawer] = useState(false);
   const prevSelectedPlaceRef = useRef<Place | null | undefined>(selectedPlace);
 
-  const [activeTab, setActiveTab] = useState<'suggestions' | 'recent' | 'categories' | 'saved'>('recent');
+  const [activeTab, setActiveTab] = useState<'suggestions' | 'recent' | 'saved'>('recent');
   const [history, setHistory] = useState<RecentSearchItem[]>([]);
   const [suggestions, setSuggestions] = useState<Place[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
@@ -365,9 +365,11 @@ const SearchBox: React.FC<SearchBoxProps> = ({
     searchDebounceRef.current = setTimeout(async () => {
       try {
         // Spatial focus location from mapCenter (current viewport center) or user's GPS location
-        let focusLoc: { lat: number; lng: number } | undefined = undefined;
+        let focusLoc: { lat: number; lng: number } | undefined =
+          userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng)
+            && (userLocation.lat !== 0 || userLocation.lng !== 0) ? userLocation : undefined;
         const currentMapCenter = mapCenterRef.current;
-        if (currentMapCenter) {
+        if (!focusLoc && currentMapCenter) {
           if (Array.isArray(currentMapCenter) && typeof currentMapCenter[0] === 'number' && typeof currentMapCenter[1] === 'number') {
             focusLoc = { lat: currentMapCenter[0], lng: currentMapCenter[1] };
           } else if (typeof (currentMapCenter as any).lat === 'number' && typeof (currentMapCenter as any).lng === 'number') {
@@ -406,7 +408,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           ...matchingSaved,
           ...results.filter(r => !matchingSaved.some(s => 
             s.id === r.id ||
-            s.name.trim().toLowerCase() === r.name.trim().toLowerCase() ||
+            (s.name.trim().toLowerCase() === r.name.trim().toLowerCase() && s.location && r.location && getNumericMiles(s.location, r.location) < 0.025) ||
             (s.address && r.address && s.address.trim().toLowerCase() === r.address.trim().toLowerCase())
           ))
         ];
@@ -735,16 +737,18 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               className={`w-11 h-11 rounded-2xl flex items-center justify-center p-2.5 sm:p-3 transition-all border cursor-pointer active:scale-95 hover:scale-105 group
                 ${isPlaceSaved
                   ? (theme === 'dark'
-                      ? 'bg-amber-500/15 border-amber-500/30 text-yellow-500 hover:bg-amber-500/25 active:bg-amber-500/30 shadow-sm shadow-amber-500/10'
-                      : 'bg-amber-50 border-amber-300 text-yellow-500 hover:bg-amber-100 active:bg-amber-200 shadow-sm')
+                      ? 'bg-amber-500/25 border-amber-400/50 text-amber-300 hover:bg-amber-500/35 hover:border-amber-300 active:bg-amber-500/40 shadow-sm shadow-amber-500/20'
+                      : 'bg-amber-100 border-amber-400 text-amber-600 hover:bg-amber-200 hover:border-amber-500 active:bg-amber-300 shadow-sm shadow-amber-500/20')
                   : (theme === 'dark'
-                      ? 'bg-white/5 border-white/10 text-slate-400 hover:text-yellow-500 hover:bg-amber-500/10 hover:border-amber-500/20 active:bg-white/10 shadow-sm'
-                      : 'bg-slate-100 border-slate-200 text-slate-400 hover:text-yellow-500 hover:bg-amber-50 hover:border-amber-200 active:bg-slate-200 shadow-sm')}`}
-              title={isPlaceSaved ? "Saved Place (in Favorites)" : "Save Place & Favorites"}
+                      ? 'bg-amber-500/15 border-amber-500/30 text-amber-400 hover:bg-amber-500/25 hover:border-amber-400/50 active:bg-amber-500/30 shadow-sm shadow-amber-500/10'
+                      : 'bg-amber-50 border-amber-300 text-amber-500 hover:bg-amber-100 hover:border-amber-400 active:bg-amber-200 shadow-sm shadow-amber-500/10')}`}
+              title={isPlaceSaved ? "Saved Place (in Favorites)" : "Saved Places & Favorites"}
             >
               <Star 
-                className={`w-5 h-5 shrink-0 transition-transform group-hover:scale-110 ${
-                  isPlaceSaved ? 'fill-current text-yellow-500 drop-shadow-sm' : 'text-slate-400 fill-none'
+                className={`w-5 h-5 shrink-0 transition-transform group-hover:scale-110 drop-shadow-sm ${
+                  isPlaceSaved
+                    ? 'fill-amber-300 text-amber-500 dark:fill-amber-300 dark:text-amber-200'
+                    : 'fill-amber-400 text-amber-500 dark:fill-amber-400 dark:text-amber-400'
                 }`} 
               />
             </button>
@@ -758,73 +762,6 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           <div className={`rounded-3xl shadow-2xl overflow-hidden border backdrop-blur-3xl p-1 flex flex-col max-h-[min(45vh,350px)] sm:max-h-[min(60vh,460px)]
             ${theme === 'dark' ? 'bg-slate-900/98 border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.8)] text-white' : 'bg-[#fdfbf7]/98 border-slate-200/80 shadow-[0_30px_60px_rgba(0,0,0,0.12)] text-slate-900'}`}
           >
-            {/* Predictive Smart Suggestion Banner (shown when search is empty) */}
-            {!hasQuery && predictions.length > 0 && (
-              <div className="mb-3 p-3 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/40 to-blue-900/40 border border-purple-500/30 shadow-lg shrink-0">
-                <div className="flex items-center justify-between mb-1.5 px-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-purple-300 shrink-0" />
-                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-300">
-                      Smart Route Prediction
-                    </span>
-                  </div>
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200">
-                    {predictions[0].confidence}% Match
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between gap-3">
-                  <div 
-                    onClick={() => handleSelectSuggestion({
-                      id: predictions[0].id,
-                      name: predictions[0].name,
-                      location: predictions[0].location,
-                      type: predictions[0].type as any,
-                      icon: predictions[0].icon,
-                      radius: 100,
-                      description: predictions[0].description
-                    })}
-                    className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer group"
-                  >
-                    <BrandIcon placeName={predictions[0].name} defaultIcon={predictions[0].icon} size="md" className="group-hover:scale-110" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-xs sm:text-sm font-black text-white truncate group-hover:text-purple-200 transition-colors">
-                          {predictions[0].name}
-                        </h4>
-                        {predictions[0].distanceMiles && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-300 shrink-0 flex items-center gap-1">
-                            <Zap className="w-2.5 h-2.5 shrink-0" /> {predictions[0].distanceMiles}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-purple-200/80 truncate mt-0.5">
-                        {predictions[0].reason}
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={(e) => handleQuickNavigateSuggestion(e, {
-                      id: predictions[0].id,
-                      name: predictions[0].name,
-                      location: predictions[0].location,
-                      type: predictions[0].type as any,
-                      icon: predictions[0].icon,
-                      radius: 100,
-                      description: predictions[0].description
-                    })}
-                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-[11px] font-black flex items-center gap-1.5 shadow-md transition-all active:scale-95 shrink-0"
-                    title="Start Navigation"
-                  >
-                    <Navigation className="w-3 h-3 shrink-0 fill-current" />
-                    <span>GO</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Quick Ambient Category Chips Row */}
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-1 mb-2 shrink-0">
               {categories.map((cat) => (
@@ -876,18 +813,6 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                 >
                   <History className="w-3.5 h-3.5 shrink-0" />
                   <span>Recent ({filteredHistory.length})</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('categories')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-black tracking-wide transition-all flex items-center gap-1.5 shrink-0
-                    ${activeTab === 'categories'
-                      ? 'bg-indigo-600 text-white shadow-md'
-                      : theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
-                >
-                  <Zap className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-                  <span>Nearby</span>
                 </button>
 
                 {userPlaces.length > 0 && (
@@ -1059,6 +984,56 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                 onScroll={() => (document.activeElement as HTMLElement)?.blur()}
                 onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
               >
+                {!hasQuery && predictions.length > 0 && (
+                  <section aria-label="Suggested destinations" className="space-y-1.5 pb-1">
+                    <p className={`px-1 text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Suggested
+                    </p>
+                    {predictions.map(prediction => {
+                      const predictionPlace: Place = {
+                        id: prediction.id,
+                        name: prediction.name,
+                        location: prediction.location,
+                        type: prediction.type as Place['type'],
+                        icon: prediction.icon,
+                        radius: 100,
+                        description: prediction.description
+                      };
+                      return (
+                        <div
+                          key={prediction.id}
+                          onClick={() => handleSelectSuggestion(predictionPlace)}
+                          className={`group flex items-center justify-between gap-3 px-3.5 py-2 rounded-2xl cursor-pointer transition-all hover:scale-[1.01] active:scale-98 border ${
+                            theme === 'dark'
+                              ? 'bg-white/5 hover:bg-white/10 border-white/5 hover:border-indigo-500/30'
+                              : 'bg-slate-50 hover:bg-indigo-50/60 border-slate-200/60 hover:border-indigo-200'
+                          }`}
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                            <BrandIcon placeName={prediction.name} defaultIcon={prediction.icon} size="sm" />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <Sparkles className="h-3 w-3 shrink-0 text-indigo-400" />
+                                <h4 className={`truncate text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{prediction.name}</h4>
+                                {prediction.distanceMiles && <span className="shrink-0 text-[9px] font-bold text-slate-400">{prediction.distanceMiles}</span>}
+                              </div>
+                              <p className="mt-0.5 truncate text-[10px] text-slate-400">{prediction.reason}</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => handleQuickNavigateSuggestion(event, predictionPlace)}
+                            className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-600 px-2.5 py-1.5 text-[10px] font-black text-white shadow-md transition-all active:scale-95 hover:bg-indigo-500"
+                            title="Start navigation"
+                          >
+                            <Navigation className="h-3 w-3 fill-current" />
+                            <span>Go</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </section>
+                )}
                 {filteredHistory.length > 0 ? (
                   filteredHistory.map((item) => {
                     const branchInfo = extractBranchDistinction(item, filteredHistory, userLocation);
@@ -1080,8 +1055,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                                   {item.name || item.query}
                                 </h4>
                                 {item.frequencyCount && item.frequencyCount > 1 && (
-                                  <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 shrink-0 flex items-center gap-1">
-                                    <Flame className="w-2.5 h-2.5 shrink-0 text-amber-400" /> {item.frequencyCount}x
+                                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md border shrink-0 flex items-center gap-1 ${theme === 'dark' ? 'bg-amber-500/20 text-amber-200 border-amber-400/30' : 'bg-amber-100 text-amber-900 border-amber-300'}`}>
+                                    <Flame className={`w-3 h-3 shrink-0 ${theme === 'dark' ? 'text-amber-300' : 'text-amber-700'}`} /> {item.frequencyCount}x
                                   </span>
                                 )}
                                 <span className="text-[10px] text-slate-400 font-semibold shrink-0">
@@ -1136,7 +1111,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                     </div>
                     );
                   })
-                ) : (
+                ) : predictions.length === 0 || hasQuery ? (
                   <div className="text-center py-6">
                     <Compass className="w-6 h-6 mx-auto mb-1 text-slate-400" />
                     <p className={`text-xs font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
@@ -1146,36 +1121,11 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                       Addresses and places you search or navigate to will appear here for instant 1-tap access.
                     </p>
                   </div>
-                )}
+                ) : null}
               </div>
             )}
 
-            {/* Tab 2: Nearby Categories */}
-            {activeTab === 'categories' && (
-              <div className="grid grid-cols-4 gap-2 pt-1">
-                {categories.map((cat, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      if (onCategorySearch) onCategorySearch(cat.type);
-                      setQuery(cat.query);
-                      setShowDrawer(false);
-                      setIsFocused(false);
-                    }}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl transition-all hover:scale-105 active:scale-95 border
-                      ${theme === 'dark' ? 'bg-white/5 hover:bg-white/10 border-white/5' : 'bg-slate-100 hover:bg-slate-200 border-slate-200'}`}
-                  >
-                    <cat.icon className={`w-6 h-6 shrink-0 ${cat.color}`} />
-                    <span className={`text-[10px] font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
-                      {cat.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Tab 3: Saved Places */}
+            {/* Saved Places */}
             {activeTab === 'saved' && (
               <div 
                 className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto overscroll-contain no-scrollbar pt-1"

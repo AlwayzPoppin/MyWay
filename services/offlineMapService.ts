@@ -461,6 +461,45 @@ class OfflineMapService {
         return 0;
     }
 
+    /**
+     * Reports only MyWay's downloaded map tiles. navigator.storage.estimate()
+     * includes Firebase, app assets, and browser-owned data, so it cannot be
+     * presented as a map-cache measurement.
+     */
+    async getCacheUsage(): Promise<{ tiles: number; bytes: number }> {
+        if (typeof window === 'undefined' || !('caches' in window)) {
+            return { tiles: 0, bytes: 0 };
+        }
+
+        try {
+            const cache = await window.caches.open(TILE_CACHE_NAME);
+            const requests = await cache.keys();
+            let bytes = 0;
+
+            for (const request of requests) {
+                const response = await cache.match(request);
+                if (!response) continue;
+
+                const contentLength = Number(response.headers.get('content-length'));
+                if (Number.isFinite(contentLength) && contentLength > 0) {
+                    bytes += contentLength;
+                    continue;
+                }
+
+                try {
+                    bytes += (await response.clone().blob()).size;
+                } catch {
+                    // Some cross-origin tile responses do not expose a body size.
+                }
+            }
+
+            return { tiles: requests.length, bytes };
+        } catch (error) {
+            console.warn('[OfflineMapService] Error measuring map cache:', error);
+            return { tiles: 0, bytes: 0 };
+        }
+    }
+
     private saveAreas(): void {
         try {
             localStorage.setItem('myway-offline-areas', JSON.stringify(this.downloadedAreas));

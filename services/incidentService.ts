@@ -18,7 +18,12 @@ const TTL_MAP: Record<IncidentType, number> = {
     safety_alert: 180 * 60 * 1000, // 3 hours
     road_closed: 4 * 60 * 60 * 1000,
     signal_out: 2 * 60 * 60 * 1000,
-    speed_bump: 0                 // A durable road feature; no automatic expiry
+    crash: 2 * 60 * 60 * 1000,
+    blocked_lane: 60 * 60 * 1000,
+    bad_weather: 3 * 60 * 60 * 1000,
+    animal: 45 * 60 * 1000,
+    stop_sign: 0, speed_bump: 0,
+    missing_vehicle_access: 0, wrong_traffic_direction: 0, restricted_access: 0
 };
 
 class IncidentService {
@@ -103,7 +108,7 @@ class IncidentService {
     }
 
     /**
-     * Report a road incident with 1-tap from Drive HUD
+     * Report a road incident after the driver confirms the selected detail.
      */
     public async reportIncident(
         type: IncidentType,
@@ -114,7 +119,8 @@ class IncidentService {
         const id = `inc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const now = Date.now();
         const ttl = TTL_MAP[type] || (60 * 60 * 1000);
-        const isPermanent = type === 'speed_bump';
+        const isPermanent = type === 'speed_bump' || type === 'stop_sign'
+            || type === 'missing_vehicle_access' || type === 'wrong_traffic_direction' || type === 'restricted_access';
 
         const newIncident: IncidentReport = {
             id,
@@ -132,7 +138,7 @@ class IncidentService {
             upvoterIds: [user.id],
             downvotes: 0,
             downvoterIds: [],
-            expiresAt: isPermanent ? undefined : now + ttl,
+            ...(isPermanent ? {} : { expiresAt: now + ttl }),
             isPermanent,
             verified: false
         };
@@ -150,7 +156,14 @@ class IncidentService {
             type === 'construction' ? 'Road construction reported.' :
             type === 'road_closed' ? 'Road closure reported. Rerouting may be needed.' :
             type === 'signal_out' ? 'Traffic signal outage reported. Use caution.' :
-            type === 'speed_bump' ? 'Speed bump added as a road feature.' :
+            type === 'crash' ? 'Crash reported. Drive carefully.' :
+            type === 'blocked_lane' ? 'Blocked lane reported. Use caution.' :
+            type === 'bad_weather' ? 'Road weather condition reported. Drive carefully.' :
+            type === 'animal' ? 'Animal near the road reported. Use caution.' :
+            type === 'stop_sign' ? 'Stop sign added as a road feature.' : type === 'speed_bump' ? 'Speed bump added as a road feature.' :
+            type === 'missing_vehicle_access' ? 'Missing vehicle access shared with My Way drivers.' :
+            type === 'wrong_traffic_direction' ? 'Traffic direction issue shared with My Way drivers.' :
+            type === 'restricted_access' ? 'Restricted road access shared with My Way drivers.' :
             type === 'safety_alert' ? 'Flooded road reported. Use caution.' :
             'Road incident reported.';
         speechService.speak(speechMsg);

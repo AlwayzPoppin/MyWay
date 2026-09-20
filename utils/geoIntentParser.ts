@@ -59,7 +59,8 @@ export function isGeoIntentUrl(url: string): boolean {
     trimmed.startsWith('geo:') ||
     trimmed.startsWith('google.navigation:') ||
     trimmed.includes('maps.google.com') ||
-    trimmed.includes('google.com/maps')
+    trimmed.includes('google.com/maps') ||
+    trimmed.includes('maps.app.goo.gl')
   );
 }
 
@@ -145,10 +146,10 @@ export function parseGeoIntent(url: string): ParsedGeoIntent | null {
         queryStr = decodedQ;
       }
     }
-  } else if (lower.includes('maps.google.com') || lower.includes('google.com/maps')) {
+  } else if (lower.includes('maps.google.com') || lower.includes('google.com/maps') || lower.includes('maps.app.goo.gl')) {
     try {
       const parsed = new URL(rawUrl);
-      const q = parsed.searchParams.get('q') || parsed.searchParams.get('query') || parsed.searchParams.get('destination');
+      const q = parsed.searchParams.get('q') || parsed.searchParams.get('query') || parsed.searchParams.get('destination') || parsed.searchParams.get('daddr');
       if (q) {
         let decodedQ = safeDecode(q);
         const labelMatch = decodedQ.match(/^(.*?)\s*\(([^)]+)\)\s*$/);

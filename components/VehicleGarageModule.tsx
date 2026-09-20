@@ -273,14 +273,12 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                 const mpg = activeVeh.mpg || 20;
                 const previewGallons = (capacity * sliderPercent) / 100;
                 const previewRange = Math.round(previewGallons * mpg);
-                const reserveGallons = capacity * 0.1;
-                const previewUsableRange = Math.max(0, Math.round((previewGallons - reserveGallons) * mpg));
                 const fractionName = getFractionName(sliderPercent);
                 const isReserve = sliderPercent <= 15;
                 const isLow = sliderPercent <= 25;
 
                 return (
-                    <div key={fuelStateVersion} className={`p-3.5 rounded-2xl border transition-all ${
+                    <div key={fuelStateVersion} className={`p-3 rounded-2xl border transition-all ${
                         theme === 'dark' 
                             ? 'bg-gradient-to-b from-slate-900/90 to-emerald-950/20 border-emerald-500/20 shadow-lg' 
                             : 'bg-gradient-to-b from-white to-emerald-50/60 border-emerald-200 shadow-sm'
@@ -295,7 +293,7 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                                 </div>
                                 <div>
                                     <h4 className={`text-xs font-black flex items-center gap-1.5 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                        <span>Fuel & Range Tracker</span>
+                                        <span>Fuel level</span>
                                         {fuelStatus && (
                                             <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">
                                                 Active
@@ -303,7 +301,7 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                                         )}
                                     </h4>
                                     <p className="text-[10px] text-slate-400 mt-0.5">
-                                        Tap your dashboard fraction or drag the gauge to set current fuel.
+                                        {previewGallons.toFixed(1)} gal • ~{previewRange} mi range
                                     </p>
                                 </div>
                             </div>
@@ -311,7 +309,7 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                                 <span className={`text-[10px] font-black px-2 py-1 rounded-lg shrink-0 ${
                                     fuelStatus.percentRemaining <= 25 ? 'bg-amber-500/15 text-amber-600' : 'bg-emerald-500/15 text-emerald-600'
                                 }`}>
-                                    {fuelStatus.percentRemaining}% ({getFractionName(fuelStatus.percentRemaining)})
+                                    {fuelStatus.percentRemaining}% • {getFractionName(fuelStatus.percentRemaining)}
                                 </span>
                             ) : (
                                 <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20 shrink-0">
@@ -329,15 +327,7 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                         )}
 
                         {/* Fraction Preset Chips */}
-                        <div className="mt-3">
-                            <div className="flex items-center justify-between mb-1.5">
-                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                                    Dashboard Fraction Presets
-                                </span>
-                                <span className="text-[10px] font-bold text-indigo-400">
-                                    {capacity} gal tank
-                                </span>
-                            </div>
+                        <div className="mt-2.5">
                             <div className="grid grid-cols-5 gap-1.5">
                                 {FRACTION_CHIPS.map((chip) => {
                                     const isSelected = Math.abs(sliderPercent - chip.percent) <= 5;
@@ -346,7 +336,8 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                                             key={chip.label}
                                             type="button"
                                             onClick={() => handleSelectFraction(chip.percent)}
-                                            className={`py-2 px-1 rounded-xl text-center transition-all cursor-pointer border ${
+                                            aria-label={`Set fuel to ${chip.name}`}
+                                            className={`h-9 px-1 rounded-xl text-center transition-all cursor-pointer border ${
                                                 isSelected
                                                     ? 'bg-emerald-600 text-white font-black border-emerald-400 shadow-md shadow-emerald-500/20 scale-105'
                                                     : theme === 'dark'
@@ -354,10 +345,7 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                                                         : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
                                             }`}
                                         >
-                                            <div className="text-xs font-black">{chip.label}</div>
-                                            <div className={`text-[8px] font-medium leading-tight truncate ${isSelected ? 'text-emerald-100' : 'text-slate-400'}`}>
-                                                {chip.name}
-                                            </div>
+                                            <div className="text-xs font-black leading-none">{chip.label}</div>
                                         </button>
                                     );
                                 })}
@@ -365,8 +353,8 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                         </div>
 
                         {/* Interactive Automotive Fuel Gauge Bar / Scrubber */}
-                        <div className="mt-3 p-3 rounded-xl border bg-black/20 dark:bg-black/40 border-white/5">
-                            <div className="flex items-center justify-between text-[11px] font-black mb-1">
+                        <div className={`mt-2.5 rounded-xl border px-2.5 py-2 ${theme === 'dark' ? 'border-white/10 bg-black/20' : 'border-emerald-100 bg-white/70'}`}>
+                            <div className="flex items-center justify-between text-xs font-black mb-1.5">
                                 <span className="flex items-center gap-1.5">
                                     <span className={isReserve ? 'text-rose-400 animate-pulse' : isLow ? 'text-amber-400' : 'text-emerald-400'}>
                                         {fractionName}
@@ -375,13 +363,13 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                                         ({sliderPercent}%)
                                     </span>
                                 </span>
-                                <span className="text-slate-300 font-bold">
+                                <span className={theme === 'dark' ? 'text-slate-200 font-bold' : 'text-slate-700 font-bold'}>
                                     {previewGallons.toFixed(1)} <span className="text-slate-400 font-normal">/ {capacity} gal</span>
                                 </span>
                             </div>
 
                             {/* Range slider bar */}
-                            <div className="relative flex items-center my-1.5">
+                            <div className="relative flex items-center my-1">
                                 <input
                                     type="range"
                                     min="0"
@@ -410,25 +398,22 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                             </div>
 
                             {/* Range & Reserve Readout */}
-                            <div className="flex items-center justify-between pt-2 mt-2 border-t border-white/5 text-[10px]">
+                            <div className="pt-1.5 mt-1.5 border-t border-white/10 text-[10px] text-slate-400">
                                 <span className="text-slate-400">
-                                    Est. Range: <strong className="text-white">~{previewRange} mi</strong>
-                                </span>
-                                <span className="text-slate-400">
-                                    Usable (10% res): <strong className={isReserve ? 'text-amber-400' : 'text-emerald-400'}>~{previewUsableRange} mi</strong>
+                                    Estimated range <strong className={isReserve ? 'text-amber-500' : 'text-emerald-500'}>~{previewRange} mi</strong>
                                 </span>
                             </div>
                         </div>
 
                         {/* Action Buttons: Save Selected Fraction & 1-Tap Fill-Up */}
-                        <div className="grid grid-cols-2 gap-2 mt-3">
+                        <div className="grid grid-cols-2 gap-2 mt-2.5">
                             <button
                                 type="button"
                                 onClick={handleSaveSliderFuel}
                                 className="py-2.5 px-3 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                             >
                                 <Check className="w-3.5 h-3.5" />
-                                <span>Save {fractionName}</span>
+                                <span>Save</span>
                             </button>
                             <button
                                 type="button"
@@ -436,7 +421,7 @@ const VehicleGarageModule: React.FC<VehicleGarageModuleProps> = ({
                                 className="py-2.5 px-3 rounded-xl text-xs font-black border border-emerald-400/40 text-emerald-500 hover:bg-emerald-500/10 transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                             >
                                 <Fuel className="w-3.5 h-3.5" />
-                                <span>1-Tap Full (F)</span>
+                                <span>Full tank</span>
                             </button>
                         </div>
 

@@ -1,17 +1,17 @@
 
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Place, Location, NavigationRoute, FamilyMember, RouteWaypoint, DestinationAccessPoint, AccessPointType } from '../types';
-import { fetchRouteOptions, fetchDetourDeltas, clearRouteCache } from '../services/osrmService';
+import { fetchRouteOptions, fetchDetourDeltas, clearRouteCache, DetourDelta } from '../services/osrmService';
 import { getDistanceMeters } from '../utils/geo';
 import { vehicleFuelService } from '../services/vehicleFuelService';
 import { convoyService } from '../services/convoyService';
 import { placeCorrectionService } from '../services/placeCorrectionService';
 import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
-import { searchPlacesText, searchGasStations, searchCoffeeShops, searchRestaurants } from '../services/placesService';
+import { searchPlacesText } from '../services/placesService';
 import { audioService } from '../services/audioService';
 import { getPlacePhotoKey, placePhotoService, PlacePhotoContribution } from '../services/placePhotoService';
 import { hapticSuccess, hapticTick } from '../utils/haptics';
-import { ensureCameraPermission } from '../services/nativeCameraPermission';
+import { sharePlace } from '../services/nativeShareService';
 import BrandIcon from './BrandIcon';
 import {
     Navigation,
@@ -47,12 +47,13 @@ import {
     Dumbbell,
     Utensils,
     Coffee,
-    Pill,
-    DollarSign,
+    ShoppingCart,
     Flag,
     Battery,
     Loader2,
-    Images
+    Images,
+    ChevronUp,
+    ChevronDown
 } from 'lucide-react';
 import SavedPlaceHubCard from './SavedPlaceHubCard';
 import ParkedVehicleCard from './ParkedVehicleCard';
@@ -61,6 +62,11 @@ interface PlaceDetailPanelProps {
     place: Place;
     onClose: () => void;
     onNavigate: (selectedRoute?: NavigationRoute) => void;
+    /** Promotes a planned stop to the destination while retaining the rest of the trip plan. */
+    onPromoteStop?: (destination: Place, remainingStops: RouteWaypoint[]) => void;
+    initialWaypoints?: RouteWaypoint[];
+    /** Keeps the focused mobile planner visible while a reordered stop becomes the destination. */
+    keepStopPlannerOpen?: boolean;
     theme: 'light' | 'dark';
     userLocation?: Location | null;
     isMobile?: boolean;
@@ -125,6 +131,7 @@ interface WaypointRowProps {
     isDragging: boolean;
     isDragOver: boolean;
     onRemove: (idx: number) => void;
+    onMakeFinal: (idx: number) => void;
     onDesktopDragStart: (idx: number) => void;
     onDesktopDragOver: (idx: number) => void;
     onDesktopDrop: (fromIdx: number, toIdx: number) => void;
@@ -141,6 +148,7 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
     isDragging,
     isDragOver,
     onRemove,
+    onMakeFinal,
     onDesktopDragStart,
     onDesktopDragOver,
     onDesktopDrop,
@@ -149,54 +157,47 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
     onTouchDragMove,
     onTouchDragEnd,
 }) => {
-    const [swipeOffset, setSwipeOffset] = useState<number>(0);
-    const [isSwiping, setIsSwiping] = useState<boolean>(false);
-    const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
-    const isHorizontalSwipeRef = useRef<boolean | null>(null);
-
-    const handleCardTouchStart = (e: React.TouchEvent) => {
-        const touch = e.touches[0];
-        touchStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
-        isHorizontalSwipeRef.current = null;
-        setIsSwiping(true);
+    const [swipeOffset, setSwipeOffset] = useState(0);
+    const swipeRef = useRef<{ x: number; y: number; horizontal: boolean | null; offset: number } | null>(null);
+    const resetSwipe = () => {
+        swipeRef.current = null;
+        setSwipeOffset(0);
     };
-
-    const handleCardTouchMove = (e: React.TouchEvent) => {
-        if (!touchStartRef.current) return;
-        const touch = e.touches[0];
-        const dx = touch.clientX - touchStartRef.current.x;
-        const dy = touch.clientY - touchStartRef.current.y;
-
-        if (isHorizontalSwipeRef.current === null) {
-            if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-                isHorizontalSwipeRef.current = Math.abs(dx) > Math.abs(dy);
-            }
+    const handleCardTouchStart = (event: React.TouchEvent) => {
+        // Buttons and the reorder grip own their gestures.
+        if ((event.target as HTMLElement).closest('button, [role="button"]')) return;
+        const touch = event.touches[0];
+        if (!touch || isDragging) return;
+        swipeRef.current = { x: touch.clientX, y: touch.clientY, horizontal: null, offset: 0 };
+    };
+    const handleCardTouchMove = (event: React.TouchEvent) => {
+        const swipe = swipeRef.current;
+        const touch = event.touches[0];
+        if (!swipe || !touch || isDragging) return;
+        const dx = touch.clientX - swipe.x;
+        const dy = touch.clientY - swipe.y;
+        if (swipe.horizontal === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+            swipe.horizontal = Math.abs(dx) > Math.abs(dy);
         }
-
-        if (isHorizontalSwipeRef.current === true) {
-            e.preventDefault();
-            if (dx < 0) {
-                const resisted = -Math.pow(-dx, 0.88);
-                setSwipeOffset(Math.max(-140, resisted));
-            } else {
-                setSwipeOffset(Math.min(20, dx * 0.2));
-            }
+        if (swipe.horizontal) {
+            if (event.cancelable) event.preventDefault();
+            swipe.offset = dx < 0 ? Math.max(-140, -Math.pow(-dx, 0.88)) : 0;
+            setSwipeOffset(swipe.offset);
         }
     };
-
     const handleCardTouchEnd = () => {
-        setIsSwiping(false);
-        if (swipeOffset < -70) {
+        const shouldRemove = !isDragging && swipeRef.current?.horizontal && swipeRef.current.offset < -70;
+        resetSwipe();
+        if (shouldRemove) {
             hapticSuccess();
             onRemove(wIdx);
         }
-        setSwipeOffset(0);
-        touchStartRef.current = null;
-        isHorizontalSwipeRef.current = null;
     };
 
     return (
         <div
+            data-waypoint-row="true"
+            data-route-order-index={wIdx}
             className="relative overflow-hidden rounded-xl select-none"
             draggable
             onDragStart={(e) => {
@@ -219,22 +220,16 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
             }}
             onDragEnd={onDesktopDragEnd}
         >
-            {/* Red background tray revealed on left swipe */}
-            <div className="absolute inset-0 bg-gradient-to-l from-red-600 via-rose-600 to-red-700 rounded-xl flex items-center justify-end px-4 text-white font-bold gap-1.5 z-0">
-                <Trash2 className="w-4 h-4 text-white shrink-0" />
+            <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-l from-red-600 via-rose-600 to-red-700 rounded-xl flex items-center justify-end px-4 text-white font-bold gap-1.5">
+                <Trash2 className="w-4 h-4 shrink-0" />
                 <span className="text-[10px] font-black tracking-wider uppercase">Delete</span>
             </div>
-
-            {/* Sliding foreground card */}
             <div
-                style={{
-                    transform: `translateX(${swipeOffset}px)`,
-                    transition: isSwiping ? 'none' : 'transform 200ms cubic-bezier(0.2, 0, 0, 1)',
-                }}
+                style={{ transform: `translateX(${swipeOffset}px)`, transition: swipeRef.current ? 'none' : 'transform 200ms ease-out' }}
                 onTouchStart={handleCardTouchStart}
                 onTouchMove={handleCardTouchMove}
                 onTouchEnd={handleCardTouchEnd}
-                onTouchCancel={handleCardTouchEnd}
+                onTouchCancel={resetSwipe}
                 className={`relative z-10 flex items-center justify-between p-2.5 rounded-xl border group transition-all ${
                     isDragging
                         ? 'scale-[1.02] z-20 shadow-[0_4px_20px_rgba(0,242,254,0.3)] border-cyan-400 bg-cyan-950/40 ring-1 ring-cyan-400/50'
@@ -253,10 +248,23 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
                         aria-label="Drag to reorder"
                         className="w-5 h-6 flex items-center justify-center text-slate-400 hover:text-cyan-300 cursor-grab active:cursor-grabbing shrink-0 select-none touch-none text-base transition-colors"
                         title="Drag to reorder"
-                        onTouchStart={(e) => onTouchDragStart(e, wIdx)}
-                        onTouchMove={onTouchDragMove}
-                        onTouchEnd={onTouchDragEnd}
-                        onTouchCancel={onTouchDragEnd}
+                        onTouchStart={(e) => {
+                            e.stopPropagation();
+                            resetSwipe();
+                            onTouchDragStart(e, wIdx);
+                        }}
+                        onTouchMove={(e) => {
+                            e.stopPropagation();
+                            onTouchDragMove(e);
+                        }}
+                        onTouchEnd={(e) => {
+                            e.stopPropagation();
+                            onTouchDragEnd();
+                        }}
+                        onTouchCancel={(e) => {
+                            e.stopPropagation();
+                            onTouchDragEnd();
+                        }}
                     >
                         <GripVertical className="w-4 h-4 shrink-0" />
                     </div>
@@ -277,6 +285,19 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0 ml-2">
+
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onMakeFinal(wIdx);
+                        }}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-sky-500 hover:bg-sky-500/15 hover:text-sky-400 transition-colors cursor-pointer"
+                        title="Make final destination"
+                        aria-label="Make final destination"
+                    >
+                        <Flag className="w-3.5 h-3.5" />
+                    </button>
                     {/* Explicit ✕ button on desktop hover for quick removal without dragging */}
                     <button
                         type="button"
@@ -284,7 +305,7 @@ const WaypointRow: React.FC<WaypointRowProps> = ({
                             e.stopPropagation();
                             onRemove(wIdx);
                         }}
-                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer opacity-80 md:opacity-0 md:group-hover:opacity-100 ${
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer opacity-80 ${
                             theme === 'dark'
                                 ? 'text-red-400 hover:bg-red-500/25 hover:text-red-300 active:scale-90'
                                 : 'text-red-500 hover:bg-red-100 hover:text-red-600 active:scale-90'
@@ -314,15 +335,56 @@ interface GlobalRouteCalcCacheEntry {
     destKey: string;
     origin: Location;
     avoidTolls: boolean;
+    avoidHighways: boolean;
     waypointsKey: string;
     routes: NavigationRoute[];
 }
 const globalRouteCalcCache = new Map<string, GlobalRouteCalcCacheEntry>();
 
+const EMPTY_WAYPOINTS: RouteWaypoint[] = [];
+const EMPTY_MEMBERS: FamilyMember[] = [];
+const EMPTY_USER_PLACES: Place[] = [];
+
+const getSavedStopMatches = (query: string, savedPlaces: Place[]): Place[] => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return [];
+
+    const homeTerms = ['home', 'homes', 'house', 'my home'];
+    const workTerms = ['work', 'office', 'job', 'my work'];
+    const schoolTerms = ['school', 'schools', 'class', 'college', 'campus'];
+    const gymTerms = ['gym', 'fitness', 'workout'];
+    const isHomeQuery = homeTerms.some(term => term.startsWith(normalized) || normalized.startsWith(term));
+    const isWorkQuery = workTerms.some(term => term.startsWith(normalized) || normalized.startsWith(term));
+    const isSchoolQuery = schoolTerms.some(term => term.startsWith(normalized) || normalized.startsWith(term));
+    const isGymQuery = gymTerms.some(term => term.startsWith(normalized) || normalized.startsWith(term));
+
+    return savedPlaces.filter(place => {
+        const name = (place.name || '').toLowerCase();
+        const type = (place.type || '').toLowerCase();
+        const address = (place.address || place.description || '').toLowerCase();
+        return name.includes(normalized)
+            || address.includes(normalized)
+            || (isHomeQuery && ['home', 'residential'].includes(type))
+            || (isWorkQuery && ['work', 'office'].includes(type))
+            || (isSchoolQuery && type === 'school')
+            || (isGymQuery && type === 'gym');
+    });
+};
+
+const isSameStop = (first: Place, second: Place): boolean =>
+    first.id === second.id || (
+        Boolean(first.location && second.location) &&
+        Math.abs(first.location!.lat - second.location!.lat) < 0.00005 &&
+        Math.abs(first.location!.lng - second.location!.lng) < 0.00005
+    );
+
 const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     place,
     onClose,
     onNavigate,
+    onPromoteStop,
+    initialWaypoints = EMPTY_WAYPOINTS,
+    keepStopPlannerOpen = false,
     theme,
     userLocation,
     isMobile = false,
@@ -333,9 +395,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     onEditPlace,
     onSelectRoutePreview,
     onCorrectLocation,
-    members = [],
+    members = EMPTY_MEMBERS,
     currentUserId = '',
-    userPlaces = [],
+    userPlaces = EMPTY_USER_PLACES,
     onPhotoUploaded
 }) => {
     const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState(false);
@@ -433,13 +495,28 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         if (liveAccessPoints && liveAccessPoints.length > 0) return liveAccessPoints;
         if (Array.isArray(place.accessPoints) && place.accessPoints.length > 0) return place.accessPoints;
         return placeCorrectionService.getAccessPoints(place);
-    }, [liveAccessPoints, place]);
+    }, [liveAccessPoints, place.id, place.name, place.location?.lat, place.location?.lng, place.accessPoints]);
+
+    // Use a vehicle arrival point only when the data is unambiguous and trusted.
+    // Parking and drive-through access are more useful than a building pin for
+    // drivers, but a guessed or competing entrance should never override their
+    // explicit choice.
+    const recommendedVehicleAccessPoint = useMemo(() => {
+        const verifiedVehicleAccessPoints = accessPoints.filter(ap =>
+            (ap.type === 'parking' || ap.type === 'drive_thru' || ap.type === 'pharmacy_drive_thru')
+            && ap.confidence === 'high'
+            && ap.status !== 'pending'
+            && ap.status !== 'rejected'
+        );
+        return verifiedVehicleAccessPoints.length === 1 ? verifiedVehicleAccessPoints[0] : null;
+    }, [accessPoints]);
 
     const activeAccessPoint: DestinationAccessPoint = useMemo(() => {
         if (selectedAccessPointId) {
             const found = accessPoints.find(ap => ap.id === selectedAccessPointId);
             if (found) return found;
         }
+        if (recommendedVehicleAccessPoint) return recommendedVehicleAccessPoint;
         return accessPoints[0] || {
             id: `ap_main_${place.id || 'default'}`,
             name: 'Main place pin',
@@ -449,18 +526,27 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             source: 'osm',
             confidence: 'low'
         };
-    }, [accessPoints, selectedAccessPointId, place]);
+    }, [accessPoints, selectedAccessPointId, recommendedVehicleAccessPoint, place.id, place.location?.lat, place.location?.lng]);
 
     const targetLocation: Location = useMemo(() => {
         return activeAccessPoint?.location || place.location;
-    }, [activeAccessPoint, place.location]);
+    }, [activeAccessPoint?.location?.lat, activeAccessPoint?.location?.lng, place.location?.lat, place.location?.lng]);
 
     // Fetch photos from Firestore & Storage cache
     useEffect(() => {
         if (!photoPlaceId) return;
         let isMounted = true;
-        const unsubscribe = placePhotoService.subscribeToPhotosForPlace(photoPlaceId, (fetched) => {
+        // Keep the original provider/saved ID as a read-only fallback for
+        // contributions made before photo keys were stabilized. New uploads
+        // always use photoPlaceId, so this can be removed after migration.
+        const photoKeys = Array.from(new Set([photoPlaceId, place.id]));
+        const photosByKey = new Map<string, PlacePhotoContribution[]>();
+        const applyFetchedPhotos = () => {
             if (!isMounted) return;
+            const fetched = Array.from(photosByKey.values())
+                .flat()
+                .filter((photo, index, all) => all.findIndex(candidate => candidate.id === photo.id) === index)
+                .sort((a, b) => b.createdAt - a.createdAt);
             setPhotos(fetched);
             const urls = fetched.map(p => p.url);
             if (place.imageUrl && !urls.includes(place.imageUrl)) {
@@ -468,44 +554,28 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             }
             setPhotoUrls(urls);
             setActivePhotoIndex(0);
-        });
+        };
+        const unsubscribes = photoKeys.map(key => placePhotoService.subscribeToPhotosForPlace(key, (fetched) => {
+            photosByKey.set(key, fetched);
+            applyFetchedPhotos();
+        }));
         return () => {
             isMounted = false;
-            unsubscribe();
+            unsubscribes.forEach(unsubscribe => unsubscribe());
         };
-    }, [photoPlaceId, place?.imageUrl]);
+    }, [photoPlaceId, place.id, place?.imageUrl]);
 
-    // Secure Camera Capture Trigger (No File System / Library Access)
-    const handleTriggerCamera = async () => {
+    const handleTriggerCamera = () => {
         if (isUploadingPhoto) return;
-        setPhotoFeedback(null);
-        try {
-            if (!await ensureCameraPermission()) {
-                setPhotoFeedback('Camera access is needed to take a building photo. Enable it in My Way settings and try again.');
-                return;
-            }
-        } catch {
-            setPhotoFeedback('We could not request camera access. Please check My Way permissions and try again.');
-            return;
-        }
         const input = cameraInputRef.current;
-        if (!input) {
-            setPhotoFeedback('Camera is still preparing. Please try again.');
-            return;
-        }
-        // showPicker is more reliable in current Android WebView builds; click
-        // keeps older Android, iOS, and desktop browsers working.
-        try {
-            if (typeof input.showPicker === 'function') {
-                input.showPicker();
-                return;
-            }
-        } catch {
-            // Some browsers expose showPicker but reject it. Fall through.
-        }
+        if (!input) return;
+        setPhotoFeedback(null);
+        // `capture="environment"` stays on the input. Calling it directly from
+        // this user gesture opens the rear camera in Android WebView, whose
+        // viewfinder still exposes the platform gallery shortcut.
+        input.value = '';
         input.click();
     };
-
     const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file || !photoPlaceId) return;
@@ -521,11 +591,19 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         }
 
         setIsUploadingPhoto(true);
-        setPhotoFeedback('Preparing your building photo…');
+        setPhotoFeedback('Uploading building photo…');
+
+        // Immediate local preview for responsive UX:
+        const localPreviewUrl = URL.createObjectURL(file);
+        setPhotoUrls(prev => [localPreviewUrl, ...prev.filter(u => u !== localPreviewUrl)]);
+        setActivePhotoIndex(0);
+
         try {
             const newContribution = await placePhotoService.uploadPhotoContribution({
                 placeId: photoPlaceId,
                 placeName: place.name,
+                reportedAddress: place.address || place.description || place.name,
+                placeLocation: place.location,
                 file,
                 userId: currentUserId || 'anonymous',
                 userName: currentUserMember?.name || 'You',
@@ -533,17 +611,24 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             });
 
             // Instant photo rendering on detail card:
-            setPhotoUrls(prev => [newContribution.url, ...prev.filter(u => u !== newContribution.url)]);
+            setPhotoUrls(prev => [newContribution.url, ...prev.filter(u => u !== localPreviewUrl && u !== newContribution.url)]);
             setPhotos(prev => [newContribution, ...prev.filter(p => p.id !== newContribution.id)]);
             setActivePhotoIndex(0);
-            place.imageUrl = newContribution.url;
-            onPhotoUploaded?.(place, newContribution.url);
+            // Community photos are private to the contributor until Operations approves them.
+            // Do not set place.imageUrl here because that is the public, approved-photo surface.
+            if (newContribution.reviewStatus === 'approved') {
+                place.imageUrl = newContribution.url;
+                onPhotoUploaded?.(place, newContribution.url);
+            }
             setPhotoFeedback(newContribution.isSynced === false
-                ? 'Saved on this device. It will share when your connection returns.'
-                : 'Building photo shared.');
+                ? 'Saved on this device. Sharing could not be confirmed.'
+                : newContribution.reviewStatus === 'pending'
+                    ? 'Building photo submitted for My Way Operations review.'
+                    : 'Building photo shared.');
             hapticSuccess();
         } catch (err) {
             console.error('[PlaceDetailPanel] Photo contribution failed:', err);
+            setPhotoUrls(prev => prev.filter(u => u !== localPreviewUrl));
             setPhotoFeedback('We could not save that photo. Check your connection and try again.');
         } finally {
             setIsUploadingPhoto(false);
@@ -597,9 +682,19 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
         return (
             <div className={`mt-1.5 mb-2 landscape:mt-1 landscape:mb-1.5 select-none ${isMobileView ? '' : 'mb-2.5'}`}>
+                <input
+                    ref={cameraInputRef}
+                    id="place-building-photo-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleCameraCapture}
+                    style={{ display: 'none' }}
+                    aria-hidden="true"
+                />
                 {hasPhotos && currentUrl ? (
                     <div
-                        className={`relative rounded-xl border p-1.5 sm:p-2 landscape:p-1.5 flex items-center justify-between gap-2.5 landscape:gap-1.5 transition-all shadow-xs ${
+                        className={`relative rounded-xl border p-1.5 sm:p-2 landscape:p-1.5 flex ${isMobileView ? 'flex-col items-stretch gap-2.5' : 'items-center justify-between gap-2.5 landscape:gap-1.5'} transition-all shadow-xs ${
                             theme === 'dark'
                                 ? 'bg-white/5 border-white/10 hover:border-white/20'
                                 : 'bg-slate-50/90 border-slate-200 hover:border-slate-300'
@@ -616,16 +711,21 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     setIsPhotoLightboxOpen(true);
                                 }
                             }}
-                            className="relative w-10 h-10 sm:w-11 sm:h-11 landscape:w-8 landscape:h-8 rounded-lg overflow-hidden shrink-0 border border-black/10 dark:border-white/15 cursor-pointer group shadow-sm"
-                            title="Tap thumbnail to view photo"
+                            className={`relative overflow-hidden shrink-0 border border-black/10 dark:border-white/15 cursor-pointer group shadow-sm ${
+                                isMobileView
+                                    ? 'w-full h-40 rounded-lg'
+                                    : 'w-10 h-10 sm:w-11 sm:h-11 landscape:w-8 landscape:h-8 rounded-lg'
+                            }`}
+                            title="View building and access photo"
                         >
                             <img
                                 src={currentUrl}
                                 alt={place.name}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                             />
-                            <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <Expand className="w-3 h-3 text-white drop-shadow" />
+                            <div className={`absolute inset-0 bg-gradient-to-t from-black/65 via-black/5 to-transparent flex ${isMobileView ? 'items-end justify-between p-3 opacity-100' : 'items-center justify-center opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                                {isMobileView && <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-white backdrop-blur-sm">View full photo</span>}
+                                <Expand className={`${isMobileView ? 'w-5 h-5' : 'w-3 h-3'} text-white drop-shadow`} />
                             </div>
                             {photoUrls.length > 1 && (
                                 <span className="absolute bottom-0.5 right-0.5 text-[8px] font-black px-1 rounded bg-black/75 text-white backdrop-blur-xs leading-tight">
@@ -645,8 +745,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     setIsPhotoLightboxOpen(true);
                                 }
                             }}
-                            className="min-w-0 flex-1 cursor-pointer"
-                            title="Tap to view photo"
+                            className={`${isMobileView ? 'w-full' : 'min-w-0 flex-1'} cursor-pointer`}
+                            title="View building and access photo"
                         >
                             <div className="flex items-center gap-1.5">
                                 <Camera className="w-3 h-3 text-emerald-400 shrink-0" />
@@ -668,7 +768,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         </div>
 
                         {/* Actions: Add Photo & Discrete Edit Icon */}
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className={`flex items-center gap-1.5 shrink-0 ${isMobileView ? 'justify-end' : ''}`}>
                             <button
                                 type="button"
                                 onClick={handleTriggerCamera}
@@ -770,10 +870,11 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         return unsub;
     }, [place?.id, place?.name]);
 
+    const helpfulUserIdsKey = useMemo(() => (place?.helpfulUserIds || []).join(','), [place?.helpfulUserIds]);
     useEffect(() => {
         setLocalHelpfulCount(place?.helpfulCount || 0);
         setHasUpvoted(Array.isArray(place?.helpfulUserIds) && currentUserId ? place.helpfulUserIds.includes(currentUserId) : false);
-    }, [place?.id, place?.helpfulCount, place?.helpfulUserIds, currentUserId]);
+    }, [place?.id, place?.helpfulCount, helpfulUserIdsKey, currentUserId]);
 
     const isVerified = Boolean(place?.isCommunityVerified || place?.isCorrected || publicReport);
     const hasPrecisionPin = Boolean(
@@ -895,9 +996,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         return members.filter(m => m.id !== currentUserId).map(m => m.id);
     });
 
+    const memberIdsKey = useMemo(() => members.map(m => m.id).sort().join(','), [members]);
     useEffect(() => {
         setSelectedMemberIds(members.filter(m => m.id !== currentUserId).map(m => m.id));
-    }, [members, currentUserId]);
+    }, [memberIdsKey, currentUserId]);
     const [newPlaceName, setNewPlaceName] = useState(place.name || '');
     const [newPlaceIcon, setNewPlaceIcon] = useState(place.icon || '📍');
     const [newPlaceType, setNewPlaceType] = useState<'home' | 'work' | 'school' | 'gym' | 'gas' | 'food' | 'coffee' | 'other'>(() => {
@@ -951,37 +1053,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
     const renderVerifiedEntrances = (isCompact: boolean = false) => {
         if (!accessPoints || accessPoints.length === 0) return null;
-        const verifiedAccessPointCount = accessPoints.filter(ap => ap.confidence !== 'low').length;
-
         return (
             <div className={`mt-2 mb-1.5 ${isCompact ? 'px-0' : ''}`}>
-                <div className="flex items-center justify-between gap-1 mb-1 px-0.5">
-                    <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
-                            <Crosshair className="w-3 h-3 text-amber-400 shrink-0" />
-                            <span>Arrival points</span>
-                        </span>
-                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                            {verifiedAccessPointCount > 0 ? `${verifiedAccessPointCount} verified` : 'place pin'}
-                        </span>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setNewApType('curbside');
-                            setNewApName('');
-                            setNewApNotes('');
-                            setIsAddAccessPointOpen(true);
-                        }}
-                        className="text-[9px] font-bold text-slate-400 hover:text-white px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
-                        title="Contribute a verified entrance"
-                    >
-                        <Plus className="w-2.5 h-2.5" />
-                        <span>Add</span>
-                    </button>
-                </div>
-
-                {/* Horizontal scrollable chip row */}
+                {/* Routing choices stay available without duplicating community trust badges. */}
                 <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
                     {accessPoints.map(ap => {
                         const isSelected = activeAccessPoint?.id === ap.id;
@@ -1036,6 +1110,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         <span className="text-xs">{ACCESS_POINT_TYPE_CONFIG[activeAccessPoint.type]?.icon || '🎯'}</span>
                         <span className="truncate">
                             Routing to verified {activeAccessPoint.name} entrance
+                            {!selectedAccessPointId && activeAccessPoint.id === recommendedVehicleAccessPoint?.id ? ' · Recommended vehicle arrival' : ''}
                             {activeAccessPoint.notes ? ` · ${activeAccessPoint.notes}` : ''}
                         </span>
                     </div>
@@ -1051,13 +1126,27 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const [avoidTolls, setAvoidTolls] = useState<boolean>(() => {
         return localStorage.getItem('myway_avoid_tolls') === 'true';
     });
-    const [waypoints, setWaypoints] = useState<RouteWaypoint[]>([]);
+    const [avoidHighways, setAvoidHighways] = useState<boolean>(() => {
+        return localStorage.getItem('myway_avoid_highways') === 'true';
+    });
+    const [appliedRouteFilters, setAppliedRouteFilters] = useState(() => ({
+        avoidTolls: localStorage.getItem('myway_avoid_tolls') === 'true',
+        avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
+    }));
+    const [waypoints, setWaypoints] = useState<RouteWaypoint[]>(initialWaypoints);
     const [showAddStopDrawer, setShowAddStopDrawer] = useState<boolean>(false);
     const [stopSearchQuery, setStopSearchQuery] = useState<string>('');
-    const [isStopSearchFocused, setIsStopSearchFocused] = useState<boolean>(false);
+    const [showAllStopResults, setShowAllStopResults] = useState<boolean>(false);
     const [isSearchingStops, setIsSearchingStops] = useState<boolean>(false);
     const [stopSearchResults, setStopSearchResults] = useState<Place[]>([]);
-    const [detourDeltas, setDetourDeltas] = useState<Map<number, number>>(new Map());
+    const [detourDeltas, setDetourDeltas] = useState<Map<number, DetourDelta>>(new Map());
+    // Search results should leave the map visible first. The driver can pull
+    // this sheet up for photos, community details, and other place metadata.
+    const [isDetailsExpanded, setIsDetailsExpanded] = useState(false);
+    const sheetTouchStartYRef = useRef<number | null>(null);
+    const sheetHandleWasDraggedRef = useRef(false);
+    const [isCompactLandscape, setIsCompactLandscape] = useState(false);
+    const [isSplitRouteListOpen, setIsSplitRouteListOpen] = useState(false);
 
     const [retryTrigger, setRetryTrigger] = useState(0);
     const activeVehicle = vehicleFuelService.getActiveVehicle();
@@ -1074,6 +1163,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         destKey: string;
         origin: Location;
         avoidTolls: boolean;
+        avoidHighways: boolean;
         waypointsKey: string;
     } | null>(null);
     const isCalculatingRoutesRef = useRef(false);
@@ -1081,6 +1171,48 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const isComponentAliveRef = useRef(true);
     const activeRequestIdRef = useRef(0);
     const forceRouteRetryRef = useRef(false);
+
+    useEffect(() => {
+        setIsDetailsExpanded(false);
+        setIsSplitRouteListOpen(false);
+    }, [place.id]);
+
+    useEffect(() => {
+        const media = window.matchMedia('(orientation: landscape) and (max-height: 760px)');
+        const update = () => setIsCompactLandscape(media.matches);
+        update();
+        media.addEventListener('change', update);
+        return () => media.removeEventListener('change', update);
+    }, []);
+
+    // Filter chips respond immediately, but directions waits briefly for a
+    // settled choice so rapid taps never create duplicate route requests.
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            setAppliedRouteFilters(current => (
+                current.avoidTolls === avoidTolls && current.avoidHighways === avoidHighways
+                    ? current
+                    : { avoidTolls, avoidHighways }
+            ));
+        }, 180);
+        return () => window.clearTimeout(timer);
+    }, [avoidTolls, avoidHighways]);
+
+    const toggleAvoidTolls = useCallback(() => {
+        setAvoidTolls(current => {
+            const next = !current;
+            localStorage.setItem('myway_avoid_tolls', String(next));
+            return next;
+        });
+    }, []);
+
+    const toggleAvoidHighways = useCallback(() => {
+        setAvoidHighways(current => {
+            const next = !current;
+            localStorage.setItem('myway_avoid_highways', String(next));
+            return next;
+        });
+    }, []);
 
     // Track component mounting lifecycle to prevent setting state on unmounted component
     useEffect(() => {
@@ -1105,16 +1237,35 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         setRetryTrigger(prev => prev + 1);
     }, []);
 
+    const onSelectRoutePreviewRef = useRef(onSelectRoutePreview);
+    useEffect(() => {
+        onSelectRoutePreviewRef.current = onSelectRoutePreview;
+    }, [onSelectRoutePreview]);
+
+    const placeKey = `${place?.id || place?.name}_${place?.location?.lat?.toFixed(5)}_${place?.location?.lng?.toFixed(5)}`;
+    const prevPlaceKeyRef = useRef<string>(placeKey);
+    const initialWaypointsKey = useMemo(() => {
+        return (initialWaypoints || []).map(w => `${w.id}_${w.location?.lat?.toFixed(5)}_${w.location?.lng?.toFixed(5)}`).join('|');
+    }, [initialWaypoints]);
+    const prevInitialWaypointsKeyRef = useRef<string>(initialWaypointsKey);
+
     // Reset waypoints and cached calculation when destination place changes
     useEffect(() => {
-        setWaypoints([]);
-        setShowAddStopDrawer(false);
-        setStopSearchQuery('');
-        setStopSearchResults([]);
-        lastCalculatedParamsRef.current = null;
-        setRouteOptions([]);
-        setIsLoadingRoutes(true);
-    }, [place.id, place.name, place.location?.lat, place.location?.lng]);
+        const placeChanged = prevPlaceKeyRef.current !== placeKey;
+        const waypointsChanged = prevInitialWaypointsKeyRef.current !== initialWaypointsKey;
+
+        if (placeChanged || waypointsChanged) {
+            prevPlaceKeyRef.current = placeKey;
+            prevInitialWaypointsKeyRef.current = initialWaypointsKey;
+            setWaypoints(initialWaypoints);
+            setShowAddStopDrawer(keepStopPlannerOpen);
+            setStopSearchQuery('');
+            setStopSearchResults([]);
+            lastCalculatedParamsRef.current = null;
+            setRouteOptions([]);
+            setIsLoadingRoutes(true);
+        }
+    }, [placeKey, initialWaypointsKey, initialWaypoints, keepStopPlannerOpen]);
 
     // Safety watchdog: ensure loader never remains permanently stuck if network promise hangs
     useEffect(() => {
@@ -1129,15 +1280,23 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         return () => clearTimeout(timer);
     }, [isLoadingRoutes]);
 
+    const targetLat = targetLocation?.lat;
+    const targetLng = targetLocation?.lng;
+    const userLat = userLocation?.lat;
+    const userLng = userLocation?.lng;
+    const activeApId = activeAccessPoint?.id || 'main';
+    const waypointsKey = useMemo(() => {
+        return waypoints.map(w => `${w.id}_${w.location?.lat?.toFixed(5)}_${w.location?.lng?.toFixed(5)}`).join('|');
+    }, [waypoints]);
+
     useEffect(() => {
         if (!userLocation || !place.location || !targetLocation) {
             setIsLoadingRoutes(false);
             return;
         }
 
-        const apKey = activeAccessPoint?.id || 'main';
-        const destKey = `${place.id || place.name}_${targetLocation.lat.toFixed(5)}_${targetLocation.lng.toFixed(5)}_${apKey}`;
-        const waypointsKey = waypoints.map(w => `${w.id}_${w.location.lat.toFixed(5)}_${w.location.lng.toFixed(5)}`).join('|');
+        const apKey = activeApId;
+        const destKey = `${place.id || place.name}_${targetLat?.toFixed(5)}_${targetLng?.toFixed(5)}_${apKey}`;
         const forceRetry = forceRouteRetryRef.current;
         if (forceRetry) globalRouteCalcCache.delete(destKey);
         const cached = forceRetry ? undefined : globalRouteCalcCache.get(destKey);
@@ -1146,7 +1305,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         // Check if destination, tolls setting, or waypoints changed
         const isParamChange = forceRetry || !lastParams || 
             lastParams.destKey !== destKey || 
-            lastParams.avoidTolls !== avoidTolls || 
+            lastParams.avoidTolls !== appliedRouteFilters.avoidTolls ||
+            lastParams.avoidHighways !== appliedRouteFilters.avoidHighways ||
             lastParams.waypointsKey !== waypointsKey;
 
         // Check if user has moved significantly (> 100 meters) from the origin where routes were calculated
@@ -1179,7 +1339,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         lastCalculatedParamsRef.current = {
             destKey,
             origin: { ...userLocation },
-            avoidTolls,
+            avoidTolls: appliedRouteFilters.avoidTolls,
+            avoidHighways: appliedRouteFilters.avoidHighways,
             waypointsKey
         };
 
@@ -1187,7 +1348,12 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             ? `${place.name} (${activeAccessPoint.name})`
             : (place.name || 'Destination');
 
-        fetchRouteOptions(userLocation, destDisplayName, targetLocation, { avoidTolls, waypoints, bypassCache: forceRetry })
+        fetchRouteOptions(userLocation, destDisplayName, targetLocation, {
+            avoidTolls: appliedRouteFilters.avoidTolls,
+            avoidHighways: appliedRouteFilters.avoidHighways,
+            waypoints,
+            bypassCache: forceRetry
+        })
             .then(routes => {
                 // Attach access point entrance metadata to routes
                 if (activeAccessPoint) {
@@ -1200,7 +1366,8 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 globalRouteCalcCache.set(destKey, {
                     destKey,
                     origin: { ...userLocation },
-                    avoidTolls,
+                    avoidTolls: appliedRouteFilters.avoidTolls,
+                    avoidHighways: appliedRouteFilters.avoidHighways,
                     waypointsKey,
                     routes
                 });
@@ -1214,12 +1381,12 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     // Preserve selected route index if still valid
                     setSelectedRouteIdx(prevIdx => (prevIdx >= 0 && prevIdx < routes.length ? prevIdx : 0));
 
-                    if (routes.length > 0 && onSelectRoutePreview) {
+                    if (routes.length > 0 && onSelectRoutePreviewRef.current) {
                         const targetRoute = routes[0];
                         const routeKey = `${targetRoute.id || targetRoute.summary}_${targetRoute.totalDistance}`;
                         if (lastPreviewedRouteIdRef.current !== routeKey) {
                             lastPreviewedRouteIdRef.current = routeKey;
-                            onSelectRoutePreview(targetRoute);
+                            onSelectRoutePreviewRef.current(targetRoute);
                         }
                     }
                 }
@@ -1231,9 +1398,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     forceRouteRetryRef.current = false;
                 }
             });
-    }, [place.name, place.id, targetLocation, userLocation?.lat, userLocation?.lng, avoidTolls, waypoints, onSelectRoutePreview, retryTrigger, activeAccessPoint]);
+    }, [place?.name, place?.id, targetLat, targetLng, userLat, userLng, appliedRouteFilters, waypointsKey, retryTrigger, activeApId]);
 
-    const handleAddStop = (p: Place) => {
+    const handleAddStop = (p: Place, keepPlannerOpen = false) => {
         if (!p.location) return;
         const newWp: RouteWaypoint = {
             id: p.id || `wp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -1243,24 +1410,90 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             isStop: true
         };
         setWaypoints(prev => [...prev, newWp]);
-        setShowAddStopDrawer(false);
+        setShowAddStopDrawer(keepPlannerOpen);
         setStopSearchQuery('');
         setStopSearchResults([]);
+        setDetourDeltas(new Map());
     };
 
     const handleRemoveStop = (idx: number) => {
         setWaypoints(prev => prev.filter((_, i) => i !== idx));
     };
 
-    const handleReorderStop = (fromIdx: number, toIdx: number) => {
-        if (fromIdx === toIdx) return;
-        setWaypoints(prev => {
-            const next = [...prev];
-            if (fromIdx < 0 || fromIdx >= next.length || toIdx < 0 || toIdx >= next.length) return prev;
-            const [moved] = next.splice(fromIdx, 1);
-            next.splice(toIdx, 0, moved);
-            return next;
-        });
+    const renderSavedStopShortcuts = () => {
+        if (stopSearchQuery.trim() || userPlaces.length === 0) return null;
+        return (
+            <div className="space-y-2">
+                <p className={`text-[10px] font-black uppercase tracking-wide ${subTextColor}`}>Saved places</p>
+                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                    {userPlaces.filter(saved => Number.isFinite(saved.location?.lat) && Number.isFinite(saved.location?.lng)).map(saved => {
+                        const alreadyAdded = isSameStop(saved, place) || waypoints.some(stop =>
+                            stop.id === saved.id || (Math.abs(stop.location.lat - saved.location.lat) < 0.00005 && Math.abs(stop.location.lng - saved.location.lng) < 0.00005));
+                        return (
+                            <button key={saved.id} type="button" disabled={alreadyAdded}
+                                onClick={() => handleAddStop(saved, true)}
+                                title={saved.address || saved.name}
+                                className={`min-h-11 max-w-full rounded-xl border px-3 py-2 flex items-center gap-2 text-xs font-bold disabled:opacity-50 disabled:cursor-default ${theme === 'dark' ? 'bg-white/5 border-white/15 text-white hover:bg-white/10' : 'bg-white border-slate-200 text-slate-800 hover:bg-violet-50'}`}>
+                                {alreadyAdded ? <Check className="w-4 h-4 shrink-0" /> : <Plus className="w-4 h-4 shrink-0 text-violet-500" />}
+                                <span className="truncate">{saved.name}</span>
+                                {alreadyAdded && <span className="text-[9px] shrink-0">In trip</span>}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
+    const handleMakeStopFinal = (idx: number) => {
+        const promotedStop = waypoints[idx];
+        if (!promotedStop || !onPromoteStop) return;
+
+        const formerDestination: RouteWaypoint = {
+            id: `former_destination_${place.id || Date.now()}`,
+            name: place.name || 'Destination',
+            location: targetLocation,
+            order: waypoints.length,
+            isStop: true
+        };
+        const remainingStops = [...waypoints.filter((_, waypointIdx) => waypointIdx !== idx), formerDestination]
+            .map((waypoint, order) => ({ ...waypoint, order: order + 1 }));
+
+        onPromoteStop({
+            id: promotedStop.id,
+            name: promotedStop.name,
+            location: promotedStop.location,
+            radius: 0.05,
+            type: 'search_result',
+            icon: '📍'
+        }, remainingStops);
+    };
+
+    const handleRouteOrderDrop = (fromIdx: number, toIdx: number) => {
+        if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
+        const routeItems = [
+            ...waypoints.map((waypoint) => ({ kind: 'stop' as const, waypoint })),
+            { kind: 'destination' as const, waypoint: { id: `destination_${place.id || place.name}`, name: place.name || 'Destination', location: targetLocation, order: waypoints.length + 1, isStop: true } },
+        ];
+        if (fromIdx >= routeItems.length || toIdx >= routeItems.length) return;
+
+        const reordered = [...routeItems];
+        const [moved] = reordered.splice(fromIdx, 1);
+        reordered.splice(toIdx, 0, moved);
+        const finalItem = reordered[reordered.length - 1];
+        const remainingStops = reordered.slice(0, -1).map((item, index) => ({ ...item.waypoint, order: index + 1, isStop: true }));
+
+        if (finalItem.kind === 'destination') {
+            setWaypoints(remainingStops);
+            return;
+        }
+        onPromoteStop?.({ id: finalItem.waypoint.id, name: finalItem.waypoint.name, location: finalItem.waypoint.location, radius: 0.05, type: 'search_result', icon: '📍' }, remainingStops);
+    };
+
+    const routeOrderIndexAtPoint = (clientX: number, clientY: number) => {
+        const target = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-route-order-index]');
+        const index = target?.dataset.routeOrderIndex;
+        return index === undefined ? null : Number(index);
     };
 
     const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1270,6 +1503,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     const [touchDragIndex, setTouchDragIndex] = useState<number | null>(null);
     const [desktopDragIdx, setDesktopDragIdx] = useState<number | null>(null);
     const [desktopDragOverIdx, setDesktopDragOverIdx] = useState<number | null>(null);
+    const [routeOrderDragIndex, setRouteOrderDragIndex] = useState<number | null>(null);
+    const [routeOrderDropIndex, setRouteOrderDropIndex] = useState<number | null>(null);
+    const routeOrderDragIndexRef = useRef<number | null>(null);
+    const routeOrderDropIndexRef = useRef<number | null>(null);
 
     const handleTouchDragStart = (e: React.TouchEvent, idx: number) => {
         e.stopPropagation();
@@ -1306,7 +1543,11 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             if (i === currentIdx) continue;
             const b = bounds[i];
             if (i > currentIdx && currentY > b.midY) {
-                handleReorderStop(currentIdx, i);
+                handleRouteOrderDrop(currentIdx, i);
+                if (currentIdx === waypoints.length || i === waypoints.length) {
+                    handleTouchDragEnd();
+                    return;
+                }
                 touchActiveIdxRef.current = i;
                 setTouchDragIndex(i);
                 try { navigator.vibrate(12); } catch {}
@@ -1320,7 +1561,11 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 break;
             }
             if (i < currentIdx && currentY < b.midY) {
-                handleReorderStop(currentIdx, i);
+                handleRouteOrderDrop(currentIdx, i);
+                if (currentIdx === waypoints.length || i === waypoints.length) {
+                    handleTouchDragEnd();
+                    return;
+                }
                 touchActiveIdxRef.current = i;
                 setTouchDragIndex(i);
                 try { navigator.vibrate(12); } catch {}
@@ -1359,37 +1604,28 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     };
 
     const handleSearchStops = async (q: string) => {
-        if (!q.trim() || !userLocation) {
+        setShowAllStopResults(false);
+        const query = q.trim();
+        if (!query) {
             setStopSearchResults([]);
+            setDetourDeltas(new Map());
+            return;
+        }
+        const savedMatches = getSavedStopMatches(query, userPlaces);
+        if (!userLocation) {
+            setStopSearchResults(savedMatches.slice(0, 6));
             setDetourDeltas(new Map());
             return;
         }
         setIsSearchingStops(true);
         try {
-            const results = await searchPlacesText(q, userLocation);
-            const sliced = results.slice(0, 5);
-            setStopSearchResults(sliced);
-            computeDetours(sliced);
-        } catch {
-            setStopSearchResults([]);
-        } finally {
-            setIsSearchingStops(false);
-        }
-    };
-
-    const handleQuickPoiSearch = async (category: string) => {
-        if (!userLocation) return;
-        setIsSearchingStops(true);
-        setDetourDeltas(new Map());
-        try {
-            let results: Place[] = [];
-            if (category === 'gas station') results = await searchGasStations(userLocation);
-            else if (category === 'coffee') results = await searchCoffeeShops(userLocation);
-            else if (category === 'fast food restaurant') results = await searchRestaurants(userLocation);
-            else results = await searchPlacesText(category, userLocation);
-            const sliced = results.slice(0, 5);
-            setStopSearchResults(sliced);
-            computeDetours(sliced);
+            const results = await searchPlacesText(query, userLocation);
+            const combined = [
+                ...savedMatches,
+                ...results.filter(result => !savedMatches.some(saved => isSameStop(saved, result)))
+            ].filter(result => result?.location).slice(0, 6);
+            setStopSearchResults(combined);
+            computeDetours(combined);
         } catch {
             setStopSearchResults([]);
         } finally {
@@ -1407,9 +1643,21 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             setNewPlaceType('other');
         }
         setIsSavingPlace(false);
-    }, [place]);
+    }, [place?.id, place?.name, place?.icon, place?.radius, place?.type, place?.location?.lat, place?.location?.lng]);
 
-    const distance = formatDistanceFromUser(userLocation, place.location);
+    // A search result can show its direct distance before routes load. Once a
+    // route is selected, surface its actual driving distance in the same
+    // header location so the two distance values never compete.
+    const directDistance = formatDistanceFromUser(userLocation, place.location);
+    const selectedRoute = routeOptions[selectedRouteIdx];
+    const selectedRouteMatchesDestination = !!selectedRoute?.destinationLoc &&
+        getDistanceMeters(selectedRoute.destinationLoc, targetLocation) < 50;
+    const drivingDistance = selectedRouteMatchesDestination ? selectedRoute?.totalDistance : null;
+    const distance = drivingDistance || directDistance;
+    const distanceLabel = drivingDistance ? `${drivingDistance} drive` : (directDistance ? `${directDistance} direct` : null);
+    const distanceTitle = drivingDistance
+        ? 'Driving distance for the selected route'
+        : 'Straight-line distance while routes load';
     const canCorrectPin = true; // Anyone can suggest edits or report issues for any place (Community-driven)
 
     // Deduplicate address if the place title is identical to the first line of the address
@@ -1443,19 +1691,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         const shareAddress = addressSubtitle || place.address || place.description || '';
         const shareText = shareAddress ? `${shareTitle} • ${shareAddress}` : shareTitle;
         const shareUrl = `https://www.google.com/maps/search/?api=1&query=${place.location.lat},${place.location.lng}`;
-        if (typeof navigator !== 'undefined' && navigator.share) {
-            try {
-                await navigator.share({
-                    title: shareTitle,
-                    text: shareText,
-                    url: shareUrl
-                });
-            } catch {
-                // User dismissed share sheet
-            }
-        } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
-            await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
-        }
+        const result = await sharePlace({ title: shareTitle, text: shareText, url: shareUrl });
+        if (result === 'copied') setPhotoFeedback('Share options are unavailable here, so the place link was copied.');
+        if (result === 'unavailable') setPhotoFeedback('Sharing is unavailable on this device.');
     };
     const typeLabel = useMemo(() => {
         if (place.category) return place.category;
@@ -1682,24 +1920,40 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
         );
     }
 
-    const renderAddStopButton = () => (
-        <button
-            type="button"
-            onClick={() => setShowAddStopDrawer(prev => !prev)}
-            className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
-                showAddStopDrawer || waypoints.length > 0
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm ring-1 ring-amber-500/30'
-                    : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 shadow-2xs'
-            }`}
-            title="Add Stop / Waypoint along route"
-        >
-            <Plus className="w-3 h-3 shrink-0" />
-            <span>{waypoints.length > 0 ? `${waypoints.length} Stop${waypoints.length > 1 ? 's' : ''}` : 'Add Stop'}</span>
-        </button>
-    );
-
     const renderWaypointManager = () => {
-        if (waypoints.length === 0 && !showAddStopDrawer) return null;
+        if (waypoints.length === 0 && !showAddStopDrawer) {
+            return null;
+        }
+
+        if (isMobile && !showAddStopDrawer) {
+            const routeOrder = [
+                ...waypoints.map((waypoint) => ({ id: waypoint.id, name: waypoint.name, isDestination: false })),
+                { id: `destination_${place.id || place.name}`, name: place.name || 'Destination', isDestination: true },
+            ];
+            return (
+                <div className={`mx-2.5 mb-2 rounded-2xl border px-3 py-2.5 ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-2xs'}`}>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Route order</span>
+                        <button type="button" onClick={() => setShowAddStopDrawer(true)} className="text-[10px] font-black text-violet-600 hover:text-violet-700 cursor-pointer">Reorder</button>
+                    </div>
+                    <div className="space-y-0">
+                        <div className="flex gap-2.5 min-w-0">
+                            <span className="relative flex w-6 justify-center shrink-0"><span className="w-4 h-4 rounded-full bg-blue-500 border-[3px] border-white dark:border-slate-800 shadow-sm" /><span className={`absolute top-4 bottom-[-14px] w-px ${theme === 'dark' ? 'bg-white/20' : 'bg-slate-300'}`} /></span>
+                            <span className="pb-3 text-xs font-bold">Your location</span>
+                        </div>
+                        {routeOrder.map((item, index) => {
+                            const isLast = index === routeOrder.length - 1;
+                            return (
+                                <div key={item.id} className="flex gap-2.5 min-w-0">
+                                    <span className="relative flex w-6 justify-center shrink-0"><span className={`z-10 w-4 h-4 rounded-full text-white text-[9px] font-black flex items-center justify-center ${item.isDestination ? 'bg-rose-500' : 'bg-violet-500'}`}>{item.isDestination ? <Flag className="w-2.5 h-2.5" /> : index + 1}</span>{!isLast && <span className={`absolute top-4 bottom-[-14px] w-px ${theme === 'dark' ? 'bg-white/20' : 'bg-slate-300'}`} />}</span>
+                                    <span className={`min-w-0 flex-1 text-xs font-bold truncate ${isLast ? '' : 'pb-3'}`}>{item.name}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        }
 
         return (
             <div className={`mx-2.5 mb-2 p-3 rounded-2xl border transition-all animate-in fade-in duration-200 ${
@@ -1708,7 +1962,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 <div className="flex items-center justify-between mb-2.5">
                     <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
                         <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span>Trip Stops ({waypoints.length + 1})</span>
+                        <span>Route stops · {waypoints.length + 1} destinations</span>
                     </span>
                     <div className="flex items-center gap-2">
                         {waypoints.length > 0 && (
@@ -1724,27 +1978,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 <span>Clear All</span>
                             </button>
                         )}
-                        <button
-                            type="button"
-                            onClick={() => setShowAddStopDrawer(prev => !prev)}
-                            className="text-[10px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer px-2 py-0.5 rounded-full border border-sky-500/30 hover:bg-sky-500/20 transition-all"
-                        >
-                            {showAddStopDrawer ? (
-                                <>
-                                    <X className="w-3 h-3 shrink-0" />
-                                    <span>Close</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Plus className="w-3 h-3 shrink-0" />
-                                    <span>Add Stop</span>
-                                </>
-                            )}
-                        </button>
                     </div>
                 </div>
 
-                {/* Ordered Stops List with Drag-to-Reorder & Swipe-to-Delete */}
+                {/* Ordered stops with drag-to-reorder and explicit removal */}
                 <div ref={listContainerRef} className="space-y-1.5 mb-2">
                     {waypoints.map((wp, wIdx) => (
                         <WaypointRow
@@ -1755,10 +1992,11 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             isDragging={touchDragIndex === wIdx || desktopDragIdx === wIdx}
                             isDragOver={desktopDragOverIdx === wIdx && desktopDragIdx !== wIdx}
                             onRemove={handleRemoveStop}
+                            onMakeFinal={handleMakeStopFinal}
                             onDesktopDragStart={(idx) => setDesktopDragIdx(idx)}
                             onDesktopDragOver={(idx) => setDesktopDragOverIdx(idx)}
                             onDesktopDrop={(fromIdx, toIdx) => {
-                                handleReorderStop(fromIdx, toIdx);
+                                handleRouteOrderDrop(fromIdx, toIdx);
                                 setDesktopDragIdx(null);
                                 setDesktopDragOverIdx(null);
                             }}
@@ -1772,11 +2010,58 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         />
                     ))}
 
-                    {/* Final Destination Pill */}
-                    <div className={`flex items-center justify-between p-2.5 rounded-xl border ${
-                        theme === 'dark' ? 'bg-sky-500/10 border-sky-500/30' : 'bg-sky-50 border-sky-200 shadow-sm'
-                    }`}>
+                    {/* Final destination participates in the same order as every stop. */}
+                    <div
+                        data-waypoint-row="true"
+                        data-route-order-index={waypoints.length}
+                        draggable
+                        onDragStart={(event) => {
+                            event.dataTransfer.setData('text/plain', String(waypoints.length));
+                            event.dataTransfer.effectAllowed = 'move';
+                            setDesktopDragIdx(waypoints.length);
+                        }}
+                        onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = 'move';
+                            setDesktopDragOverIdx(waypoints.length);
+                        }}
+                        onDrop={(event) => {
+                            event.preventDefault();
+                            const fromIdx = Number(event.dataTransfer.getData('text/plain'));
+                            if (Number.isInteger(fromIdx)) handleRouteOrderDrop(fromIdx, waypoints.length);
+                            setDesktopDragIdx(null);
+                            setDesktopDragOverIdx(null);
+                        }}
+                        onDragEnd={() => { setDesktopDragIdx(null); setDesktopDragOverIdx(null); }}
+                        className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
+                            desktopDragIdx === waypoints.length ? 'scale-[1.02] opacity-60' : desktopDragOverIdx === waypoints.length ? 'ring-2 ring-sky-400/60' : ''
+                        } ${theme === 'dark' ? 'bg-sky-500/10 border-sky-500/30' : 'bg-sky-50 border-sky-200 shadow-sm'}`}>
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div
+                                role="button"
+                                tabIndex={0}
+                                aria-label="Drag final destination to reorder"
+                                title="Drag to reorder"
+                                className="w-5 h-6 flex items-center justify-center text-slate-400 hover:text-sky-500 cursor-grab active:cursor-grabbing shrink-0 touch-none"
+                                onTouchStart={(event) => {
+                                    event.stopPropagation();
+                                    handleTouchDragStart(event, waypoints.length);
+                                }}
+                                onTouchMove={(event) => {
+                                    event.stopPropagation();
+                                    handleTouchDragMove(event);
+                                }}
+                                onTouchEnd={(event) => {
+                                    event.stopPropagation();
+                                    handleTouchDragEnd();
+                                }}
+                                onTouchCancel={(event) => {
+                                    event.stopPropagation();
+                                    handleTouchDragEnd();
+                                }}
+                            >
+                                <GripVertical className="w-4 h-4" />
+                            </div>
                             <span className="w-6 h-6 rounded-lg bg-sky-400 text-black font-black text-[11px] flex items-center justify-center shrink-0 shadow-md">
                                 <Flag className="w-3.5 h-3.5 text-black shrink-0" />
                             </span>
@@ -1792,40 +2077,12 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                 {/* Inline Add Stop Picker Drawer */}
                 {showAddStopDrawer && (
                     <div className="pt-2 border-t border-white/10 space-y-2">
-                        {/* Quick Ambient POI Chips */}
-                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                            {[
-                                { iconComp: Fuel, label: 'Gas', query: 'gas station' },
-                                { iconComp: Coffee, label: 'Coffee', query: 'coffee' },
-                                { iconComp: Utensils, label: 'Food', query: 'fast food restaurant' },
-                                { iconComp: Pill, label: 'Pharmacy', query: 'pharmacy' },
-                                { iconComp: DollarSign, label: 'ATM', query: 'atm' }
-                            ].map(chip => {
-                                const ChipIcon = chip.iconComp;
-                                return (
-                                    <button
-                                        key={chip.query}
-                                        type="button"
-                                        onClick={() => handleQuickPoiSearch(chip.query)}
-                                        className="px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/10 hover:bg-amber-500/20 text-slate-200 shrink-0 border border-white/10 hover:border-amber-500/30 transition-colors cursor-pointer flex items-center gap-1"
-                                        title={chip.label}
-                                    >
-                                        <ChipIcon className="w-3 h-3 text-amber-400 shrink-0" />
-                                        <span className={isStopSearchFocused ? 'hidden min-[420px]:inline' : 'hidden min-[376px]:inline'}>
-                                            {chip.label}
-                                        </span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-
+                        {renderSavedStopShortcuts()}
                         {/* Search Input Box */}
                         <div className="relative">
                             <input
                                 type="text"
                                 value={stopSearchQuery}
-                                onFocus={() => setIsStopSearchFocused(true)}
-                                onBlur={() => setIsStopSearchFocused(false)}
                                 onChange={(e) => {
                                     setStopSearchQuery(e.target.value);
                                     handleSearchStops(e.target.value);
@@ -1845,9 +2102,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         {/* Search Results */}
                         {stopSearchResults.length > 0 && (
                             <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
-                                {stopSearchResults.map((res, rIdx) => {
-                                    const detourSec = detourDeltas.get(rIdx);
-                                    const detourMin = detourSec != null ? Math.round(detourSec / 60) : null;
+                                {(showAllStopResults ? stopSearchResults : stopSearchResults.slice(0, 3)).map((res, rIdx) => {
+                                    const detour = detourDeltas.get(rIdx);
+                                    const isSavedStop = userPlaces.some(saved => isSameStop(saved, res));
+                                    const detourMin = detour != null ? Math.round(detour.durationSeconds / 60) : null;
                                     const detourColor = detourMin != null
                                         ? detourMin <= 2 ? 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30'
                                             : detourMin <= 5 ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
@@ -1865,14 +2123,22 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                     : 'bg-white hover:bg-amber-50 border-slate-200 hover:border-amber-400'
                                             }`}
                                         >
-                                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                                                <span className={`font-bold truncate ${
-                                                    theme === 'dark' ? 'text-white' : 'text-slate-800'
-                                                }`}>{res.name}</span>
-                                                {detourMin != null && (
-                                                    <span className={`text-[9px] font-black shrink-0 px-1.5 py-0.5 rounded-full border ${detourColor}`}>
-                                                        {detourMin <= 0 ? '0 min' : `+${detourMin} min`}
-                                                    </span>
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <span className={`font-bold truncate ${
+                                                        theme === 'dark' ? 'text-white' : 'text-slate-800'
+                                                    }`}>{res.name}</span>
+                                                    {isSavedStop && <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-violet-700">Saved</span>}
+                                                    {detourMin != null && (
+                                                        <span className={`text-[9px] font-black shrink-0 px-1.5 py-0.5 rounded-full border ${detourColor}`}>
+                                                            {detourMin <= 0 ? '0 min' : `+${detourMin} min`}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {(res.address || res.description) && (
+                                                    <p className={`mt-0.5 truncate text-[10px] font-medium ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                        {res.address || res.description}
+                                                    </p>
                                                 )}
                                             </div>
                                             <span className="text-[10px] text-amber-400 font-extrabold shrink-0 ml-2 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center gap-1">
@@ -1882,6 +2148,19 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                         </button>
                                     );
                                 })}
+                                {stopSearchResults.length > 3 && !showAllStopResults && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAllStopResults(true)}
+                                        className={`w-full py-1.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                                            theme === 'dark'
+                                                ? 'border-white/10 text-slate-300 hover:bg-white/10'
+                                                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        Show {stopSearchResults.length - 3} more results
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>
@@ -1889,6 +2168,154 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
             </div>
         );
     };
+
+    const renderMobileAddStopsSheet = () => {
+        const quickStops = [
+            { label: 'Gas', query: 'gas station', Icon: Fuel },
+            { label: 'Food', query: 'restaurant', Icon: Utensils },
+            { label: 'Coffee', query: 'coffee shop', Icon: Coffee },
+            { label: 'Grocery', query: 'grocery store', Icon: ShoppingCart },
+        ];
+        const closePlanner = () => {
+            setShowAddStopDrawer(false);
+            setStopSearchQuery('');
+            setStopSearchResults([]);
+            setDetourDeltas(new Map());
+        };
+
+        return (
+            <section className={`w-full max-h-[55dvh] landscape:max-h-[calc(100dvh-5.5rem)] flex flex-col overflow-hidden rounded-t-[2rem] landscape:rounded-[1.75rem] border shadow-[0_-12px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl animate-in slide-in-from-bottom landscape:slide-in-from-left duration-300 pb-[max(env(safe-area-inset-bottom,10px),10px)] landscape:pb-0 ${
+                theme === 'dark' ? 'bg-[#0f172a]/98 border-white/10 text-white' : 'bg-[#fdfbf7]/98 border-slate-200/80 text-slate-900'
+            }`}>
+                <div className="shrink-0 px-4 pt-2.5 landscape:px-3 landscape:pt-2">
+                    <div className={`w-11 h-1.5 landscape:w-8 landscape:h-1 rounded-full mx-auto ${theme === 'dark' ? 'bg-white/20' : 'bg-slate-300'}`} />
+                    <div className="flex items-start justify-between gap-3 pt-3 landscape:pt-2">
+                        <div>
+                            <h2 className="text-lg landscape:text-base font-black tracking-tight">Add stops</h2>
+                            <p className={`mt-0.5 text-xs landscape:text-[11px] font-medium ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Find places along your route</p>
+                        </div>
+                        <button type="button" onClick={closePlanner} className={`w-9 h-9 landscape:w-8 landscape:h-8 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`} aria-label="Back to route details" title="Back to route details">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+
+                    <div className="relative mt-3 landscape:mt-2">
+                        <MapPin className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`} />
+                        <input
+                            type="search"
+                            value={stopSearchQuery}
+                            onChange={(event) => {
+                                const query = event.target.value;
+                                setStopSearchQuery(query);
+                                void handleSearchStops(query);
+                            }}
+                            placeholder="Search along route"
+                            autoComplete="off"
+                            className={`w-full h-11 landscape:h-9 rounded-2xl pl-10 pr-10 border text-sm landscape:text-xs font-semibold placeholder:font-medium focus:outline-none focus:ring-2 focus:ring-violet-500/40 ${theme === 'dark' ? 'bg-white/8 border-white/15 text-white placeholder:text-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder:text-slate-400'}`}
+                        />
+                        {isSearchingStops && <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-violet-500" />}
+                    </div>
+
+                    {!stopSearchQuery && (
+                        <div className="grid grid-cols-4 gap-2 mt-2.5 landscape:mt-2">
+                            {quickStops.map(({ label, query, Icon }) => (
+                                <button key={label} type="button" onClick={() => { setStopSearchQuery(query); void handleSearchStops(query); }} className={`min-h-14 landscape:min-h-11 rounded-xl border flex flex-col landscape:flex-row items-center justify-center gap-1 landscape:gap-1.5 text-[10px] landscape:text-[9px] font-bold transition-colors cursor-pointer ${theme === 'dark' ? 'bg-white/5 border-white/10 hover:bg-white/10 text-slate-200' : 'bg-white border-slate-200 hover:bg-violet-50 text-slate-700'}`}>
+                                    <Icon className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 text-violet-500" />
+                                    <span>{label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-3 pt-3 landscape:px-3 landscape:pt-2 space-y-3">
+                    {renderSavedStopShortcuts()}
+                    {stopSearchQuery ? (
+                        <div className="space-y-1.5">
+                            {stopSearchResults.map((result, index) => {
+                                const detour = detourDeltas.get(index);
+                                const isSavedStop = userPlaces.some(saved => isSameStop(saved, result));
+                                const detourMinutes = detour == null ? null : Math.max(0, Math.round(detour.durationSeconds / 60));
+                                const detourMiles = detour == null ? null : Math.max(0, detour.distanceMeters / 1609.344);
+                                const detourDistanceLabel = detourMiles == null ? null : detourMiles < 0.1 ? '<0.1 mi' : `${detourMiles.toFixed(detourMiles < 10 ? 1 : 0)} mi`;
+                                return (
+                                    <button key={result.id || `${result.name}_${result.location?.lat}`} type="button" onClick={() => handleAddStop(result, true)} className={`w-full rounded-xl border p-2.5 landscape:p-2 text-left flex items-center gap-2.5 transition-colors cursor-pointer ${theme === 'dark' ? 'bg-white/5 hover:bg-violet-500/15 border-white/10 hover:border-violet-400/35' : 'bg-white hover:bg-violet-50 border-slate-200 hover:border-violet-300'}`}>
+                                        <span className={`w-8 h-8 landscape:w-7 landscape:h-7 rounded-lg flex items-center justify-center shrink-0 ${theme === 'dark' ? 'bg-violet-500/20 text-violet-300' : 'bg-violet-100 text-violet-600'}`}><Plus className="w-4 h-4" /></span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="flex items-center gap-1.5 min-w-0"><span className="block min-w-0 flex-1 text-xs landscape:text-[11px] font-bold truncate">{result.name}</span>{isSavedStop && <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-violet-700">Saved</span>}</span>
+                                            {(result.address || result.description) && <span className={`block mt-0.5 text-[10px] landscape:text-[9px] font-medium truncate ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>{result.address || result.description}</span>}
+                                        </span>
+                                        <span className="shrink-0 text-right text-[10px] landscape:text-[9px] font-black text-violet-600">{detourMinutes === null ? 'Add' : detourMinutes === 0 ? 'On route' : `+${detourMinutes} min`} {detourDistanceLabel && <span className={`block text-[9px] landscape:text-[8px] font-bold ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>+{detourDistanceLabel}</span>}</span>
+                                    </button>
+                                );
+                            })}
+                            {!isSearchingStops && stopSearchResults.length === 0 && <p className={`py-4 text-center text-xs font-medium ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>No places found. Try a nearby address or business.</p>}
+                        </div>
+                    ) : (
+                        <div className={`rounded-2xl border px-3 py-2.5 landscape:py-2 ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white/70 border-slate-200'}`}>
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                                <p className={`text-[10px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Route order</p>
+                                <span className={`text-[9px] font-bold ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>Hold and drag to reorder</span>
+                            </div>
+                            <div className="space-y-0">
+                                <div className="flex gap-2.5 min-w-0">
+                                    <span className="relative flex w-6 justify-center shrink-0"><span className="w-4 h-4 rounded-full bg-blue-500 border-[3px] border-white dark:border-slate-800 shadow-sm" /><span className={`absolute top-4 bottom-[-14px] w-px ${theme === 'dark' ? 'bg-white/20' : 'bg-slate-300'}`} /></span>
+                                    <span className="pb-3 text-xs landscape:text-[11px] font-bold">Your location</span>
+                                </div>
+                                {[...waypoints.map((waypoint) => ({ kind: 'stop' as const, waypoint })), { kind: 'destination' as const, waypoint: { id: `destination_${place.id || place.name}`, name: place.name || 'Destination', location: targetLocation, order: waypoints.length + 1, isStop: true } }].map((item, index, items) => {
+                                    const isDestination = item.kind === 'destination';
+                                    const isLast = index === items.length - 1;
+                                    const isDragging = routeOrderDragIndex === index;
+                                    const isDropTarget = routeOrderDropIndex === index && !isDragging;
+                                    return (
+                                        <div
+                                            key={item.waypoint.id}
+                                            data-route-order-index={index}
+                                            draggable
+                                            onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; setRouteOrderDragIndex(index); setRouteOrderDropIndex(index); }}
+                                            onDragOver={(event) => { event.preventDefault(); setRouteOrderDropIndex(index); }}
+                                            onDrop={(event) => { event.preventDefault(); if (routeOrderDragIndex !== null) handleRouteOrderDrop(routeOrderDragIndex, index); setRouteOrderDragIndex(null); setRouteOrderDropIndex(null); }}
+                                            onDragEnd={() => { setRouteOrderDragIndex(null); setRouteOrderDropIndex(null); }}
+                                            onTouchStart={(event) => { event.stopPropagation(); routeOrderDragIndexRef.current = index; routeOrderDropIndexRef.current = index; setRouteOrderDragIndex(index); setRouteOrderDropIndex(index); }}
+                                            onTouchMove={(event) => { const touch = event.touches[0]; const nextIndex = touch && routeOrderIndexAtPoint(touch.clientX, touch.clientY); if (nextIndex !== null) { event.preventDefault(); if (routeOrderDropIndexRef.current !== nextIndex) { routeOrderDropIndexRef.current = nextIndex; hapticTick(); } setRouteOrderDropIndex(nextIndex); } }}
+                                            onTouchEnd={() => { const fromIndex = routeOrderDragIndexRef.current; const toIndex = routeOrderDropIndexRef.current; if (fromIndex !== null && toIndex !== null) handleRouteOrderDrop(fromIndex, toIndex); routeOrderDragIndexRef.current = null; routeOrderDropIndexRef.current = null; setRouteOrderDragIndex(null); setRouteOrderDropIndex(null); }}
+                                            className={`relative flex gap-2.5 min-w-0 rounded-lg transition-all touch-none ${isDragging ? 'opacity-40 scale-[0.98]' : ''} ${isDropTarget ? (theme === 'dark' ? 'bg-violet-500/15' : 'bg-violet-50') : ''}`}
+                                        >
+                                            {isDropTarget && <span className="absolute -top-1 left-7 right-2 h-0.5 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.8)] animate-pulse" aria-hidden="true" />}
+                                            <span className="relative flex w-6 justify-center shrink-0"><span className={`z-10 w-4 h-4 rounded-full text-white text-[9px] font-black flex items-center justify-center ${isDestination ? 'bg-rose-500' : 'bg-violet-500'}`}>{isDestination ? <Flag className="w-2.5 h-2.5" /> : index + 1}</span>{!isLast && <span className={`absolute top-4 bottom-[-14px] w-px ${theme === 'dark' ? 'bg-white/20' : 'bg-slate-300'}`} />}</span>
+                                            <div className="pb-3 min-w-0 flex-1 flex items-center gap-1.5">
+                                                <GripVertical className={`w-4 h-4 shrink-0 cursor-grab active:cursor-grabbing ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`} aria-hidden="true" />
+                                                <span className="min-w-0 flex-1 text-xs landscape:text-[11px] font-bold truncate">{item.waypoint.name}</span>
+                                                {!isDestination && <button type="button" onClick={(event) => { event.stopPropagation(); handleRemoveStop(index); }} className="p-1 text-slate-400 hover:text-red-500 cursor-pointer" aria-label={`Remove ${item.waypoint.name}`}><X className="w-3.5 h-3.5" /></button>}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <div className={`shrink-0 border-t px-4 pt-2.5 landscape:px-3 landscape:pt-2 ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'}`}>
+                    <button
+                        type="button"
+                        disabled={isLoadingRoutes || !routeOptions[selectedRouteIdx]}
+                        onClick={() => onNavigate(routeOptions[selectedRouteIdx])}
+                        className="w-full h-11 landscape:h-9 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:from-slate-300 disabled:to-slate-300 disabled:text-slate-500 text-white shadow-lg shadow-violet-500/25 font-black text-sm landscape:text-xs flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:cursor-not-allowed cursor-pointer"
+                    >
+                        <Navigation className="w-4 h-4" />
+                        <span>{isLoadingRoutes ? 'Updating route…' : routeOptions[selectedRouteIdx] ? `Start trip · ${routeOptions[selectedRouteIdx].totalTime}` : 'Calculating route…'}</span>
+                    </button>
+                    <button type="button" onClick={closePlanner} className={`w-full py-2 text-[11px] landscape:py-1.5 landscape:text-[10px] font-bold cursor-pointer ${theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Back to route details</button>
+                </div>
+            </section>
+        );
+    };
+
+    // A saved destination promoted during trip planning must keep the route
+    // editor visible, including after closing the add-stop drawer or clearing
+    // intermediate stops. Ordinary saved-place selections still open the hub.
+    const showSavedPlaceHub = isSavedLocation && !keepStopPlannerOpen
+        && !showAddStopDrawer && waypoints.length === 0;
 
     // ──────────────────────────────────────────
     // PARKED VEHICLE CARD (MOBILE & DESKTOP)
@@ -1911,7 +2338,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     // MOBILE BOTTOM SHEET LAYOUT
     // ──────────────────────────────────────────
     if (isMobile) {
-        if (isSavedLocation) {
+        if (showAddStopDrawer) {
+            return renderMobileAddStopsSheet();
+        }
+        if (showSavedPlaceHub) {
             return (
                 <SavedPlaceHubCard
                     place={place}
@@ -1938,17 +2368,39 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
         return (
             <div
-                className={`w-full max-h-[85vh] sm:max-h-[90vh] landscape:top-16 landscape:bottom-4 landscape:max-h-[calc(100dvh-5.5rem)] landscape:sm:max-h-[calc(100dvh-5.5rem)] landscape:my-auto flex flex-col overflow-hidden rounded-t-[2.5rem] landscape:rounded-[2rem] shadow-[0_-10px_50px_rgba(0,0,0,0.5)] border-t landscape:border backdrop-blur-2xl animate-in slide-in-from-bottom landscape:slide-in-from-left duration-300 pb-[max(env(safe-area-inset-bottom,10px),10px)] landscape:pb-0 opacity-100 pointer-events-auto ${sheetBg}`}
+                className={`w-full ${isDetailsExpanded ? 'max-h-[85vh] sm:max-h-[90vh]' : 'max-h-[43dvh]'} landscape:top-16 landscape:bottom-4 landscape:max-h-[calc(100dvh-5.5rem)] landscape:sm:max-h-[calc(100dvh-5.5rem)] landscape:my-auto flex flex-col overflow-hidden rounded-t-[2.5rem] landscape:rounded-[2rem] shadow-[0_-10px_50px_rgba(0,0,0,0.5)] border-t landscape:border backdrop-blur-2xl animate-in slide-in-from-bottom landscape:slide-in-from-left duration-300 pb-[max(env(safe-area-inset-bottom,10px),10px)] landscape:pb-0 opacity-100 pointer-events-auto transition-[max-height] ${sheetBg}`}
             >
                 {/* Drag Handle Pill */}
-                <div 
-                    className="pt-2.5 pb-1 landscape:pt-1.5 landscape:pb-0.5 cursor-grab active:cursor-grabbing flex justify-center shrink-0"
-                    onClick={onClose}
-                    onTouchStart={() => (document.activeElement as HTMLElement)?.blur()}
+                <button
+                    type="button"
+                    aria-label={isDetailsExpanded ? 'Collapse place details' : 'Expand place details'}
+                    aria-expanded={isDetailsExpanded}
+                    title={isDetailsExpanded ? 'Collapse place details' : 'Expand place details'}
+                    className="w-full pt-2.5 pb-1 landscape:pt-1.5 landscape:pb-0.5 cursor-grab active:cursor-grabbing flex items-center justify-center gap-1.5 shrink-0"
+                    onClick={() => {
+                        if (sheetHandleWasDraggedRef.current) {
+                            sheetHandleWasDraggedRef.current = false;
+                            return;
+                        }
+                        setIsDetailsExpanded(expanded => !expanded);
+                    }}
+                    onTouchStart={(event) => {
+                        sheetTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+                        (document.activeElement as HTMLElement)?.blur();
+                    }}
+                    onTouchEnd={(event) => {
+                        const startY = sheetTouchStartYRef.current;
+                        const endY = event.changedTouches[0]?.clientY;
+                        sheetTouchStartYRef.current = null;
+                        if (startY === null || endY === undefined || Math.abs(startY - endY) < 12) return;
+                        sheetHandleWasDraggedRef.current = true;
+                        setIsDetailsExpanded(endY < startY);
+                    }}
                     onMouseDown={() => (document.activeElement as HTMLElement)?.blur()}
                 >
                     <div className={`w-12 h-1.5 landscape:w-8 landscape:h-1 rounded-full mx-auto transition-colors ${theme === 'dark' ? 'bg-white/20 hover:bg-white/30' : 'bg-slate-300 hover:bg-slate-400'}`} />
-                </div>
+                    <ChevronUp className={`h-3.5 w-3.5 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'} transition-transform ${isDetailsExpanded ? '' : 'rotate-180'}`} aria-hidden="true" />
+                </button>
 
                 {/* Content - Scrollable */}
                 <div 
@@ -1981,9 +2433,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                 </span>
                                             )}
                                             {distance && (
-                                                <span className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                <span title={distanceTitle} className={`text-[9px] landscape:text-[8px] font-bold uppercase tracking-widest px-2 landscape:px-1.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
                                                     <Navigation className="w-2.5 h-2.5 shrink-0" />
-                                                    <span>{distance}</span>
+                                                    <span>{distanceLabel}</span>
                                                 </span>
                                             )}
                                         </div>
@@ -1994,26 +2446,17 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             {!addressSubtitle && (typeLabel || distance) && (
                                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
                                     {typeLabel && <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${tagColor}`}>{typeLabel}</span>}
-                                    {distance && <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}><Navigation className="w-2.5 h-2.5 shrink-0" />{distance}</span>}
+                                    {distance && <span title={distanceTitle} className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}><Navigation className="w-2.5 h-2.5 shrink-0" />{distanceLabel}</span>}
                                 </div>
                             )}
 
+                            <div className={isDetailsExpanded ? '' : 'hidden'}>
                             {/* Community status is grouped independently from destination facts. */}
                             {!isPrivatePlace && isVerified && (
                                 <div className="flex flex-row flex-wrap items-center gap-1.5 mt-2 landscape:mt-1">
                                     <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/35 flex items-center gap-1">
                                         <Check className="w-3 h-3 shrink-0" />
                                         <span>Community verified</span>
-                                    </span>
-                                    {hasPrecisionPin && (
-                                        <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 border border-amber-500/35 flex items-center gap-1">
-                                            <Crosshair className="w-3 h-3 shrink-0" />
-                                            <span>Entrance pin</span>
-                                        </span>
-                                    )}
-                                    <span className="text-[9px] landscape:text-[8px] font-black uppercase tracking-wider px-2.5 landscape:px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 border border-slate-400/25 flex items-center gap-1">
-                                        <ShieldCheck className="w-3 h-3 shrink-0" />
-                                        <span>Trust {trustScore}</span>
                                     </span>
                                 </div>
                             )}
@@ -2099,6 +2542,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
 
                             {/* Location Photo Contributions & Gallery (Mobile) */}
                             {renderPhotoSection(true)}
+                            </div>
                         </div>
 
                         {isSaved && (
@@ -2152,6 +2596,16 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <Star className={`w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0 ${isSaved ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
                         </button>}
 
+                        <button
+                            type="button"
+                            onClick={handleShare}
+                            className={`p-2 landscape:p-1.5 rounded-full shrink-0 transition-all flex items-center justify-center cursor-pointer ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+                            title="Share place details"
+                            aria-label="Share place details"
+                        >
+                            <Share2 className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 shrink-0" />
+                        </button>
+
                         {/* Close Button */}
                         <button
                             type="button"
@@ -2173,14 +2627,25 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         {/* Route Choices Header & Filter Toolbar */}
                         <div className="p-2.5 pb-2 landscape:p-2 landscape:pb-1 flex items-center justify-between gap-1.5 flex-wrap">
                             <div className="flex items-center gap-1.5">
-                                <span className={`text-[10px] landscape:text-[9px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>
-                                    Route Choices {routeOptions.length > 1 ? `(${routeOptions.length})` : ''}
+                                <span className={`landscape:hidden text-[10px] landscape:text-[9px] font-black uppercase tracking-wider ${theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>
+                                    {showAddStopDrawer ? 'Selected Route' : `Route Choices ${routeOptions.length > 1 ? `(${routeOptions.length})` : ''}`}
                                 </span>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsSplitRouteListOpen(open => !open)}
+                                    className={`hidden landscape:flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] font-black transition-colors ${theme === 'dark' ? 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+                                    aria-expanded={isSplitRouteListOpen}
+                                    title="Show route choices"
+                                >
+                                    <Route className="h-3 w-3" />
+                                    <span>Routes ({routeOptions.length})</span>
+                                    <ChevronDown className={`h-3 w-3 transition-transform ${isSplitRouteListOpen ? 'rotate-180' : ''}`} />
+                                </button>
                                 {isLoadingRoutes && routeOptions.length > 0 && (
                                     <RefreshCw className="w-2.5 h-2.5 text-indigo-400 animate-spin shrink-0" title="Updating routes in background" />
                                 )}
                             </div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
+                            <div className="landscape:hidden flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 max-w-full whitespace-nowrap">
                                 <span className={`text-[9px] landscape:text-[8px] font-bold px-2 landscape:px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
                                     theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-white border-slate-200 text-slate-700 shadow-2xs'
                                 }`} title={`Calculated with ${activeVehicle.name} (${activeVehicle.mpg} MPG)`}>
@@ -2189,11 +2654,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 </span>
                                 <button
                                     type="button"
-                                    onClick={() => {
-                                        const next = !avoidTolls;
-                                        setAvoidTolls(next);
-                                        localStorage.setItem('myway_avoid_tolls', String(next));
-                                    }}
+                                    onClick={toggleAvoidTolls}
                                     className={`px-2 landscape:px-1.5 py-0.5 rounded-full text-[9px] landscape:text-[8px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
                                         avoidTolls
                                             ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm ring-1 ring-emerald-500/30'
@@ -2204,7 +2665,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     <CreditCard className={`w-3 h-3 shrink-0 ${avoidTolls ? 'text-emerald-400' : 'text-slate-400'}`} />
                                     <span>{avoidTolls ? 'Avoiding Tolls' : 'Avoid Tolls'}</span>
                                 </button>
-                                {renderAddStopButton()}
+                                <button
+                                    type="button"
+                                    onClick={toggleAvoidHighways}
+                                    className={`px-2 landscape:px-1.5 py-0.5 rounded-full text-[9px] landscape:text-[8px] font-bold border transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
+                                        avoidHighways
+                                            ? 'bg-sky-500/20 text-sky-300 border-sky-500/40 shadow-sm ring-1 ring-sky-500/30'
+                                            : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 shadow-2xs'
+                                    }`}
+                                    title="Toggle Avoid Highways"
+                                    aria-pressed={avoidHighways}
+                                >
+                                    <Route className={`w-3 h-3 shrink-0 ${avoidHighways ? 'text-sky-400' : 'text-slate-400'}`} />
+                                    <span>{avoidHighways ? 'Avoiding Highways' : 'Avoid Highways'}</span>
+                                </button>
                             </div>
                         </div>
 
@@ -2230,8 +2704,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                     </button>
                                 </div>
                             ) : routeOptions.length > 0 ? (
-                                <div className="space-y-1.5 landscape:space-y-1 max-h-52 landscape:max-h-24 overflow-y-auto no-scrollbar">
+                                <div className={`space-y-1.5 landscape:space-y-1 max-h-52 overflow-y-auto no-scrollbar ${isCompactLandscape && isSplitRouteListOpen ? 'landscape:max-h-40' : 'landscape:max-h-24'}`}>
                                     {routeOptions.map((route, idx) => {
+                                        if ((showAddStopDrawer || (isCompactLandscape && !isSplitRouteListOpen)) && idx !== selectedRouteIdx) return null;
                                         const isSelected = selectedRouteIdx === idx;
                                         return (
                                             <button
@@ -2240,6 +2715,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                 onClick={() => {
                                                     setSelectedRouteIdx(idx);
                                                     if (onSelectRoutePreview) onSelectRoutePreview(route);
+                                                    if (isCompactLandscape) setIsSplitRouteListOpen(false);
                                                 }}
                                                 className={`w-full p-2.5 landscape:p-1.5 rounded-xl landscape:rounded-lg border transition-all text-left flex items-center justify-between gap-2.5 landscape:gap-1.5 cursor-pointer ${
                                                     isSelected
@@ -2270,16 +2746,40 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                             <span className={`text-xs landscape:text-[11px] font-black truncate ${textColor}`}>
                                                                 {route.routeLabel || 'Route'}
                                                             </span>
-                                                            {route.savingsLabel && (
-                                                                <span className={`text-[8px] landscape:text-[7px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                                                                    route.routeType === 'fastest' ? 'bg-amber-500/15 text-amber-400' :
-                                                                    route.routeType === 'toll_free' ? 'bg-emerald-500/15 text-emerald-400' :
-                                                                    route.routeType === 'eco' ? 'bg-teal-500/15 text-teal-400' :
-                                                                    'bg-indigo-500/15 text-indigo-400'
-                                                                }`}>
-                                                                    {route.savingsLabel}
-                                                                </span>
-                                                            )}
+                                                            {(() => {
+                                                                const badges = (route.badges && route.badges.length > 0)
+                                                                    ? route.badges
+                                                                    : (route.savingsLabel ? [route.savingsLabel] : []);
+                                                                return badges.map((badge, bIdx) => {
+                                                                    const isFastest = badge === 'Fastest';
+                                                                    const isEco = badge.includes('Eco');
+                                                                    const isTollFree = badge === 'Toll-Free';
+                                                                    const isAvoidsFreeways = badge === 'Avoids Freeways';
+                                                                    const isTimeDelta = badge.startsWith('+') || badge === 'Similar ETA';
+
+                                                                    let colorClasses = 'bg-indigo-500/15 text-indigo-400 border-indigo-500/20';
+                                                                    if (isFastest) {
+                                                                        colorClasses = 'bg-amber-500/15 text-amber-400 border-amber-500/30';
+                                                                    } else if (isEco) {
+                                                                        colorClasses = 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
+                                                                    } else if (isTollFree) {
+                                                                        colorClasses = 'bg-teal-500/15 text-teal-400 border-teal-500/30';
+                                                                    } else if (isAvoidsFreeways) {
+                                                                        colorClasses = 'bg-sky-500/15 text-sky-400 border-sky-500/30';
+                                                                    } else if (isTimeDelta) {
+                                                                        colorClasses = 'bg-slate-500/15 text-slate-300 border-slate-500/20';
+                                                                    }
+
+                                                                    return (
+                                                                        <span
+                                                                            key={bIdx}
+                                                                            className={`text-[8px] landscape:text-[7px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${colorClasses}`}
+                                                                        >
+                                                                            {badge}
+                                                                        </span>
+                                                                    );
+                                                                });
+                                                            })()}
                                                             {route.hasTolls && (
                                                                 <span className="text-[8px] landscape:text-[7px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20 shrink-0 flex items-center gap-1">
                                                                     <CreditCard className="w-2.5 h-2.5 shrink-0" />
@@ -2387,6 +2887,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         <button
                             type="button"
                             onClick={() => {
+                                setIsDetailsExpanded(true);
+                                setShowAddStopDrawer(true);
+                            }}
+                            className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl landscape:rounded-lg font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
+                                theme === 'dark' ? 'border-sky-400/35 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300' : 'border-sky-200 bg-sky-50 hover:bg-sky-100 text-sky-700'
+                            }`}
+                            title="Add a stop before this destination"
+                        >
+                            <Plus className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
+                            <span className="whitespace-nowrap">Add stop</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
                                 convoyService.startConvoy(
                                     activeAccessPoint && activeAccessPoint.type !== 'main_entrance' ? `${place.name} (${activeAccessPoint.name})` : (place.name || 'Destination'),
                                     targetLocation,
@@ -2405,26 +2919,16 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <button
                                 type="button"
                                 onClick={() => onCorrectLocation(place)}
-                                className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl landscape:rounded-lg font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
+                                className={`landscape:hidden h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl landscape:rounded-lg font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
                                     theme === 'dark' ? 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300' : 'border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700'
                                 }`}
                                 title="Update place details, entrance, or building photo"
                             >
                                 <Edit3 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
-                                <span className="whitespace-nowrap">Update Place Details</span>
+                                <span className="whitespace-nowrap sm:hidden">Update place</span>
+                                <span className="hidden whitespace-nowrap sm:inline">Update Place Details</span>
                             </button>
                         )}
-                        <button
-                            type="button"
-                            onClick={handleShare}
-                            className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl landscape:rounded-lg font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1 shrink-0 cursor-pointer whitespace-nowrap ${
-                                theme === 'dark' ? 'border-white/10 hover:bg-white/5 text-slate-300' : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-                            }`}
-                            title="Share place details"
-                        >
-                            <Share2 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
-                            <span className="whitespace-nowrap">Share</span>
-                        </button>
                     </div>
                 </div>
             </div>
@@ -2435,7 +2939,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
     // DESKTOP FLOATING CARD LAYOUT
     // ──────────────────────────────────────────
 
-    if (isSavedLocation) {
+    if (showSavedPlaceHub) {
         return (
             <SavedPlaceHubCard
                 place={place}
@@ -2541,6 +3045,16 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             <Star className={`w-4 h-4 shrink-0 ${isSaved ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
                         </button>}
 
+                        <button
+                            type="button"
+                            onClick={handleShare}
+                            className={`p-2 rounded-full transition-all text-base flex items-center justify-center cursor-pointer ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+                            title="Share place details"
+                            aria-label="Share place details"
+                        >
+                            <Share2 className="w-4 h-4 shrink-0" />
+                        </button>
+
                         {/* Close Button */}
                         <button
                             type="button"
@@ -2561,7 +3075,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     {place.isCommunityVerified && (
                         <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
                             <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                            <span>Community Verified Pin</span>
+                            <span>Community Verified</span>
                         </span>
                     )}
                     {typeLabel && (
@@ -2570,21 +3084,9 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         </span>
                     )}
                     {distance && (
-                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                        <span title={distanceTitle} className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full flex items-center gap-1 ${theme === 'dark' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>
                             <Navigation className="w-2.5 h-2.5 shrink-0" />
-                            <span>{distance}</span>
-                        </span>
-                    )}
-                    {hasPrecisionPin && (
-                        <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                            <Crosshair className="w-3 h-3 text-amber-400 shrink-0" />
-                            <span>Precision Routing Pin</span>
-                        </span>
-                    )}
-                    {!isPrivatePlace && isVerified && (
-                        <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3 text-amber-400 shrink-0" />
-                            <span>Trust: {trustScore}</span>
+                            <span>{distanceLabel}</span>
                         </span>
                     )}
                 </div>
@@ -2687,7 +3189,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 <RefreshCw className="w-2.5 h-2.5 text-indigo-400 animate-spin shrink-0" title="Updating routes in background" />
                             )}
                         </div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
+                        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 max-w-full whitespace-nowrap">
                             <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
                                 theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-white border-slate-200 text-slate-700 shadow-2xs'
                             }`} title={`Calculated with ${activeVehicle.name} (${activeVehicle.mpg} MPG)`}>
@@ -2696,11 +3198,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             </span>
                             <button
                                 type="button"
-                                onClick={() => {
-                                    const next = !avoidTolls;
-                                    setAvoidTolls(next);
-                                    localStorage.setItem('myway_avoid_tolls', String(next));
-                                }}
+                                onClick={toggleAvoidTolls}
                                 className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
                                     avoidTolls
                                         ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm ring-1 ring-emerald-500/30'
@@ -2711,7 +3209,20 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                 <CreditCard className={`w-3 h-3 shrink-0 ${avoidTolls ? 'text-emerald-400' : 'text-slate-400'}`} />
                                 <span>{avoidTolls ? 'Avoiding Tolls' : 'Avoid Tolls'}</span>
                             </button>
-                            {renderAddStopButton()}
+                            <button
+                                type="button"
+                                onClick={toggleAvoidHighways}
+                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
+                                    avoidHighways
+                                        ? 'bg-sky-500/20 text-sky-300 border-sky-500/40 shadow-sm ring-1 ring-sky-500/30'
+                                        : theme === 'dark' ? 'bg-white/5 border-white/10 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 shadow-2xs'
+                                }`}
+                                title="Toggle Avoid Highways"
+                                aria-pressed={avoidHighways}
+                            >
+                                <Route className={`w-3 h-3 shrink-0 ${avoidHighways ? 'text-sky-400' : 'text-slate-400'}`} />
+                                <span>{avoidHighways ? 'Avoiding Highways' : 'Avoid Highways'}</span>
+                            </button>
                         </div>
                     </div>
 
@@ -2739,6 +3250,7 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         ) : routeOptions.length > 0 ? (
                             <div className="space-y-1 sm:space-y-1.5 max-h-36 sm:max-h-48 landscape:max-h-24 overflow-y-auto no-scrollbar">
                                 {routeOptions.map((route, idx) => {
+                                    if (showAddStopDrawer && idx !== selectedRouteIdx) return null;
                                     const isSelected = selectedRouteIdx === idx;
                                     return (
                                         <button
@@ -2777,16 +3289,40 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                                                         <span className={`text-xs font-black truncate ${textColor}`}>
                                                             {route.routeLabel || 'Route'}
                                                         </span>
-                                                        {route.savingsLabel && (
-                                                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                                                                route.routeType === 'fastest' ? 'bg-amber-500/15 text-amber-400' :
-                                                                route.routeType === 'toll_free' ? 'bg-emerald-500/15 text-emerald-400' :
-                                                                route.routeType === 'eco' ? 'bg-teal-500/15 text-teal-400' :
-                                                                'bg-indigo-500/15 text-indigo-400'
-                                                            }`}>
-                                                                {route.savingsLabel}
-                                                            </span>
-                                                        )}
+                                                        {(() => {
+                                                            const badges = (route.badges && route.badges.length > 0)
+                                                                ? route.badges
+                                                                : (route.savingsLabel ? [route.savingsLabel] : []);
+                                                            return badges.map((badge, bIdx) => {
+                                                                const isFastest = badge === 'Fastest';
+                                                                const isEco = badge.includes('Eco');
+                                                                const isTollFree = badge === 'Toll-Free';
+                                                                const isAvoidsFreeways = badge === 'Avoids Freeways';
+                                                                const isTimeDelta = badge.startsWith('+') || badge === 'Similar ETA';
+
+                                                                let colorClasses = 'bg-indigo-500/15 text-indigo-400 border-indigo-500/20';
+                                                                if (isFastest) {
+                                                                    colorClasses = 'bg-amber-500/15 text-amber-400 border-amber-500/30';
+                                                                } else if (isEco) {
+                                                                    colorClasses = 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
+                                                                } else if (isTollFree) {
+                                                                    colorClasses = 'bg-teal-500/15 text-teal-400 border-teal-500/30';
+                                                                } else if (isAvoidsFreeways) {
+                                                                    colorClasses = 'bg-sky-500/15 text-sky-400 border-sky-500/30';
+                                                                } else if (isTimeDelta) {
+                                                                    colorClasses = 'bg-slate-500/15 text-slate-300 border-slate-500/20';
+                                                                }
+
+                                                                return (
+                                                                    <span
+                                                                        key={bIdx}
+                                                                        className={`text-[8px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${colorClasses}`}
+                                                                    >
+                                                                        {badge}
+                                                                    </span>
+                                                                );
+                                                            });
+                                                        })()}
                                                         {route.hasTolls && (
                                                             <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20 shrink-0 flex items-center gap-1">
                                                                 <CreditCard className="w-2.5 h-2.5 shrink-0" />
@@ -2857,6 +3393,17 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                     </button>
                     <button
                         type="button"
+                        onClick={() => setShowAddStopDrawer(true)}
+                        className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap ${
+                            theme === 'dark' ? 'border-sky-400/35 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300' : 'border-sky-200 bg-sky-50 hover:bg-sky-100 text-sky-700'
+                        }`}
+                        title="Add a stop before this destination"
+                    >
+                        <Plus className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
+                        <span className="whitespace-nowrap">Add stop</span>
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => setIsConvoySetupOpen(true)}
                         className="h-10 landscape:h-8.5 px-2.5 landscape:px-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs landscape:text-[11px] shadow-md shadow-purple-600/20 transition-all active:scale-95 flex flex-row items-center justify-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
                         title="Plan Caravan / Convoy with Circle Members"
@@ -2874,20 +3421,10 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                             title="Update place details, entrance, or building photo"
                         >
                             <Edit3 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
-                            <span className="whitespace-nowrap">Update Place Details</span>
+                            <span className="whitespace-nowrap sm:hidden">Update place</span>
+                            <span className="hidden whitespace-nowrap sm:inline">Update Place Details</span>
                         </button>
                     )}
-                    <button
-                        type="button"
-                        onClick={handleShare}
-                        className={`h-10 landscape:h-8.5 px-2.5 landscape:px-2 rounded-xl font-bold text-xs landscape:text-[11px] border transition-all active:scale-95 flex flex-row items-center justify-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap ${
-                            theme === 'dark' ? 'border-white/10 hover:bg-white/5 text-slate-300' : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-                        }`}
-                        title="Share place details"
-                    >
-                        <Share2 className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 shrink-0" />
-                        <span className="whitespace-nowrap">Share</span>
-                    </button>
                 </div>
 
                 {/* Add Verified Entrance Modal */}
@@ -3176,19 +3713,6 @@ const PlaceDetailPanel: React.FC<PlaceDetailPanelProps> = ({
                         </div>
                     </div>
                 )}
-
-                {/* Kept rendered and focusable to Android WebView so a trusted user tap
-                    can always launch the camera/photo picker. capture asks for the rear camera. */}
-                <input
-                    ref={cameraInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handleCameraCapture}
-                    className="absolute w-px h-px opacity-0 overflow-hidden pointer-events-none"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                />
 
                 {/* Storefront Photo Fullscreen Lightbox Modal */}
                 {isPhotoLightboxOpen && (photoUrls[activePhotoIndex] || place.imageUrl) && (

@@ -224,7 +224,7 @@ class PredictiveRoutingService {
 
         // 3. BOOST FREQUENT SEARCHES
         recentSearches.forEach(search => {
-            if (!search.location || !search.frequencyCount || search.frequencyCount < 2) return;
+            if (!search.location || !search.frequencyCount || search.frequencyCount < 3) return;
 
             const key = `search_${(search.name || search.query || '').toLowerCase()}`;
             const existing = candidateMap.get(key);
@@ -247,7 +247,11 @@ class PredictiveRoutingService {
         });
 
         // 4. MAP TO PREDICTED DESTINATIONS & SORT
+        // A prediction should be earned. Saved-place time rules are useful
+        // context, but the compact search suggestion is reserved for places
+        // the driver has actually repeated at least three times.
         const predictions: PredictedDestination[] = Array.from(candidateMap.values())
+            .filter(item => item.tripMatchCount >= 3)
             .map((item, idx) => {
                 const distMiles = userLocation ? getDistanceMiles(userLocation, item.location) : undefined;
                 const distStr = distMiles !== undefined

@@ -401,8 +401,8 @@ class VehicleFuelService {
         // 2. Dangerously near empty: <= 10% tank / battery
         const isNearEmpty = percent <= 10;
 
-        // 3. Low fuel warning: <= 15% tank, or usable reserve is 0 for any non-trivial trip, or cannot complete with reserve
-        const isLowFuel = percent <= 15 || (usableRange <= 0 && tripMiles > 2) || (tripMiles > 0 && !readiness.canCompleteWithReserve);
+        // 3. Low fuel warning: <= 25% tank (1/4 tank threshold), or usable reserve is 0 for any non-trivial trip, or cannot complete with reserve
+        const isLowFuel = percent <= 25 || (usableRange <= 0 && tripMiles > 2) || (tripMiles > 0 && !readiness.canCompleteWithReserve);
 
         if (!isCriticalRange && !isNearEmpty && !isLowFuel) {
             return null;
@@ -416,17 +416,17 @@ class VehicleFuelService {
         let spokenPrompt = '';
 
         if (isCriticalRange) {
-            title = isEv ? 'CRITICAL BATTERY ALERT' : 'CRITICAL LOW FUEL';
+            title = isEv ? 'Critical Battery Alert' : 'Critical Low Fuel';
             message = `Range (${estRange} mi) is less than trip distance (${tripMiles.toFixed(1)} mi)!`;
             subtext = `You will run out of ${isEv ? 'charge' : 'fuel'} before arriving. Add a fuel stop now.`;
             spokenPrompt = `Caution: Critically low ${isEv ? 'battery' : 'fuel'}. Your estimated range is ${estRange} miles, but your trip is ${tripMiles.toFixed(1)} miles. You need to ${isEv ? 'charge' : 'refuel'} to reach your destination.`;
         } else if (isNearEmpty) {
-            title = isEv ? 'BATTERY NEAR EMPTY' : 'FUEL TANK NEAR EMPTY';
+            title = isEv ? 'Low Battery Alert' : 'Low Fuel Alert';
             message = `${status.gallonsRemaining} ${unit} left (${percent}% • ~${estRange} mi range)`;
             subtext = `Emergency reserve level. Find ${isEv ? 'a charging station' : 'a gas station'} immediately.`;
             spokenPrompt = `Warning: ${isEv ? 'Battery' : 'Fuel tank'} is near empty at ${percent} percent. Only ${status.gallonsRemaining} ${isEv ? 'kilowatt hours' : 'gallons'} remaining.`;
         } else {
-            title = isEv ? 'LOW BATTERY WARNING' : 'LOW FUEL WARNING';
+            title = isEv ? 'Low Battery Alert' : 'Low Fuel Alert';
             message = `${status.gallonsRemaining} ${unit} left (${percent}% • ~${estRange} mi range)`;
             subtext = tripMiles > 0 && !readiness.canCompleteWithReserve
                 ? `Insufficient fuel for ${tripMiles.toFixed(1)} mi trip with 10% reserve. Fill-up recommended.`
@@ -740,6 +740,12 @@ export class LiveTripFuelTracker {
             penaltyType: this.penaltySecondsRemaining > 0 ? this.lastPenaltyType : null,
             isIdling
         };
+    }
+
+    /** Rebase the active trip after a manual pump/charge reading without losing trip burn data. */
+    syncFuelLevel(gallonsRemaining: number): void {
+        if (!Number.isFinite(gallonsRemaining)) return;
+        this.initialGallonsRemaining = Math.max(0, gallonsRemaining) + this.gallonsBurned;
     }
 
     /** Get total gallons burned for final trip recording. */

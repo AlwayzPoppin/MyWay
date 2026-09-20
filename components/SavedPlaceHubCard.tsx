@@ -561,30 +561,41 @@ const SavedPlaceHubCard: React.FC<SavedPlaceHubCardProps> = ({
                     )}
                 </div>
 
-                {/* ─── 4. ROUTE PREVIEW CHIPS (If available) ─── */}
-                {routeOptions.length > 0 && (
-                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
-                        {routeOptions.map((route, idx) => {
-                            const isSelected = selectedRouteIdx === idx;
-                            return (
-                                <button
-                                    key={route.id || idx}
-                                    type="button"
-                                    onClick={() => onSelectRoutePreview?.(route)}
-                                    className={`px-2.5 py-1 rounded-xl text-xs font-black border transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
-                                        isSelected
-                                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-md ring-1 ring-indigo-400/30'
-                                            : (isDark ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-white')
-                                    }`}
-                                >
-                                    <Navigation className="w-3 h-3 shrink-0" />
-                                    <span>{route.routeLabel || 'Route'}: {route.totalTime}</span>
-                                    {route.totalDistance && <span className="opacity-75 font-normal text-[10px]">({route.totalDistance})</span>}
-                                </button>
-                            );
-                        })}
-                    </div>
-                )}
+                {/* ─── 4. ROUTE PREVIEW CHIPS (Dedicated fixed-height slot to eliminate CLS) ─── */}
+                <div className="h-8 min-h-[32px] flex items-center overflow-hidden shrink-0">
+                    {routeOptions.length > 0 ? (
+                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0 w-full animate-in fade-in duration-300">
+                            {routeOptions.map((route, idx) => {
+                                const isSelected = selectedRouteIdx === idx;
+                                const isFastest = idx === 0 || (route.routeLabel && route.routeLabel.toLowerCase().includes('fastest'));
+                                const labelText = route.routeLabel || (isFastest ? 'Fastest Route' : 'Route');
+                                return (
+                                    <button
+                                        key={route.id || idx}
+                                        type="button"
+                                        onClick={() => onSelectRoutePreview?.(route)}
+                                        className={`px-2.5 py-1 rounded-xl text-xs font-black border transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                                            isSelected
+                                                ? 'bg-indigo-600 text-white border-indigo-500 shadow-md ring-1 ring-indigo-400/30'
+                                                : (isDark ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-white')
+                                        }`}
+                                    >
+                                        <Navigation className="w-3 h-3 shrink-0" />
+                                        <span>{labelText} • {route.totalTime}</span>
+                                        {route.totalDistance && <span className="opacity-75 font-normal text-[10px]">({route.totalDistance})</span>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border border-dashed border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-white/[0.02] text-slate-400 dark:text-slate-500 shrink-0 select-none animate-in fade-in duration-200">
+                            <Navigation className="w-3 h-3 shrink-0 opacity-40 animate-pulse" />
+                            <span className="text-[11px] font-bold">
+                                {isLoadingRoutes ? 'Calculating fastest route…' : 'Fastest Route • Ready'}
+                            </span>
+                        </div>
+                    )}
+                </div>
 
                 {/* ─── 5. ACTION GRID ─── */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 shrink-0 bg-transparent pt-2 border-t border-slate-100 dark:border-slate-700">

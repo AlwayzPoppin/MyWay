@@ -11,7 +11,6 @@ import { Capacitor } from '@capacitor/core';
 import { httpsCallable } from 'firebase/functions';
 import app from './firebase';
 import { functions } from './firebase';
-import { bufferMessage } from './offlineMessageBuffer';
 import { EntranceType } from '../types';
 import { getEntranceArrivalMessage } from './geofenceService';
 import { speechService } from './speechService';
@@ -186,22 +185,6 @@ export const persistTokenToProfile = async (userId: string): Promise<void> => {
 const handleForegroundPayload = async (payload: MessagePayload, callback?: (payload: MessagePayload) => void): Promise<void> => {
     const isGeofence = payload.data?.type === 'geofence' || payload.data?.type === 'geofence_enter' || payload.data?.type === 'geofence_exit';
     console.log('🔔 Foreground push received:', payload);
-    try {
-        const circleId = payload.data?.circleId || 'default-circle';
-        const body = payload.notification?.body || payload.data?.body || (payload.data ? JSON.stringify(payload.data) : 'Notification received');
-        const messageId = payload.messageId || `fcm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        await bufferMessage({
-            clientMessageId: messageId,
-            circleId,
-            senderId: payload.data?.memberId || 'omni-ai',
-            content: body,
-            type: isGeofence ? 'geofence' : 'text',
-            timestamp: parseInt(payload.data?.timestamp || '') || Date.now(),
-            status: 'queued'
-        });
-    } catch (bufErr) {
-        console.warn('⚠️ Could not buffer foreground push to chat:', bufErr);
-    }
     if (isGeofence) {
         speechService.playChime(payload.data?.type === 'geofence_exit' ? 'turn' : 'arrival');
     }
@@ -211,7 +194,7 @@ const handleForegroundPayload = async (payload: MessagePayload, callback?: (payl
 /**
  * Listen for foreground push notifications
  * These arrive when the app is open and active.
- * Automatically injects received alerts into the offline chat buffer for timeline persistence.
+ * Delivers foreground safety alerts to app listeners and plays geofence cues.
  */
 export const onForegroundMessage = async (callback?: (payload: MessagePayload) => void): Promise<(() => void)> => {
     if (Capacitor.isNativePlatform()) {
@@ -311,21 +294,6 @@ export const broadcastGeofencePushAlert = async (
     }
 
     const alertId = `alert_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-    // 1. Buffer to persistent timeline
-    try {
-        await bufferMessage({
-            clientMessageId: alertId,
-            circleId,
-            senderId: memberId,
-            content: title,
-            type: 'geofence',
-            timestamp: Date.now(),
-            status: 'queued'
-        });
-    } catch (e) {
-        console.warn('⚠️ Could not buffer geofence push to timeline:', e);
-    }
 
     // 2. Persist to Firebase Realtime Database for all circle devices
     try {

@@ -122,15 +122,19 @@ const routeFromGoogle = (route: GoogleRoute, destinationName: string, destinatio
     if (geometry.length < 2) return null;
     const trafficDuration = secondsFromDuration(route.duration);
     const staticDuration = secondsFromDuration(route.staticDuration);
-    const steps: RouteStep[] = (route.legs || []).flatMap(leg => (leg.steps || []).map(step => ({
-        instruction: step.navigationInstruction?.instructions || 'Continue on the route',
-        distance: formatDistance(step.distanceMeters || 0),
-        endLocation: (() => {
-            const stepGeometry = step.polyline?.encodedPolyline ? decodeGooglePolyline(step.polyline.encodedPolyline) : [];
-            const end = stepGeometry[stepGeometry.length - 1];
-            return end ? { lng: end[0], lat: end[1] } : undefined;
-        })()
-    })));
+    const steps: RouteStep[] = (route.legs || []).flatMap(leg => (leg.steps || []).map(step => {
+        const instruction = step.navigationInstruction?.instructions || 'Continue on the route';
+        const dist = formatDistance(step.distanceMeters || 0);
+        return {
+            instruction,
+            distance: dist,
+            endLocation: (() => {
+                const stepGeometry = step.polyline?.encodedPolyline ? decodeGooglePolyline(step.polyline.encodedPolyline) : [];
+                const end = stepGeometry[stepGeometry.length - 1];
+                return end ? { lng: end[0], lat: end[1] } : undefined;
+            })()
+        };
+    }));
     const roadNames = roadNamesFromSteps(steps);
 
     return {
@@ -154,12 +158,18 @@ const routeFromGoogle = (route: GoogleRoute, destinationName: string, destinatio
     };
 };
 
+// Circuit breaker: disable Google Traffic backend if it is unconfigured or rejected, preventing repeated 400 network storms
+let isGoogleTrafficUnavailable = false;
+let hasLoggedGoogleTrafficError = false;
+
 /**
  * Gets traffic-aware alternatives from the secure Cloud Function. A disabled
- * feature flag or provider failure returns null so the OSRM route remains safe.
+ * feature flag, unconfigured API key, or provider failure returns null so the OSRM route remains safe.
  */
 export async function fetchGoogleTrafficRouteOptions(start: Location, destinationName: string, destinationLoc: Location): Promise<NavigationRoute[] | null> {
-    if (!LIVE_TRAFFIC_ENABLED || typeof navigator !== 'undefined' && !navigator.onLine) return null;
+    if (isGoogleTrafficUnavailable || !LIVE_TRAFFIC_ENABLED || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        return null;
+    }
 
     try {
         const computeTrafficRoutes = httpsCallable<{ origin: Location; destination: Location; alternatives: boolean }, { routes?: GoogleRoute[] }>(functions, 'computeTrafficRoutes');
@@ -168,8 +178,24 @@ export async function fetchGoogleTrafficRouteOptions(start: Location, destinatio
             .map((route, index) => routeFromGoogle(route, destinationName, destinationLoc, start, index))
             .filter((route): route is NavigationRoute => route !== null);
         return routes.length ? routes : null;
-    } catch (error) {
-        console.info('[LiveTraffic] Google traffic routing unavailable; using OSRM fallback.', error);
+    } catch (error: any) {
+        const errMsg = error?.message || '';
+        // Trip circuit breaker if routing is unconfigured or rejected on the backend
+        if (
+            errMsg.includes('not configured') ||
+            errMsg.includes('API key') ||
+            error?.code === 'failed-precondition' ||
+            error?.code === 'unauthenticated' ||
+            error?.code === 'permission-denied'
+        ) {
+            isGoogleTrafficUnavailable = true;
+        }
+
+        if (!hasLoggedGoogleTrafficError) {
+            hasLoggedGoogleTrafficError = true;
+            console.info('[LiveTraffic] Google traffic routing unavailable; using OSRM fallback.', error);
+        }
         return null;
     }
 }
+

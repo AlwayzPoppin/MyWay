@@ -14,6 +14,12 @@ import androidx.car.app.validation.HostValidator;
  */
 public class MyWayCarAppService extends CarAppService {
 
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        CarStateRepository.getInstance().initialize(this);
+    }
+
     @NonNull
     @Override
     public HostValidator createHostValidator() {

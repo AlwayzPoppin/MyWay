@@ -393,6 +393,16 @@ export function resolveLocationStatus(
         return `At ${savedPlaceName}`;
     }
 
+    // Saved-place presence is a stronger, more useful state than a low-speed
+    // movement estimate. A member at Home should read "At Home", even if GPS
+    // briefly reports walking around the house or driveway.
+    if (savedPlaceName) {
+        if (/^parked\b/i.test(options.status || '')) {
+            return options.status!;
+        }
+        return `At ${savedPlaceName}`;
+    }
+
     const isMoving = options.status === 'Driving'
         || options.status === 'Moving'
         || options.status === 'Walking'
@@ -407,15 +417,6 @@ export function resolveLocationStatus(
             activity = speedMph <= 4 ? 'Walking' : 'Moving';
         }
         return speedMph > 0 ? `${activity} • ${speedMph} MPH` : activity;
-    }
-
-    if (savedPlaceName) {
-        // A device only reports Parked after its own parking tracker confirms
-        // a parking zone that it has not left.
-        if (/^parked\b/i.test(options.status || '')) {
-            return options.status!;
-        }
-        return `At ${savedPlaceName}`;
     }
 
     // Existing place indicator if available

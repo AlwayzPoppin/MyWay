@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Trip, TripPoint } from '../types';
-import { getSavedTrips, deleteTrip, clearTripHistory, formatDuration } from '../services/tripHistoryService';
+import { getSavedTrips, getTripDetail, deleteTrip, clearTripHistory, formatDuration } from '../services/tripHistoryService';
 import { vehicleFuelService, RollingFuelReport } from '../services/vehicleFuelService';
 
 interface TripHistoryPanelProps {
     onClose: () => void;
     onBack?: () => void;
-    onReplayTrip?: (trip: Trip) => void;
+    onReplayTrip?: (trip: Trip, pointIndex?: number) => void;
 }
 
 const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, onReplayTrip }) => {
@@ -16,6 +16,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
     const [selectedPeriod, setSelectedPeriod] = useState<'today' | 'thisWeek' | 'thisMonth' | 'thisYear'>('thisWeek');
     const [isReplaying, setIsReplaying] = useState(false);
     const [replayIndex, setReplayIndex] = useState(0);
+    const [isLoadingTripDetail, setIsLoadingTripDetail] = useState(false);
     const replayTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
@@ -40,10 +41,17 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
         }
     }, []);
 
+    const openTripDetail = useCallback(async (trip: Trip) => {
+        setIsLoadingTripDetail(true);
+        const detail = await getTripDetail(trip.id);
+        setSelectedTrip(detail || trip);
+        setIsLoadingTripDetail(false);
+    }, []);
+
     const startReplay = useCallback((trip: Trip) => {
         setIsReplaying(true);
         setReplayIndex(0);
-        onReplayTrip?.(trip);
+        onReplayTrip?.(trip, 0);
 
         // Animate through path points
         let idx = 0;
@@ -55,6 +63,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                 return;
             }
             setReplayIndex(idx);
+            onReplayTrip?.(trip, idx);
         }, 100); // ~10x speed
     }, [onReplayTrip]);
 
@@ -76,13 +85,16 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
         return 'text-red-400';
     };
 
-    const getScoreGrade = (score: number): string => {
-        if (score >= 95) return 'A+';
-        if (score >= 90) return 'A';
-        if (score >= 80) return 'B';
-        if (score >= 70) return 'C';
-        if (score >= 60) return 'D';
-        return 'F';
+    const getTripFuel = (trip: Trip) => {
+        const mpg = fuelReport.activeVehicle.mpg || 28;
+        const gallons = trip.fuelGallons ?? (trip.totalDistanceMiles / mpg);
+        const cost = trip.fuelCost ?? (gallons * fuelReport.gasPricePerGallon);
+        return { gallons, cost, estimated: trip.fuelGallons === undefined || trip.fuelCost === undefined };
+    };
+
+    const getSafetySummary = (trip: Trip) => {
+        if (trip.driveEvents.length === 0) return 'No safety events recorded';
+        return `${trip.driveEvents.length} safety ${trip.driveEvents.length === 1 ? 'event' : 'events'} recorded`;
     };
 
     const getEventIcon = (type: string): string => {
@@ -296,14 +308,15 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                                     </p>
                                 </div>
                                 <div className="text-right">
-                                    <span className={`text-3xl font-black ${getScoreColor(selectedTrip.safetyScore)}`}>
-                                        {getScoreGrade(selectedTrip.safetyScore)}
+                                    <span className={`text-2xl font-black ${getScoreColor(selectedTrip.safetyScore)}`}>
+                                        {selectedTrip.safetyScore}%
                                     </span>
-                                    <p className="text-xs text-slate-500">Safety</p>
+                                    <p className="text-[10px] text-slate-400 font-bold">Trip safety</p>
                                 </div>
                             </div>
 
                             {/* Stats Grid */}
+                            <p className="text-[10px] text-slate-400 mb-2">This trip contributes to your overall Scorecard; it does not issue a separate grade.</p>
                             <div className="grid grid-cols-4 gap-2 mt-3">
                                 <div className="bg-white/5 rounded-xl p-2.5 text-center">
                                     <p className="text-base font-bold text-white">{selectedTrip.totalDistanceMiles}</p>
@@ -319,16 +332,24 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                                     <p className="text-[10px] text-slate-400">duration</p>
                                 </div>
                                 <div className="bg-white/5 rounded-xl p-2.5 text-center">
-                                    <p className="text-base font-bold text-emerald-400">
-                                        ${(selectedTrip.fuelCost || (selectedTrip.totalDistanceMiles / (fuelReport.activeVehicle.mpg || 28) * fuelReport.gasPricePerGallon)).toFixed(2)}
-                                    </p>
-                                    <p className="text-[10px] text-slate-400">gas cost</p>
+                                    <p className="text-base font-bold text-emerald-400">${getTripFuel(selectedTrip).cost.toFixed(2)}</p>
+                                    <p className="text-[10px] text-slate-400">fuel cost</p>
                                 </div>
                                 <div className="bg-white/5 rounded-xl p-2.5 text-center">
                                     <p className="text-base font-bold text-teal-400">
                                         ${(selectedTrip.moneySaved || (selectedTrip.totalDistanceMiles / (fuelReport.activeVehicle.mpg || 28) * fuelReport.gasPricePerGallon * 0.12)).toFixed(2)}
                                     </p>
                                     <p className="text-[10px] text-slate-400">saved</p>
+                                </div>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                                <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-2.5">
+                                    <p className="text-[10px] font-bold text-amber-200">Fuel used {getTripFuel(selectedTrip).estimated ? '(est.)' : ''}</p>
+                                    <p className="text-sm font-black text-amber-300">{getTripFuel(selectedTrip).gallons.toFixed(2)} gal</p>
+                                </div>
+                                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-2.5">
+                                    <p className="text-[10px] font-bold text-emerald-200">Safety summary</p>
+                                    <p className="text-[11px] font-bold text-emerald-300 leading-tight mt-0.5">{getSafetySummary(selectedTrip)}</p>
                                 </div>
                             </div>
                         </div>
@@ -367,7 +388,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                         </div>
 
                         {/* Drive Events */}
-                        {selectedTrip.driveEvents.length > 0 && (
+                        {selectedTrip.driveEvents.length > 0 ? (
                             <div>
                                 <h4 className="text-sm font-semibold text-slate-300 mb-2">Drive Events</h4>
                                 <div className="space-y-2">
@@ -388,6 +409,8 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                                     ))}
                                 </div>
                             </div>
+                        ) : (
+                            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm font-bold text-emerald-300">✓ No safety events recorded on this trip.</div>
                         )}
                     </div>
                 ) : (
@@ -401,18 +424,26 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                             </div>
                         ) : (
                             trips.map(trip => {
-                                const tripCost = trip.fuelCost !== undefined
-                                    ? trip.fuelCost
-                                    : (trip.totalDistanceMiles / (fuelReport.activeVehicle.mpg || 28) * fuelReport.gasPricePerGallon);
+                                const { cost: tripCost, gallons: tripGallons, estimated: fuelEstimated } = getTripFuel(trip);
                                 const tripSaved = trip.moneySaved !== undefined
                                     ? trip.moneySaved
                                     : (tripCost * 0.12);
 
                                 return (
-                                    <button
+                                    <div
                                         key={trip.id}
-                                        onClick={() => setSelectedTrip(trip)}
-                                        className="w-full text-left bg-white/5 hover:bg-white/8 rounded-2xl p-4 border border-white/8 hover:border-white/15 transition-all group"
+                                        onClick={() => { if (!isLoadingTripDetail) void openTripDetail(trip); }}
+                                        onKeyDown={(event) => {
+                                            if (event.target !== event.currentTarget || isLoadingTripDetail) return;
+                                            if (event.key === 'Enter' || event.key === ' ') {
+                                                event.preventDefault();
+                                                void openTripDetail(trip);
+                                            }
+                                        }}
+                                        role="button"
+                                        tabIndex={isLoadingTripDetail ? -1 : 0}
+                                        aria-disabled={isLoadingTripDetail}
+                                        className="w-full text-left bg-white/5 hover:bg-white/8 rounded-2xl p-4 border border-white/8 hover:border-white/15 transition-all group cursor-pointer aria-disabled:opacity-60"
                                     >
                                         <div className="flex items-center justify-between">
                                             <div className="flex-1 min-w-0">
@@ -420,9 +451,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                                                     <h3 className="text-white font-medium text-sm truncate">
                                                         {trip.destinationName || 'Free Drive'}
                                                     </h3>
-                                                    <span className={`text-xs font-bold ${getScoreColor(trip.safetyScore)}`}>
-                                                        {getScoreGrade(trip.safetyScore)}
-                                                    </span>
+                                                    <span className={`text-[10px] font-black ${getScoreColor(trip.safetyScore)}`}>Safety {trip.safetyScore}%</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 text-xs text-slate-400 mt-1 flex-wrap">
                                                     <span>
@@ -433,7 +462,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                                                     <span>•</span>
                                                     <span>{trip.totalDistanceMiles} mi</span>
                                                     <span>•</span>
-                                                    <span className="text-emerald-400 font-bold">⛽ ${tripCost.toFixed(2)}</span>
+                                                    <span className="text-emerald-400 font-bold">⛽ {tripGallons.toFixed(2)} gal · ${tripCost.toFixed(2)}{fuelEstimated ? ' est.' : ''}</span>
                                                     <span className="text-teal-400 text-[10px] font-bold">🌿 ${tripSaved.toFixed(2)} saved</span>
                                                 </div>
                                             </div>
@@ -444,6 +473,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                                                     </span>
                                                 )}
                                                 <button
+                                                    type="button"
                                                     onClick={(e) => { e.stopPropagation(); handleDelete(trip.id); }}
                                                     className="opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-400 text-xs transition-all"
                                                     title="Delete trip"
@@ -453,7 +483,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                                                 <span className="text-slate-500 group-hover:text-slate-300 transition-colors">→</span>
                                             </div>
                                         </div>
-                                    </button>
+                                    </div>
                                 );
                             })
                         )}

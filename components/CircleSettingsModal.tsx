@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react';
 import { QrCode } from 'lucide-react';
 import { FamilyMember } from '../types';
-import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo } from '../services/authService';
+import { FamilyCircle, CIRCLE_COLORS, getCircleColor, CircleColorInfo, CircleSubscriptionEntitlement, getCircleSubscriptionEntitlement, sponsorCircleSubscription, removeCircleSponsorship } from '../services/authService';
 import { getCirclePrivacyMode, PRIVACY_LEVELS } from '../services/privacyService';
 import { formatSegmentedInviteCode, cleanInviteCode, isValidInviteCode } from '../utils/inviteCode';
 import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
@@ -22,7 +22,7 @@ interface CircleSettingsModalProps {
     onJoinCircle: (code: string) => Promise<any>;
     onRenameCircle?: (circleId: string, name: string) => Promise<void> | void;
     onUpdateCircleColor?: (circleId: string, color: string) => Promise<void> | void;
-    onLeaveCircle: (circleId: string) => Promise<void> | void;
+    onLeaveCircle: (circleId: string, successorId?: string) => Promise<void> | void;
     onDeleteCircle?: (circleId: string) => Promise<void> | void;
     onRemoveMember?: (memberId: string) => void;
     onUpdateRole?: (memberId: string, role: string) => void;
@@ -68,7 +68,10 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
     const [isRenaming, setIsRenaming] = useState(false);
     const [editingMemberRole, setEditingMemberRole] = useState<string | null>(null);
     const [isDangerZoneOpen, setIsDangerZoneOpen] = useState(false);
+    const [selectedSuccessorId, setSelectedSuccessorId] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [entitlement, setEntitlement] = useState<CircleSubscriptionEntitlement | null>(null);
+    const [entitlementError, setEntitlementError] = useState<string | null>(null);
     const autoSubmitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
@@ -78,6 +81,8 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             setIsScannerOpen(false);
             setManualInviteCode('');
             setJoinError(null);
+            const firstSuccessor = currentCircle?.members.find(memberId => memberId !== currentUserId) || '';
+            setSelectedSuccessorId(firstSuccessor);
             if (autoSubmitTimerRef.current) {
                 clearTimeout(autoSubmitTimerRef.current);
                 autoSubmitTimerRef.current = null;
@@ -90,6 +95,47 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
             setActiveThemeColor(currentColor);
         }
     }, [isOpen, initialTab, currentCircle]);
+
+    useEffect(() => {
+        if (!isOpen || !currentCircle?.id) {
+            setEntitlement(null);
+            return;
+        }
+        let active = true;
+        setEntitlementError(null);
+        getCircleSubscriptionEntitlement(currentCircle.id)
+            .then(value => { if (active) setEntitlement(value); })
+            .catch(error => { if (active) setEntitlementError(error?.message || 'Could not check Circle benefits.'); });
+        return () => { active = false; };
+    }, [isOpen, currentCircle?.id]);
+
+    const handleSponsorCircle = async () => {
+        if (!currentCircle || isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            const updated = await sponsorCircleSubscription(currentCircle.id);
+            setEntitlement(updated);
+            showNotification?.(`✅ ${updated.tier === 'platinum' ? 'Platinum' : 'Gold'} benefits now cover this Circle.`, 3500);
+        } catch (error: any) {
+            showNotification?.(`⚠️ ${error?.message || 'Could not sponsor this Circle.'}`, 4500);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleRemoveSponsorship = async () => {
+        if (!currentCircle || isSubmitting || !window.confirm('Remove shared subscription benefits from this Circle?')) return;
+        setIsSubmitting(true);
+        try {
+            await removeCircleSponsorship(currentCircle.id);
+            setEntitlement(value => value ? { ...value, active: false, tier: 'free', sponsorId: null, isSponsor: false, memberLimit: null } : value);
+            showNotification?.('Shared Circle benefits removed.', 3000);
+        } catch (error: any) {
+            showNotification?.(`⚠️ ${error?.message || 'Could not remove sponsorship.'}`, 4500);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     const selectedColorInfo = useMemo(() => {
         return getCircleColor(currentCircle?.id, activeThemeColor);
@@ -254,13 +300,18 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
     const handleLeaveCurrentCircle = async () => {
         if (!currentCircle) return;
-        const msg = isOwner && members.length > 1
-            ? `Leave "${currentCircle.name}"? Ownership will be automatically transferred to the next member.`
+        const successor = members.find(member => member.id === selectedSuccessorId);
+        if (isOwner && currentCircle.members.filter(memberId => memberId !== currentUserId).length > 0 && !successor) {
+            showNotification?.('Choose a successor before leaving this Circle.', 3500);
+            return;
+        }
+        const msg = isOwner && successor
+            ? `Transfer ownership of "${currentCircle.name}" to ${successor.name}, then leave?`
             : `Leave "${currentCircle.name}"? You can rejoin anytime with the invite code.`;
 
         if (window.confirm(msg)) {
             try {
-                await onLeaveCircle(currentCircle.id);
+                await onLeaveCircle(currentCircle.id, successor?.id);
                 showNotification?.(`🚪 Left "${currentCircle.name}"`, 3000);
                 onClose();
             } catch (err: any) {
@@ -948,6 +999,38 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 </div>
                             )}
 
+                            {/* Subscription sponsorship is resolved from Stripe server records, never a profile toggle. */}
+                            <div className={`rounded-2xl border p-3 space-y-2 ${cardBg}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className={`text-[10px] font-black uppercase tracking-wider ${textColor}`}>Shared Circle Benefits</p>
+                                        <p className={`mt-1 text-[10px] leading-relaxed ${subTextColor}`}>
+                                            {entitlement?.active
+                                                ? `${entitlement.tier === 'platinum' ? 'Platinum' : 'Gold'} is sponsored for all current Circle members.`
+                                                : 'A member with an active Gold or Platinum subscription can sponsor this Circle.'}
+                                        </p>
+                                    </div>
+                                    {entitlement?.active && <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-emerald-500">Active</span>}
+                                </div>
+                                {entitlement?.active && (
+                                    <p className={`text-[9px] font-semibold ${subTextColor}`}>
+                                        {entitlement.memberLimit === null ? 'No member cap on this plan.' : `${entitlement.memberCount}/${entitlement.memberLimit} members on Gold.`}
+                                        {entitlement.isSponsor ? ' You are the sponsor.' : ' Benefits end immediately when sponsorship or membership ends.'}
+                                    </p>
+                                )}
+                                {entitlementError && <p className="text-[9px] font-semibold text-amber-500">{entitlementError}</p>}
+                                {!entitlement?.active && entitlement?.personalTier !== 'free' && (
+                                    <button type="button" disabled={isSubmitting} onClick={handleSponsorCircle} className="w-full rounded-xl bg-violet-600 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-white transition hover:bg-violet-500 disabled:opacity-50">
+                                        Sponsor this Circle with {entitlement.personalTier === 'platinum' ? 'Platinum' : 'Gold'}
+                                    </button>
+                                )}
+                                {entitlement?.isSponsor && (
+                                    <button type="button" disabled={isSubmitting} onClick={handleRemoveSponsorship} className="w-full rounded-xl border border-rose-500/35 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-rose-400 transition hover:bg-rose-500/10 disabled:opacity-50">
+                                        Remove shared benefits
+                                    </button>
+                                )}
+                            </div>
+
                             {/* Circle Members & Roles */}
                             <div className="space-y-2">
                                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block px-1">
@@ -1035,6 +1118,19 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
 
                             {/* Leave and deletion are intentionally separated. */}
                             <div className="space-y-2 pt-2 border-t border-white/10">
+                                {isOwner && managedMemberCount > 1 && (
+                                    <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-3 space-y-2">
+                                        <p className="text-[10px] font-black uppercase tracking-wider text-amber-500">Transfer ownership before leaving</p>
+                                        <p className="text-[10px] leading-relaxed text-slate-400">Choose the member who will manage this Circle after you leave. Ownership is never assigned automatically.</p>
+                                        <select value={selectedSuccessorId} onChange={event => setSelectedSuccessorId(event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 text-xs font-bold text-white outline-none">
+                                            <option value="">Choose successor</option>
+                                            {currentCircle.members.filter(memberId => memberId !== currentUserId).map(memberId => {
+                                                const member = members.find(candidate => candidate.id === memberId);
+                                                return <option key={memberId} value={memberId}>{member?.name || `Member ${memberId.slice(0, 8)}`}</option>;
+                                            })}
+                                        </select>
+                                    </div>
+                                )}
                                 {isOwner && managedMemberCount <= 1 ? (
                                     <button
                                         type="button"

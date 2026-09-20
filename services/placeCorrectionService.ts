@@ -1,3 +1,4 @@
+import { withDeadline } from '../utils/withDeadline';
 // Place Correction Service - High-Precision Pin Relocation & Storefront Photo Crowdsourcing
 import { Place, Location, EntranceType, EntrancePrecision, DestinationAccessPoint, AccessPointType } from '../types';
 import { database, storage } from './firebase';
@@ -38,8 +39,18 @@ const STORAGE_KEY_ACCESS_POINTS = 'myway_destination_access_points';
 export function normalizePlaceKey(name: string, description?: string, loc?: Location): string {
     const cleanName = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const cleanDesc = (description || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 30);
-    const latStr = loc ? loc.lat.toFixed(3) : '';
-    const lngStr = loc ? loc.lng.toFixed(3) : '';
+    // Realtime Database path segments cannot contain dots. Keep the coordinate
+    // precision used for stable matching while encoding decimal separators as
+    // underscores so correction and access-point keys are valid everywhere.
+    // Encode negative coordinates as `m` too. Realtime Database accepts the
+    // old form, but the callable API deliberately only accepts safe path-key
+    // characters, so a literal minus sign prevented western/southern places
+    // from ever reaching Operations.
+    const coordinateKey = (coordinate: number) => coordinate.toFixed(3)
+        .replace('-', 'm')
+        .replace('.', '_');
+    const latStr = loc ? coordinateKey(loc.lat) : '';
+    const lngStr = loc ? coordinateKey(loc.lng) : '';
     return `${cleanName}_${cleanDesc}_${latStr}_${lngStr}`;
 }
 
@@ -309,7 +320,7 @@ class PlaceCorrectionService {
         // 3. Persist to Firebase Realtime Database for all circle members / community
         try {
             const recordRef = ref(database, `place_corrections/${normalizedKey}`);
-            await set(recordRef, correction);
+            await withDeadline(set(recordRef, correction));
         } catch (err) {
             console.warn('[PlaceCorrectionService] Firebase save skipped (offline/unreachable):', err);
         }
@@ -514,7 +525,16 @@ class PlaceCorrectionService {
                 this.notifyListeners();
             }
         } catch (err) {
-            console.warn('[PlaceCorrectionService] Access point submission queued locally:', err);
+            // Do not present a locally cached marker as a submitted shared
+            // change. The caller needs a real failure so it can preserve the
+            // form and tell the driver that Operations did not receive it.
+            console.error('[PlaceCorrectionService] Access point submission failed:', err);
+            this.accessPointsMap.set(key, existingList);
+            if (place.id) this.accessPointsMap.set(place.id, existingList);
+            this.saveLocalCache();
+            this.notifyListeners();
+            const message = err instanceof Error ? err.message : 'Could not submit this place update.';
+            throw new Error(message);
         }
 
         return newPoint;
@@ -591,7 +611,7 @@ class PlaceCorrectionService {
         // Persist to Firebase Realtime Database
         try {
             const recordRef = ref(database, `place_corrections/${correction.normalizedKey}`);
-            await set(recordRef, correction);
+            await withDeadline(set(recordRef, correction));
         } catch (err) {
             console.warn('[PlaceCorrectionService] Failed to sync helpful upvote:', err);
         }

@@ -14,7 +14,6 @@ import { getDistanceFromCoords } from '../utils/geo';
 import { isAtHomePlace, isPointInDrivewayZone } from './locationService';
 import { reverseGeocode } from './placesService';
 import { broadcastGeofencePushAlert } from './pushNotificationService';
-import { sendMessage } from './chatService';
 import { updateUserStatusInFirestore } from './authService';
 import { isCurrentLocationPublisher } from './deviceSessionService';
 
@@ -321,7 +320,6 @@ class ParkingService {
                     }
 
                     if (activeCircleId) {
-                        sendMessage(activeCircleId, memberId, drivewayNotification, 'geofence').catch(e => {});
                         broadcastGeofencePushAlert(
                             activeCircleId,
                             memberId,
@@ -423,10 +421,6 @@ class ParkingService {
                     console.log(`📢 [ParkingService] Circle Broadcast: ${broadcastMessage}`);
 
                     if (activeCircleId) {
-                        // Persist to Circle Firestore Chat / Geofence Alerts feed
-                        sendMessage(activeCircleId, memberId, broadcastMessage, 'geofence').catch(e => {
-                            console.warn('[ParkingService] Could not send circle chat broadcast:', e);
-                        });
                         broadcastGeofencePushAlert(
                             activeCircleId,
                             memberId,
@@ -466,9 +460,6 @@ class ParkingService {
                     }
 
                     if (activeCircleId) {
-                        sendMessage(activeCircleId, memberId, returnMessage, 'geofence').catch(e => {
-                            console.warn('[ParkingService] Could not send circle return broadcast:', e);
-                        });
                         broadcastGeofencePushAlert(
                             activeCircleId,
                             memberId,

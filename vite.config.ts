@@ -10,7 +10,18 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       host: '0.0.0.0',
       watch: {
-        usePolling: true,
+        // Native Windows watching is much lighter than polling this whole
+        // repository. Android/Gradle and generated Functions output do not
+        // belong to the browser bundle, but their build writes were causing
+        // repeated full page reloads and starving Vite's module transforms.
+        usePolling: false,
+        ignored: [
+          '**/android/**',
+          '**/.gradle-user/**',
+          '**/functions/lib/**',
+          '**/*.log',
+          '**/*.map'
+        ]
       },
       proxy: {
         '/maps-api': {

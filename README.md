@@ -23,10 +23,10 @@
 - View all family members at a glance
 - Quick status updates and check-ins
 
-### 💬 Family Messaging
-- Real-time chat with family members
-- Quick reply buttons for common responses
-- Location sharing within conversations
+### 📱 Circle Contacts
+- Native text and phone actions with opt-in contact sharing per Circle
+- Members choose which Circles can access their number
+- Desktop fallback to copy a shared number
 
 ### 🛡️ Safety Features
 - SOS emergency button
@@ -87,7 +87,7 @@ HomeBase/
 │   ├── Header.tsx        # App header with branding
 │   ├── BentoSidebar.tsx  # Desktop sidebar
 │   ├── MobileBottomSheet.tsx  # Mobile navigation
-│   ├── MessagingPanel.tsx     # Family chat
+│   ├── CircleContactsPanel.tsx # Native contact actions
 │   ├── SettingsPanel.tsx      # User preferences
 │   ├── SafetyAlerts.tsx       # Low battery alerts
 │   ├── OfflineMapManager.tsx  # Offline map downloads
@@ -140,12 +140,21 @@ The app uses Tailwind CSS via CDN for rapid development. Custom styles are defin
 
 ## 🔜 Roadmap
 
+### Finish Before Release
+
 - [ ] Firebase Authentication (Google Sign-In)
 - [ ] Real-time family position sync
 - [ ] Push notifications
 - [ ] Capacitor iOS/Android builds
 - [ ] Background location tracking
 - [ ] Geofence automation
+
+### After Core Release Stabilization
+
+- [ ] **MyWay Circle membership:** Keep navigation, driver reports, and basic mileage/expense tracking free. Offer a household subscription for richer Circle coordination: longer history, more place alerts, multiple Circles, shared trip history, and family driving summaries.
+- [ ] **Founding membership launch:** Offer one owner-paid annual plan with a clear trial after a user has created a Circle and invited a member.
+- [ ] **Map skin store:** Optional one-time cosmetic map themes that do not affect safety or navigation access.
+- [ ] **Driver Pro discovery:** Validate demand for optional high-mileage tools such as tax-ready mileage exports and shift summaries before creating a separate paid tier.
 
 ---
 

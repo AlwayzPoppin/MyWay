@@ -15,9 +15,7 @@ import { encryptLocation, decryptLocation, getFuzzyLocation, getNeighborhoodCent
 import { detectTransition, getEntranceArrivalMessage, getGeofenceDisplayName, isPointInEntranceZone } from '../services/geofenceService';
 import { getDistanceFromCoords } from '../utils/geo';
 import { FamilyMember, PrivacyMode } from '../types';
-import { useUI } from '../contexts/UIContext';
 import { recordTripPoint, getActiveTrip } from '../services/tripHistoryService';
-import { bufferMessage } from '../services/offlineMessageBuffer';
 import { broadcastGeofencePushAlert } from '../services/pushNotificationService';
 import { speechService } from '../services/speechService';
 import { batteryService } from '../services/batteryService';
@@ -113,8 +111,6 @@ export const useLocationSync = (
     const getDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) =>
         getDistanceFromCoords(lat1, lon1, lat2, lon2);
 
-    const { isLowDataMode } = useUI();
-
     // 0. QUICK INJECT SELF FROM STALE LOCATION
     // Fixes the issue where the user doesn't show up until GPS locks.
     useEffect(() => {
@@ -180,13 +176,14 @@ export const useLocationSync = (
             return;
         }
 
-        // Target ID defaults to user.uid or 'local-user' for guest / initial startup
-        const targetId = user?.uid || 'local-user';
-
         // Register geofences for background evaluation and native notifications
         geolocationService.setBackgroundGeofences(geofencesRef.current, onTransitionRef.current);
 
         geolocationService.watchPosition((location) => {
+            // This watcher can outlive an auth transition briefly. Resolve identity
+            // at callback time so a pre-auth watcher cannot resurrect `local-user`
+            // every time the stationary 30-second GPS update fires.
+            const targetId = userRef.current?.uid || 'local-user';
             // Geofence Detection with Strict Accuracy Filtering, Dynamic Hysteresis Buffer & 45-Second PENDING_EXIT Debounce
             const activeGfs = geofencesRef.current || [];
             activeGfs.forEach(gf => {
@@ -323,21 +320,7 @@ export const useLocationSync = (
                                     ).catch(e => console.warn('Could not broadcast geofence push alert:', e));
                                 }
 
-                                // 2. Offline failover: Queue geofence alert to IndexedDB for circle sync
-                                if (typeof navigator !== 'undefined' && !navigator.onLine && circleId && uid) {
-                                    const text = `🚶 Departed from ${departurePlace}`;
-                                    bufferMessage({
-                                        clientMessageId: `gf_${Date.now()}_${gf.id}`,
-                                        circleId,
-                                        senderId: uid,
-                                        content: text,
-                                        type: 'geofence',
-                                        timestamp: Date.now(),
-                                        status: 'queued'
-                                    }).catch(err => console.error('Failed to buffer offline geofence alert:', err));
-                                }
-
-                                // 3. Spoken geofence audio feedback
+                            // Spoken geofence audio feedback
                                 speechService.playChime('turn');
 
                                 // 4. Notify app listeners
@@ -407,21 +390,7 @@ export const useLocationSync = (
                                 ).catch(e => console.warn('Could not broadcast geofence push alert:', e));
                             }
 
-                            // 2. Offline failover: Queue geofence alert to IndexedDB for circle sync
-                            if (typeof navigator !== 'undefined' && !navigator.onLine && circleId && uid) {
-                                const text = `📍 Arrived at ${gf.name}`;
-                                bufferMessage({
-                                    clientMessageId: `gf_${Date.now()}_${gf.id}`,
-                                    circleId,
-                                    senderId: uid,
-                                    content: text,
-                                    type: 'geofence',
-                                    timestamp: Date.now(),
-                                    status: 'queued'
-                                }).catch(err => console.error('Failed to buffer offline geofence alert:', err));
-                            }
-
-                            // 3. Spoken geofence audio feedback
+                            // Spoken geofence audio feedback
                             speechService.playChime('arrival');
 
                             // 4. Notify app listeners
@@ -570,10 +539,16 @@ export const useLocationSync = (
                 setUserLocation(currentCoords);
 
                 setMembers(prev => {
+                    const liveProfile = profileRef.current;
+                    const liveUser = userRef.current;
+                    const resolvedSelfName = liveProfile?.displayName || liveUser?.displayName;
                     const cleaned = prev.filter(m =>
                         m.id !== 'demo-you' &&
                         m.id !== 'current_user' &&
-                        (user?.uid ? m.id !== 'local-user' : true)
+                        (targetId !== 'local-user' ? m.id !== 'local-user' : true) &&
+                        // A remote member must never retain a stale self flag from a
+                        // previous optimistic update or profile refresh.
+                        (!m.isSelf || m.id === targetId)
                     );
                     const existing = cleaned.find(m => m.id === targetId);
                     const currentBattery = batteryService.getBatteryLevel();
@@ -581,15 +556,15 @@ export const useLocationSync = (
                     if (!existing) {
                         const newSelf: FamilyMember = {
                             id: targetId,
-                            name: profile?.displayName || user?.displayName || 'You',
-                            avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL, profile?.displayName || user?.displayName || targetId),
+                            name: resolvedSelfName || 'You',
+                            avatar: getSafeAvatarUrl(liveProfile?.photoURL || liveUser?.photoURL, resolvedSelfName || targetId),
                             location: currentCoords,
                             status,
                             currentPlace: currentPlaceName,
                             battery: currentBattery,
                             batteryLevel: currentBattery,
                             isCharging: batteryService.getBatteryInfo().isCharging,
-                            membershipTier: profile?.membershipTier || 'free',
+                            membershipTier: liveProfile?.membershipTier || 'free',
                             lastUpdated: new Date().toISOString(),
                             accuracy: location.accuracy,
                             isGhostMode: false,
@@ -608,8 +583,10 @@ export const useLocationSync = (
                         m.id === targetId ? {
                             ...m,
                             isSelf: true,
-                            name: profile?.displayName || user?.displayName || m.name,
-                            avatar: getSafeAvatarUrl(profile?.photoURL || user?.photoURL || m.avatar, profile?.displayName || user?.displayName || m.name),
+                            // Keep the established display name until a current profile
+                            // is available. Do not flash the generic “You” fallback.
+                            name: resolvedSelfName || m.name,
+                            avatar: getSafeAvatarUrl(liveProfile?.photoURL || liveUser?.photoURL || m.avatar, resolvedSelfName || m.name),
                             location: currentCoords,
                             battery: currentBattery,
                             accuracy: location.accuracy,
@@ -643,8 +620,8 @@ export const useLocationSync = (
             }
 
             // 5. DEBOUNCE CHECK FOR FIREBASE SYNC (Adaptive Network Thresholds)
-            const DIST_THRESHOLD = isLowDataMode ? 30 : 15;
-            const TIME_THRESHOLD = isLowDataMode ? 60000 : 30000;
+            const DIST_THRESHOLD = 15;
+            const TIME_THRESHOLD = 30000;
             const distMoved = lastSyncRef.current.lat ? getDistanceMeters(
                 lastSyncRef.current.lat, lastSyncRef.current.lng,
                 currentCoords.lat, currentCoords.lng
@@ -664,24 +641,6 @@ export const useLocationSync = (
                     const currentMembers = membersRef.current;
                     const self = currentMembers.find(m => m.id === user.uid);
 
-                    // Check if inside any geofence for status_only mode
-                    let insideGeofenceName: string | null = null;
-                    let insideGeofenceCoords: { lat: number; lng: number } | null = null;
-                    if (geofences && geofences.length > 0) {
-                        for (const gf of geofences) {
-                            const gfLat = gf?.entranceLocation?.lat ?? gf?.location?.lat ?? gf?.lat;
-                            const gfLng = gf?.entranceLocation?.lng ?? gf?.location?.lng ?? gf?.lng;
-                            if (typeof gfLat === 'number' && typeof gfLng === 'number') {
-                                const distToGf = getDistanceFromCoords(location.latitude, location.longitude, gfLat, gfLng);
-                                if (distToGf <= (gf.radius || 150)) {
-                                    insideGeofenceName = gf.name;
-                                    insideGeofenceCoords = { lat: gfLat, lng: gfLng };
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
                     const targetCircleIds = (userCircles && userCircles.length > 0)
                         ? Array.from(new Set(userCircles.map(c => c.id)))
                         : (currentCircleId ? [currentCircleId] : []);
@@ -692,8 +651,7 @@ export const useLocationSync = (
                         // Evaluate granular privacy mode for THIS SPECIFIC circle
                         const circlePrivacyMode = getCirclePrivacyMode(cId);
 
-                        // If frozen, skip coordinate updates to freeze location at current place
-                        if (circlePrivacyMode === 'frozen') {
+                        if (circlePrivacyMode === 'invisible') {
                             await updateMemberLocation(cId, user.uid, {
                                 lat: 0,
                                 lng: 0,
@@ -703,8 +661,8 @@ export const useLocationSync = (
                                 timestamp: Date.now(),
                                 battery: batteryService.getBatteryLevel(),
                                 signalQuality: location.signalQuality,
-                                status: '❄️ Location Paused (Ghost)',
-                                privacyMode: 'frozen',
+                                status: 'Invisible',
+                                privacyMode: 'invisible',
                                 isSharingLocation: false,
                                 locationSharing: false
                             });
@@ -724,20 +682,6 @@ export const useLocationSync = (
                             targetLng = centroid.lng;
                             blurredRadius = 2400; // ~1.5 miles
                             statusText = 'In Neighborhood (Blurred)';
-                        } else if (circlePrivacyMode === 'status_only') {
-                            if (insideGeofenceName && insideGeofenceCoords) {
-                                targetLat = insideGeofenceCoords.lat;
-                                targetLng = insideGeofenceCoords.lng;
-                                statusText = `At ${insideGeofenceName}`;
-                            } else {
-                                targetLat = 0;
-                                targetLng = 0;
-                                statusText = (location.speed && location.speed > 5)
-                                    ? `Driving (${Math.round(location.speed)} MPH)`
-                                    : (location.speed && location.speed > 0.6)
-                                    ? 'Moving (Walking)'
-                                    : 'Stationary';
-                            }
                         }
 
                         // Encrypt the target location if family key is established
@@ -824,19 +768,25 @@ export const useLocationSync = (
             const current = membersRef.current.filter(m =>
                 m.id !== 'demo-you' &&
                 m.id !== 'current_user' &&
-                (user?.uid ? m.id !== 'local-user' : true)
+                (user?.uid ? m.id !== 'local-user' : true) &&
+                // Keep exactly one self identity: the authenticated Firebase UID.
+                // This removes any short-lived optimistic alias before it can render.
+                (!m.isSelf || m.id === user.uid)
             );
 
-            // Collect unique member IDs from current state, Firebase locations, AND circle membership
+            // Membership is authoritative. Do not carry remote members from a
+            // departed Circle forward merely because they were present in the
+            // previous React state; that made former members reappear under a
+            // generic "Family" badge after creating a new Circle.
             const circleMemberIds = targetCircleIds.flatMap(targetId => {
                 const cObj = userCircles?.find(c => c.id === targetId);
                 return cObj?.members || [];
             });
 
             const allMemberIds = Array.from(new Set([
-                ...current.map(m => m.id),
                 ...Object.keys(allLocations),
-                ...circleMemberIds
+                ...circleMemberIds,
+                user.uid
             ])).filter(id =>
                 id !== 'demo-you' &&
                 id !== 'current_user' &&
@@ -863,16 +813,19 @@ export const useLocationSync = (
                         }))
                         : [{ id: memberCircleId || '', name: memberCircleName, color: memberCircleColor }];
 
-                    const selfSharing = profile?.settings?.locationSharing !== false;
+                    const liveProfile = profileRef.current;
+                    const liveUser = userRef.current;
+                    const resolvedSelfName = liveProfile?.displayName || liveUser?.displayName || existing?.name || 'You';
+                    const selfSharing = liveProfile?.settings?.locationSharing !== false;
                     return {
                         ...(existing || {
                             id: user.uid,
-                            name: profile?.displayName || user.displayName || 'You',
-                            avatar: getSafeAvatarUrl(profile?.photoURL || user.photoURL, profile?.displayName || user.displayName || user.uid),
+                            name: resolvedSelfName,
+                            avatar: getSafeAvatarUrl(liveProfile?.photoURL || liveUser?.photoURL, resolvedSelfName),
                             location: userLocation || { lat: 0, lng: 0 },
                             status: 'Stationary',
                             battery: batteryService.getBatteryLevel(),
-                            membershipTier: profile?.membershipTier || 'free',
+                            membershipTier: liveProfile?.membershipTier || 'free',
                             lastUpdated: new Date().toISOString(),
                             accuracy: 15,
                             isGhostMode: false,
@@ -883,8 +836,8 @@ export const useLocationSync = (
                             pathHistory: [],
                             driveEvents: []
                         }),
-                        name: profile?.displayName || user.displayName || 'You',
-                        avatar: getSafeAvatarUrl(profile?.photoURL || user.photoURL, profile?.displayName || user.displayName || user.uid),
+                        name: resolvedSelfName,
+                        avatar: getSafeAvatarUrl(liveProfile?.photoURL || liveUser?.photoURL, resolvedSelfName),
                         circleId: memberCircleId,
                         circleName: memberCircleName,
                         circleColor: memberCircleColor,
@@ -1116,6 +1069,7 @@ export const useLocationSync = (
 
                 return {
                     ...member,
+                    isSelf: false,
                     location: { lat, lng, label: memberLabel },
                     battery: loc.battery !== undefined ? loc.battery : member.battery,
                     batteryLevel: loc.battery !== undefined ? loc.battery : member.batteryLevel,
@@ -1129,9 +1083,13 @@ export const useLocationSync = (
                     signalQuality: loc.signalQuality,
                     sosActive: !!loc.sosActive,
                     impact: loc.impact || undefined,
-                    privacyMode: loc.privacyMode || (loc.status?.includes('Blurred') ? 'blurred' : loc.status?.includes('Status Only') ? 'status_only' : loc.status?.includes('Frozen') ? 'frozen' : 'exact'),
+                    privacyMode: loc.privacyMode === 'blurred'
+                        ? 'blurred'
+                        : (loc.privacyMode === 'invisible' || loc.privacyMode === 'status_only' || loc.privacyMode === 'frozen' || loc.status?.includes('Invisible'))
+                            ? 'invisible'
+                            : 'exact',
                     blurredRadiusMeters: loc.blurredRadiusMeters,
-                    isGhostMode: loc.privacyMode === 'blurred' || loc.privacyMode === 'frozen' || !!loc.status?.includes('Blurred'),
+                    isGhostMode: loc.privacyMode === 'invisible' || loc.privacyMode === 'status_only' || loc.privacyMode === 'frozen' || !!loc.status?.includes('Invisible'),
                     currentTrip: loc.currentTrip || null,
                     circleId: memberCircleId,
                     circleName: memberCircleName,

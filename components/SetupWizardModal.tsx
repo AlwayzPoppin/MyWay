@@ -8,13 +8,10 @@ import { searchPlacesText } from '../services/placesService';
 import { addUserPlace } from '../services/userPlacesService';
 import { compressImageFile } from '../services/placeCorrectionService';
 import { Location, Place } from '../types';
-import { extractHouseNumber } from '../utils/addressUtils';
 import { hapticTick, hapticSuccess, hapticError } from '../utils/haptics';
-import { communityBuildingService } from '../services/communityBuildingService';
 import { 
     Sparkles, 
     User as UserIcon, 
-    Calendar, 
     Search, 
     Crosshair, 
     Home, 
@@ -52,14 +49,13 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
 
     // Step 1: Social Profile State
     const [fullName, setFullName] = useState(profile?.displayName || user?.displayName || '');
-    const [dob, setDob] = useState(profile?.dateOfBirth || '');
     const [gender, setGender] = useState<string>(profile?.gender || 'prefer_not_to_say');
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [avatarPreview, setAvatarPreview] = useState<string | null>(profile?.photoURL || user?.photoURL || null);
     const [profileError, setProfileError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Step 2: Home Base Search State
+    // Step 2: Optional first-place search state
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<Place[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -79,6 +75,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
 
     // Submission state
     const [isSaving, setIsSaving] = useState(false);
+    const shouldOfferPlaceCreation = !profile?.familyCircleId;
+    const totalSteps = shouldOfferPlaceCreation ? 3 : 1;
 
     // Initialize or sync defaults when profile/user changes
     useEffect(() => {
@@ -87,9 +85,6 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
         }
         if (profile?.photoURL || user?.photoURL) {
             setAvatarPreview(prev => prev || profile?.photoURL || user?.photoURL || null);
-        }
-        if (profile?.dateOfBirth) {
-            setDob(profile.dateOfBirth);
         }
         if (profile?.gender) {
             setGender(profile.gender);
@@ -114,7 +109,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     };
 
     // Step 1 Validation & Proceed
-    const handleNextToStep2 = () => {
+    const handleContinueProfile = () => {
         if (!fullName.trim()) {
             setProfileError('Please enter your full name');
             hapticError();
@@ -122,7 +117,11 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
         }
         setProfileError(null);
         hapticSuccess();
-        setCurrentStep(2);
+        if (shouldOfferPlaceCreation) {
+            setCurrentStep(2);
+        } else {
+            void handleCompleteSetup();
+        }
     };
 
     // Debounced search for Step 2
@@ -154,7 +153,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
         };
     }, [searchQuery, currentStep, userLocation]);
 
-    // Step 2 Address Selection
+    // Step 2 Place Selection
     const handleSelectAddress = (place: Place) => {
         hapticTick();
         setSelectedHomePlace(place);
@@ -195,10 +194,10 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
         setHomeAddressError(null);
     };
 
-    // Step 2 Proceed to Step 3
+    // Step 2 Proceed to the optional entrance detail step
     const handleNextToStep3 = () => {
         if (!selectedHomePlace) {
-            setHomeAddressError('Please select your home address before continuing');
+            setHomeAddressError('Choose a place before continuing, or skip it for now.');
             hapticError();
             return;
         }
@@ -347,90 +346,48 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                 }
             }
 
-            const homeAddressString = selectedHomePlace?.address || selectedHomePlace?.description || selectedHomePlace?.name || 'Home';
-            const extractedHN = extractHouseNumber(homeAddressString) || extractHouseNumber(searchQuery) || undefined;
-
-            // 1. Update Firebase User Profile Document (RTDB & Firestore)
-            const preciseHomeLocationObj: Record<string, any> = {
-                lat: precisionCoords.lat,
-                lng: precisionCoords.lng,
-                address: homeAddressString,
-                label: 'Verified Precision Pin'
-            };
-            if (extractedHN) {
-                preciseHomeLocationObj.houseNumber = extractedHN;
-            }
+            const placeAddressString = selectedHomePlace?.address || selectedHomePlace?.description || selectedHomePlace?.name || '';
 
             const profileUpdates: Partial<UserProfile> = {
                 displayName: fullName.trim(),
                 photoURL: finalPhotoUrl,
-                dateOfBirth: dob || undefined,
                 gender: gender || 'prefer_not_to_say',
-                hasCompletedSetup: true,
-                preciseHomeLocation: preciseHomeLocationObj as any
+                hasCompletedSetup: true
             };
 
             await updateUserProfile(user.uid, profileUpdates);
 
-            // 2. Explicitly create and persist Place document in Firestore and Realtime Database
-            const targetCircleId = profile?.familyCircleId || `user_${user.uid}`;
-            let createdHomePlace: Place;
-            try {
-                createdHomePlace = await addUserPlace(
-                    targetCircleId,
+            // Solo users may seed their first personal place. Circle members create
+            // shared places from the normal place flow after they join.
+            let createdPlace: Place | undefined;
+            if (shouldOfferPlaceCreation && selectedHomePlace) {
+                const targetPlaceStore = `user_${user.uid}`;
+                try {
+                    createdPlace = await addUserPlace(
+                    targetPlaceStore,
                     {
-                        name: 'Home',
-                        address: homeAddressString,
-                        description: homeAddressString,
+                        name: selectedHomePlace.name || 'My place',
+                        address: placeAddressString,
+                        description: placeAddressString,
                         location: {
                             lat: precisionCoords.lat,
                             lng: precisionCoords.lng
                         },
-                        type: 'home',
-                        category: 'home',
-                        icon: 'home',
-                        radius: 150, // Standard 150m arrival geofence
-                        isCorrected: true,
-                        houseNumber: extractedHN,
-                        entranceNotes: 'Precision front door / driveway routing pin',
+                        type: selectedHomePlace.type || 'search_result',
+                        category: selectedHomePlace.category || 'place',
+                        icon: selectedHomePlace.icon || '📍',
+                        radius: 150,
+                        needsBuildingPhoto: true,
+                        houseNumber: selectedHomePlace.houseNumber,
                         createdBy: user.uid
                     },
                     user.uid
                 );
-            } catch (placeErr: any) {
-                console.error('[SetupWizard] Failed to save Home place:', placeErr);
-                // Construct local fallback place so UI is never left without home base
-                createdHomePlace = {
-                    id: `place_home_${user.uid}_${Date.now()}`,
-                    name: 'Home',
-                    address: homeAddressString,
-                    description: homeAddressString,
-                    location: {
-                        lat: precisionCoords.lat,
-                        lng: precisionCoords.lng
-                    },
-                    type: 'home',
-                    category: 'home',
-                    icon: 'home',
-                    radius: 150,
-                    isCorrected: true,
-                    houseNumber: extractedHN
-                };
-            }
-
-            // 3. Publish verified rooftop building number to shared community layer
-            try {
-                if (extractedHN) {
-                    await communityBuildingService.publishVerifiedBuilding({
-                        address: homeAddressString,
-                        houseNumber: extractedHN,
-                        coordinates: precisionCoords,
-                        userId: user.uid,
-                        source: 'pinpoint_verification'
-                    });
+                } catch (placeErr: any) {
+                    console.error('[SetupWizard] Failed to save first place:', placeErr);
+                    createdPlace = undefined;
                 }
-            } catch (communityErr) {
-                console.warn('[SetupWizard] Non-critical error publishing to community building layer:', communityErr);
+
             }
 
             // 4. Mark onboarding complete in localStorage
@@ -440,8 +397,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                 } catch (e) {}
             }
 
-            // 5. Complete callback with both profileUpdates and createdHomePlace
-            onComplete(profileUpdates, createdHomePlace);
+            // 5. Complete callback with the optional personal place.
+            onComplete(profileUpdates, createdPlace);
         } catch (err: any) {
             console.error('[SetupWizard] Failed to complete setup:', err);
             const msg = err?.message || 'Failed to complete setup. Please check your network connection and try again.';
@@ -473,12 +430,12 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                         <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider ${
                             isDark ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-amber-100 text-amber-800'
                         }`}>
-                            Step {currentStep} of 3
+                            Step {currentStep} of {totalSteps}
                         </span>
                     </div>
 
                     {/* Progress Bar Indicators */}
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className={`grid gap-2 ${shouldOfferPlaceCreation ? 'grid-cols-3' : 'grid-cols-1'}`}>
                         {/* Step 1 Pill */}
                         <div className="flex flex-col gap-1.5">
                             <div className={`h-1.5 rounded-full transition-all duration-300 ${
@@ -491,7 +448,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             </span>
                         </div>
 
-                        {/* Step 2 Pill */}
+                        {shouldOfferPlaceCreation && <>
                         <div className="flex flex-col gap-1.5">
                             <div className={`h-1.5 rounded-full transition-all duration-300 ${
                                 currentStep >= 2 ? 'bg-amber-500' : isDark ? 'bg-white/10' : 'bg-slate-200'
@@ -499,11 +456,10 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             <span className={`text-[10px] font-bold uppercase tracking-wider truncate ${
                                 currentStep === 2 ? 'text-amber-400' : 'opacity-40'
                             }`}>
-                                2. Home Base
+                                2. First Place
                             </span>
                         </div>
 
-                        {/* Step 3 Pill */}
                         <div className="flex flex-col gap-1.5">
                             <div className={`h-1.5 rounded-full transition-all duration-300 ${
                                 currentStep >= 3 ? 'bg-amber-500' : isDark ? 'bg-white/10' : 'bg-slate-200'
@@ -511,9 +467,10 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             <span className={`text-[10px] font-bold uppercase tracking-wider truncate ${
                                 currentStep === 3 ? 'text-amber-400' : 'opacity-40'
                             }`}>
-                                3. Precision Pin
+                                3. Entrance
                             </span>
                         </div>
+                        </>}
                     </div>
                 </div>
 
@@ -525,7 +482,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             <div>
                                 <h3 className="text-lg font-black tracking-tight mb-1">Build Your Social Profile</h3>
                                 <p className={`text-xs font-medium leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                    Set up your profile so your Circle knows it's you—and so we never miss a birthday!
+                                    Add the name and photo your Circle will recognize. You can refine the rest anytime.
                                 </p>
                             </div>
 
@@ -591,30 +548,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                 )}
                             </div>
 
-                            {/* Date of Birth & Gender Grid */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                {/* Date of Birth */}
-                                <div className="space-y-1.5">
-                                    <label className={`block text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                                        <span>Date of Birth</span>
-                                        <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                    </label>
-                                    <input
-                                        type="date"
-                                        value={dob}
-                                        onChange={(e) => setDob(e.target.value)}
-                                        className={`w-full px-4 py-3 rounded-2xl text-sm font-semibold border transition-all focus:outline-none focus:ring-2 focus:ring-amber-500/50 ${
-                                            isDark
-                                                ? 'bg-white/5 border-white/10 text-white [color-scheme:dark]'
-                                                : 'bg-slate-50 border-slate-200 text-slate-900'
-                                        }`}
-                                    />
-                                    <p className={`text-[10px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                        Used for Circle birthday celebration notifications
-                                    </p>
-                                </div>
-
-                                {/* Gender Dropdown */}
+                            <div className="max-w-xs space-y-1.5">
+                                {/* Optional gender preference */}
                                 <div className="space-y-1.5">
                                     <label className={`block text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                                         Gender
@@ -638,13 +573,13 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                         </div>
                     )}
 
-                    {/* ================= STEP 2: THE HOME BASE ================= */}
+                    {/* ================= STEP 2: OPTIONAL FIRST PLACE ================= */}
                     {currentStep === 2 && (
                         <div className="space-y-4 animate-fade-in">
                             <div>
-                                <h3 className="text-lg font-black tracking-tight mb-1">Set Your Home Base</h3>
+                                <h3 className="text-lg font-black tracking-tight mb-1">Create your first saved place</h3>
                                 <p className={`text-xs font-medium leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                    Where does your journey start? Search your home address for circle arrival alerts, route guidance, and precision geofencing.
+                                    Help grow MyWay’s building coverage with a residence or business you know. This is optional and stays in your personal places.
                                 </p>
                             </div>
 
@@ -656,7 +591,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                         type="text"
                                         value={searchQuery}
                                         onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder="Search street address, city, or zip..."
+                                        placeholder="Search a residence, business, or address..."
                                         className={`w-full pl-11 pr-10 py-3.5 rounded-2xl text-sm font-semibold border transition-all focus:outline-none focus:ring-2 focus:ring-amber-500/50 ${
                                             isDark
                                                 ? 'bg-white/5 border-white/10 text-white placeholder-slate-500'
@@ -710,7 +645,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                 </div>
                             )}
 
-                            {/* Selected Home Address Card */}
+                            {/* Selected place card */}
                             {selectedHomePlace && (
                                 <div className={`p-4 rounded-2xl border flex items-start justify-between gap-3 ${
                                     isDark
@@ -723,7 +658,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                         </div>
                                         <div className="min-w-0">
                                             <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
-                                                Selected Home Address
+                                                Selected place
                                             </span>
                                             <h4 className="text-sm font-black truncate">{selectedHomePlace.name}</h4>
                                             <p className={`text-xs truncate opacity-80 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
@@ -747,18 +682,18 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                         </div>
                     )}
 
-                    {/* ================= STEP 3: PRECISION PIN DROP (DRILL-DOWN) ================= */}
+                    {/* ================= STEP 3: OPTIONAL ENTRANCE DETAILS ================= */}
                     {currentStep === 3 && (
                         <div className="space-y-3 animate-fade-in">
                             <div>
                                 <div className="flex items-center gap-2">
-                                    <h3 className="text-lg font-black tracking-tight">Precision Pin Drop</h3>
+                                    <h3 className="text-lg font-black tracking-tight">Add entrance details</h3>
                                     <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                        Verified Precision Pin
+                                        Optional
                                     </span>
                                 </div>
                                 <p className={`text-xs font-medium leading-relaxed mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                    Hold and drag the pin to your exact driveway or front door for precise routing.
+                                    Fine-tune the entrance now. We’ll ask for a building photo only when you arrive here later.
                                 </p>
                             </div>
 
@@ -816,7 +751,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                             }`}>
                                 <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
                                 <p className="text-[11px] leading-tight font-medium">
-                                    This pin is saved to your profile and tagged as <strong className="text-amber-400">Verified Precision Pin</strong> for family navigation accuracy.
+                                    Your entrance pin is saved with this personal place. Building numbers are resolved automatically when available.
                                 </p>
                             </div>
 
@@ -858,28 +793,37 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                     {currentStep === 1 && (
                         <button
                             type="button"
-                            onClick={handleNextToStep2}
+                            onClick={handleContinueProfile}
                             className="px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-[0_4px_12px_rgba(245,158,11,0.3)] hover:brightness-110 active:scale-95 transition-all cursor-pointer flex items-center gap-2"
                         >
-                            <span>Next: Set Home Base</span>
+                            <span>{shouldOfferPlaceCreation ? 'Next: Add a Place' : 'Finish Setup'}</span>
                             <ArrowRight className="w-3.5 h-3.5 shrink-0" />
                         </button>
                     )}
 
                     {currentStep === 2 && (
-                        <button
-                            type="button"
-                            onClick={handleNextToStep3}
-                            disabled={!selectedHomePlace}
-                            className={`px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2 ${
-                                selectedHomePlace
-                                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-[0_4px_12px_rgba(245,158,11,0.3)] hover:brightness-110 active:scale-95 cursor-pointer'
-                                    : 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50'
-                            }`}
-                        >
-                            <span>Next: Precision Pin</span>
-                            <ArrowRight className="w-3.5 h-3.5 shrink-0" />
-                        </button>
+                        <div className="flex items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => void handleCompleteSetup()}
+                                className={`px-3 py-2 text-xs font-bold ${isDark ? 'text-slate-300' : 'text-slate-600'}`}
+                            >
+                                {selectedHomePlace ? 'Save without details' : 'Skip for now'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleNextToStep3}
+                                disabled={!selectedHomePlace}
+                                className={`px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2 ${
+                                    selectedHomePlace
+                                        ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-[0_4px_12px_rgba(245,158,11,0.3)] hover:brightness-110 active:scale-95 cursor-pointer'
+                                        : 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50'
+                                }`}
+                            >
+                                <span>Next: Entrance details</span>
+                                <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                            </button>
+                        </div>
                     )}
 
                     {currentStep === 3 && (
@@ -896,7 +840,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                                 </>
                             ) : (
                                 <>
-                                    <span>Complete Setup</span>
+                                    <span>Save place & finish</span>
                                     <Sparkles className="w-3.5 h-3.5 shrink-0" />
                                 </>
                             )}

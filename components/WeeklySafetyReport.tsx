@@ -449,6 +449,7 @@ const WeeklySafetyReport: React.FC<WeeklySafetyReportProps> = ({
                                     {hasDrives ? selfStats.speedingEvents : '—'}
                                 </p>
                                 <p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">⚡ Speeding</p>
+                                <p className="mt-1 text-[8px] font-semibold leading-tight text-slate-400">6+ MPH over for 8 sec</p>
                             </div>
                         </div>
 

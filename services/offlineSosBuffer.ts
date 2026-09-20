@@ -237,8 +237,10 @@ export const setupSosAutoFlush = (
     syncFn: (alert: BufferedSosAlert) => Promise<void>
 ): (() => void) => {
     const handleOnline = async () => {
-        console.log('🚨 Network restored — auto-flushing offline SOS alerts...');
-        await flushSosBuffer(syncFn);
+        const count = await flushSosBuffer(syncFn);
+        if (count > 0) {
+            console.log(`🚨 Network restored — auto-flushed ${count} offline SOS alert${count === 1 ? '' : 's'}`);
+        }
     };
 
     return registerReliableDeliveryFlusher('sos', 100, handleOnline);

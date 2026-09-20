@@ -4,7 +4,6 @@ import { functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 import { getDistanceFromCoords as getDistanceMeters } from '../utils/geo';
 import { placeCorrectionService } from './placeCorrectionService';
-import { communityBuildingService } from './communityBuildingService';
 import { contributionService, applyCommunityPinsToPlaces } from './contributionService';
 
 // Mapbox Geocoding Access Token for rooftop-accurate address search & autocomplete
@@ -1027,7 +1026,8 @@ const searchViaOverpass = async (
         .replaceAll('{{lat}}', location.lat.toString())
         .replaceAll('{{lng}}', location.lng.toString());
 
-    const overpassQL = `[out:json][timeout:6];${query}out center 35;`;
+    // OSM ID order is not distance order: don't discard closer branches before sorting.
+    const overpassQL = `[out:json][timeout:6];${query}out center${isNameQuery ? '' : ' 35'};`;
 
     for (const mirror of OVERPASS_MIRRORS) {
         try {
@@ -1307,7 +1307,7 @@ export const searchNearbyPlaces = async (
 };
 
 // Free-text search for addresses and place names using Google Places API (Rooftop accuracy & local proximity bias)
-export const searchPlacesText = async (
+const searchAutocompletePlaces = async (
     query: string,
     location?: { lat: number; lng: number } | null
 ): Promise<Place[]> => {
@@ -1615,6 +1615,42 @@ export const searchPlacesText = async (
     return uniqueFallbackPlaces;
 };
 
+// Autocomplete suggests a few completions; business discovery must also find
+// nearby branches before ranking. Keep address geocoding on its existing path.
+export const searchPlacesText = async (
+    query: string,
+    location?: { lat: number; lng: number } | null
+): Promise<Place[]> => {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const isAddress = /^\d/.test(trimmed) || /\b(dr|drive|st|street|rd|road|ave|avenue|blvd|ln|lane|ct|court|hwy|highway|pkwy)\b/i.test(trimmed);
+    if (isAddress || !location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng)) {
+        return searchAutocompletePlaces(trimmed, location);
+    }
+    const key = getCacheKey(trimmed, location, 'business_discovery_v2');
+    const cached = getCachedResults(key);
+    if (cached) return cached;
+    const [suggestions, nearby] = await Promise.all([
+        searchAutocompletePlaces(trimmed, location).catch(() => [] as Place[]),
+        searchViaOverpass(location, trimmed, true).catch(() => [] as Place[])
+    ]);
+    const corrected = placeCorrectionService.applyCorrectionsToPlaces([...suggestions, ...nearby]);
+    const verified = await applyCommunityPinsToPlaces(corrected);
+    const results: Place[] = [];
+    const venueKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const place of verified) {
+        if (!place.location || !Number.isFinite(place.location.lat) || !Number.isFinite(place.location.lng)) continue;
+        if (results.some(existing => existing.id === place.id ||
+            (venueKey(existing.name) === venueKey(place.name) &&
+                getDistanceMeters(existing.location.lat, existing.location.lng, place.location.lat, place.location.lng) < 40))) continue;
+        results.push(place);
+    }
+    results.sort((a, b) => getDistanceMeters(location.lat, location.lng, a.location.lat, a.location.lng)
+        - getDistanceMeters(location.lat, location.lng, b.location.lat, b.location.lng));
+    if (results.length) setCachedResults(key, results);
+    return results;
+};
+
 export { applyCommunityPinsToPlaces };
 
 // Quick search categories
@@ -1721,9 +1757,26 @@ export const searchMaintenanceAlongRoute = async (
     }
 };
 
+export function extractStreetName(address?: string): string | null {
+    if (!address) return null;
+    const cleaned = address.replace(/,\s*\d{5}(-\d{4})?.*$/, '').replace(/,\s*(USA|United States).*$/i, '');
+    const streetRegex = /\b([0-9A-Za-z\s]+?\s+(?:Street|St|Road|Rd|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way|Court|Ct|Parkway|Pkwy|Highway|Hwy|Pike|Circle|Cir|Loop|Terrace|Ter))\b/i;
+    const match = cleaned.match(streetRegex);
+    if (match) {
+        const street = match[1].replace(/^\d+[-\s]*/, '').trim();
+        if (street.length > 2) return street;
+    }
+    const firstPart = cleaned.split(',')[0].trim().replace(/^\d+[-\s]*/, '');
+    if (firstPart.length > 2 && !firstPart.startsWith('Location (') && !/^\s*-?\d+\.\d+/.test(firstPart)) {
+        return firstPart;
+    }
+    return null;
+}
+
 /**
  * Search gas stations or EV charging stations along a route corridor.
- * Returns sorted list of stations with detour minutes and miles computed.
+ * Strictly filtered ahead of the vehicle along the active route corridor,
+ * with detours capped to quick turnoffs (+1 to +5 min max).
  */
 export const searchGasStationsAlongRoute = async (
     routeGeometry: Array<{ lat: number; lng: number } | [number, number]> | undefined,
@@ -1751,12 +1804,40 @@ export const searchGasStationsAlongRoute = async (
         return { lat: (pt as any).lat, lng: (pt as any).lng };
     });
 
-    // Sample corridor anchor points along route (user location/start, 25%, 50%, 75%)
+    // 1. Locate vehicle position along route to only search ahead along the active route corridor
+    let startIndex = 0;
+    if (userLocation) {
+        let minUserDist = Infinity;
+        for (let i = 0; i < normalizedCoords.length; i++) {
+            const d = getDistanceMeters(userLocation.lat, userLocation.lng, normalizedCoords[i].lat, normalizedCoords[i].lng);
+            if (d < minUserDist) {
+                minUserDist = d;
+                startIndex = i;
+            }
+        }
+    }
+    const aheadCoords = normalizedCoords.slice(startIndex);
+    const corridorCoords = aheadCoords.length > 0 ? aheadCoords : normalizedCoords;
+
+    // 2. Sample corridor anchor points strictly ahead along route (from driver location up to ~15.5 miles ahead)
     const samplePoints: Array<{ lat: number; lng: number }> = [];
-    if (userLocation) samplePoints.push(userLocation);
-    const step = Math.max(1, Math.floor(normalizedCoords.length / 4));
-    for (let i = 0; i < normalizedCoords.length; i += step) {
-        samplePoints.push(normalizedCoords[i]);
+    if (userLocation) {
+        samplePoints.push(userLocation);
+    } else {
+        samplePoints.push(corridorCoords[0]);
+    }
+
+    let cumulativeMeters = 0;
+    let nextTarget = 2500; // ~1.5 miles ahead
+    const MAX_FORWARD_METERS = 25000; // ~15.5 miles max ahead
+
+    for (let i = 1; i < corridorCoords.length && cumulativeMeters < MAX_FORWARD_METERS && samplePoints.length < 5; i++) {
+        const segDist = getDistanceMeters(corridorCoords[i - 1].lat, corridorCoords[i - 1].lng, corridorCoords[i].lat, corridorCoords[i].lng);
+        cumulativeMeters += segDist;
+        if (cumulativeMeters >= nextTarget) {
+            samplePoints.push(corridorCoords[i]);
+            nextTarget += 4000; // sample roughly every ~2.5 miles ahead
+        }
     }
 
     try {
@@ -1766,7 +1847,7 @@ export const searchGasStationsAlongRoute = async (
         const googlePromises = (apiKey && !googleMapsAuthFailed)
             ? samplePoints.slice(0, 4).map(async (pt) => {
                 try {
-                    const gUrl = `${getGoogleApiBase()}/maps/api/place/nearbysearch/json?location=${pt.lat},${pt.lng}&radius=3500&type=${isEv ? 'charging_station' : 'gas_station'}&key=${apiKey}`;
+                    const gUrl = `${getGoogleApiBase()}/maps/api/place/nearbysearch/json?location=${pt.lat},${pt.lng}&radius=2500&type=${isEv ? 'charging_station' : 'gas_station'}&key=${apiKey}`;
                     const res = await fetch(gUrl, { signal: AbortSignal.timeout(3500) });
                     if (!res.ok) return [];
                     const data = await res.json();
@@ -1814,18 +1895,44 @@ export const searchGasStationsAlongRoute = async (
             seen.add(nameKey);
             seen.add(coordKey);
 
-            // Compute exact minimum distance to route corridor
+            // Compute exact minimum distance to route corridor ahead
             let minMeters = Infinity;
-            for (const coord of normalizedCoords) {
-                const d = getDistanceMeters(p.location.lat, p.location.lng, coord.lat, coord.lng);
-                if (d < minMeters) minMeters = d;
+            let bestIdx = -1;
+            for (let i = 0; i < corridorCoords.length; i++) {
+                const d = getDistanceMeters(p.location.lat, p.location.lng, corridorCoords[i].lat, corridorCoords[i].lng);
+                if (d < minMeters) {
+                    minMeters = d;
+                    bestIdx = i;
+                }
             }
 
-            // Keep within 4 miles of the route corridor
-            if (minMeters > 6400) continue;
+            // Strictly filter out stations more than 1600m (~1 mile) off the corridor
+            if (minMeters > 1600) continue;
 
-            const detourMiles = Math.round((minMeters / 1609.34) * 2 * 10) / 10;
-            const detourMinutes = Math.max(0, Math.round(detourMiles * 2.2));
+            // Ensure the station is ahead of the vehicle along driving direction
+            if (bestIdx === 0 && userLocation && corridorCoords.length > 1) {
+                const distToNext = getDistanceMeters(p.location.lat, p.location.lng, corridorCoords[1].lat, corridorCoords[1].lng);
+                const userToNext = getDistanceMeters(userLocation.lat, userLocation.lng, corridorCoords[1].lat, corridorCoords[1].lng);
+                if (distToNext > userToNext + 150) {
+                    // Station is behind the vehicle's driving direction
+                    continue;
+                }
+            }
+
+            // Calculate cumulative route distance from user to the station turnoff
+            let routeDistanceMeters = 0;
+            for (let i = 1; i <= bestIdx; i++) {
+                routeDistanceMeters += getDistanceMeters(corridorCoords[i - 1].lat, corridorCoords[i - 1].lng, corridorCoords[i].lat, corridorCoords[i].lng);
+            }
+            const totalDistanceAheadMeters = routeDistanceMeters + minMeters;
+            const distanceAheadMiles = Math.round((totalDistanceAheadMeters / 1609.344) * 10) / 10;
+
+            const roundTripDetourMiles = (minMeters * 2) / 1609.344;
+            // Detour duration capped to quick turnoffs (+1 to +5 min max)
+            const detourMinutes = Math.max(1, Math.min(5, Math.round(roundTripDetourMiles * 2.2 + 0.5)));
+            if (detourMinutes > 5) continue;
+
+            const streetName = extractStreetName(p.address || p.description) || undefined;
 
             uniquePlaces.push({
                 ...p,
@@ -1833,18 +1940,24 @@ export const searchGasStationsAlongRoute = async (
                 icon,
                 brandColor,
                 rating: p.rating || 4.5,
-                detourMiles,
+                detourMiles: Math.round(roundTripDetourMiles * 10) / 10,
                 detourMinutes,
+                distanceAheadMiles,
+                streetName,
                 description: p.address || `${p.name} • +${detourMinutes} min detour`
             });
 
             if (uniquePlaces.length >= 20) break;
         }
 
-        // Sort by fastest detour time (0 min detour first!)
-        uniquePlaces.sort((a, b) => (a.detourMinutes || 0) - (b.detourMinutes || 0));
+        // Sort by quickest detour time (+1 to +3 min first) and nearest distance ahead
+        uniquePlaces.sort((a, b) => {
+            const scoreA = (a.detourMinutes || 1) * 2 + ((a as any).distanceAheadMiles || 1);
+            const scoreB = (b.detourMinutes || 1) * 2 + ((b as any).distanceAheadMiles || 1);
+            return scoreA - scoreB;
+        });
 
-        // Enrich top 5 stations with real street addresses and brand names if missing
+        // Enrich top 5 stations with real street addresses and streetName if missing
         await Promise.all(uniquePlaces.slice(0, 5).map(async (station) => {
             const hasValidAddress = station.address &&
                 station.address !== 'Nearby' &&
@@ -1864,6 +1977,9 @@ export const searchGasStationsAlongRoute = async (
                                 : rev.address;
                             station.address = cleanStreet;
                             station.description = cleanStreet;
+                            if (!station.streetName) {
+                                station.streetName = extractStreetName(cleanStreet) || undefined;
+                            }
                         }
                         if ((station.name === 'Gas Station' || station.name === 'Nearby') && rev.name && rev.name !== 'Gas Station' && !rev.name.startsWith('Location (')) {
                             station.name = rev.name;
@@ -1884,10 +2000,9 @@ export const searchGasStationsAlongRoute = async (
 
 /**
  * Reverse-geocode geographic coordinates into a high-accuracy Place representation
- * Tier 1: Local community buildings cache (0ms instant lookup)
- * Tier 2: Google Maps Geocoder (SDK or REST)
- * Tier 3: Photon Fast OpenStreetMap reverse geocoder (instant sub-200ms)
- * Tier 4: Nominatim OpenStreetMap reverse geocoder fallback
+ * Tier 1: Google Maps Geocoder (SDK or REST)
+ * Tier 2: Photon Fast OpenStreetMap reverse geocoder (instant sub-200ms)
+ * Tier 3: Nominatim OpenStreetMap reverse geocoder fallback
  */
 export async function reverseGeocode(
     coordinates: { lat: number; lng: number }
@@ -1898,45 +2013,7 @@ export async function reverseGeocode(
 
     const { lat, lng } = coordinates;
 
-    // --- Tier 1: Local Community Buildings Lookup (~25m radius) ---
-    try {
-        const buildings = communityBuildingService.getAllBuildings();
-        let closestBuilding: any = null;
-        let minDistanceMeters = 25; // 25m proximity threshold for building footprints
-
-        for (const b of buildings) {
-            if (b && b.coordinates && typeof b.coordinates.lat === 'number' && typeof b.coordinates.lng === 'number') {
-                const dist = getDistanceMeters(lat, lng, b.coordinates.lat, b.coordinates.lng);
-                if (dist < minDistanceMeters) {
-                    minDistanceMeters = dist;
-                    closestBuilding = b;
-                }
-            }
-        }
-
-        if (closestBuilding) {
-            const hn = closestBuilding.houseNumber || '';
-            const addr = closestBuilding.address || `Building ${hn}`;
-            return {
-                id: `community-${closestBuilding.id || `${lat.toFixed(5)}_${lng.toFixed(5)}`}`,
-                name: addr,
-                address: addr,
-                description: addr,
-                location: closestBuilding.coordinates,
-                radius: 0.15,
-                houseNumber: hn,
-                isRooftop: true,
-                geocodePrecision: 'rooftop',
-                type: 'search_result',
-                icon: '📍',
-                brandColor: '#6366f1'
-            };
-        }
-    } catch (e) {
-        console.debug('[PlacesService] Tier 1 community reverse geocode error:', e);
-    }
-
-    // --- Tier 2: Google Maps Geocoder (SDK or REST) ---
+    // --- Tier 1: Google Maps Geocoder (SDK or REST) ---
     const apiKey = getActiveGoogleKey();
     if (apiKey && !googleMapsAuthFailed) {
         try {

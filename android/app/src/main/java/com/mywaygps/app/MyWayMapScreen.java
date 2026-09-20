@@ -17,7 +17,6 @@ import androidx.car.app.model.DateTimeWithZone;
 import androidx.car.app.model.Distance;
 import androidx.car.app.model.Template;
 import androidx.car.app.navigation.model.Destination;
-import androidx.car.app.navigation.model.MessageInfo;
 import androidx.car.app.navigation.NavigationManager;
 import androidx.car.app.navigation.NavigationManagerCallback;
 import androidx.car.app.navigation.model.NavigationTemplate;
@@ -88,6 +87,16 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
         invalidate();
     }
 
+    @Override
+    public void onIncidentsChanged() {
+        getCarContext().getMainExecutor().execute(this::invalidate);
+    }
+
+    @Override
+    public void onMapSkinChanged() {
+        getCarContext().getMainExecutor().execute(this::invalidate);
+    }
+
     @NonNull
     @Override
     public Template onGetTemplate() {
@@ -95,16 +104,32 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
         updateNavigationLifecycle(repo.isNavigating());
         NavigationTemplate.Builder navBuilder = new NavigationTemplate.Builder();
 
-        // 1. Action Strip: Prominent Red "X" Trip Cancellation Button
+        // 1. Action Strip: Navigation & Alert controls
         ActionStrip.Builder actionStripBuilder = new ActionStrip.Builder();
 
         if (repo.isNavigating()) {
+            actionStripBuilder.addAction(
+                    new Action.Builder()
+                            .setTitle("Add stop")
+                            .setIcon(createSearchIcon(getCarContext()))
+                            .setOnClickListener(() -> getScreenManager().push(new CarSearchScreen(getCarContext(), true)))
+                            .build()
+            );
             if (repo.getRouteOptions().size() > 1) {
                 actionStripBuilder.addAction(
                         new Action.Builder()
                                 .setTitle("Routes")
                                 .setIcon(createRoutesIcon(getCarContext()))
                                 .setOnClickListener(() -> getScreenManager().push(new CarRouteOptionsScreen(getCarContext())))
+                                .build()
+                );
+            }
+            if (!repo.getIncidents().isEmpty()) {
+                actionStripBuilder.addAction(
+                        new Action.Builder()
+                                .setTitle("Alerts (" + repo.getIncidents().size() + ")")
+                                .setIcon(createAlertsIcon(getCarContext()))
+                                .setOnClickListener(() -> getScreenManager().push(new CarAlertsScreen(getCarContext())))
                                 .build()
                 );
             }
@@ -120,16 +145,35 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
                     .build();
             actionStripBuilder.addAction(cancelAction);
         } else {
-            // Idle state: MyWay Status / App Icon action
+            // Idle state: Explore saved places & recent trips
             actionStripBuilder.addAction(
                     new Action.Builder()
-                            .setTitle("MyWay")
+                            .setTitle("Explore")
                             .setIcon(CarIcon.APP_ICON)
                             .setOnClickListener(() -> {
-                                invalidate();
+                                getScreenManager().push(new CarIdleScreen(getCarContext()));
                             })
                             .build()
             );
+            // Search for a destination from the car
+            actionStripBuilder.addAction(
+                    new Action.Builder()
+                            .setTitle("Search")
+                            .setIcon(createSearchIcon(getCarContext()))
+                            .setOnClickListener(() -> {
+                                getScreenManager().push(new CarSearchScreen(getCarContext()));
+                            })
+                            .build()
+            );
+            if (!repo.getIncidents().isEmpty()) {
+                actionStripBuilder.addAction(
+                        new Action.Builder()
+                                .setTitle("Alerts (" + repo.getIncidents().size() + ")")
+                                .setIcon(createAlertsIcon(getCarContext()))
+                                .setOnClickListener(() -> getScreenManager().push(new CarAlertsScreen(getCarContext())))
+                                .build()
+                );
+            }
         }
         navBuilder.setActionStrip(actionStripBuilder.build());
 
@@ -202,12 +246,6 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
                         ).build()
                 );
             }
-        } else {
-            // Idle (Not actively navigating): Map surface is shown with ready prompt
-            MessageInfo readyInfo = new MessageInfo.Builder("Ready to Navigate")
-                    .setText("Select a destination in MyWay or open saved places")
-                    .build();
-            navBuilder.setNavigationInfo(readyInfo);
         }
 
         return navBuilder.build();
@@ -323,6 +361,61 @@ public class MyWayMapScreen extends Screen implements CarStateRepository.Listene
             canvas.drawLine(18, 18, 18, 54, paint);
             canvas.drawLine(18, 54, 54, 54, paint);
             canvas.drawLine(54, 18, 54, 54, paint);
+            return new CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build();
+        } catch (Exception e) {
+            return CarIcon.APP_ICON;
+        }
+    }
+
+    /** Creates a teal magnifying-glass search icon for the idle action strip. */
+    private static CarIcon createSearchIcon(Context context) {
+        try {
+            int size = 72;
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(Color.parseColor("#00F0FF"));
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(5.0f);
+            canvas.drawCircle(30, 30, 16, paint);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            canvas.drawLine(42, 42, 58, 58, paint);
+            return new CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build();
+        } catch (Exception e) {
+            return CarIcon.APP_ICON;
+        }
+    }
+
+    /** Creates an amber alert badge icon for the road alerts action. */
+    private static CarIcon createAlertsIcon(Context context) {
+        try {
+            int size = 72;
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+
+            Paint bg = new Paint(Paint.ANTI_ALIAS_FLAG);
+            bg.setColor(Color.parseColor("#f59e0b"));
+            canvas.drawRoundRect(new android.graphics.RectF(4, 4, size - 4, size - 4), 16, 16, bg);
+
+            Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            iconPaint.setColor(Color.WHITE);
+            iconPaint.setStyle(Paint.Style.STROKE);
+            iconPaint.setStrokeWidth(5.0f);
+            iconPaint.setStrokeCap(Paint.Cap.ROUND);
+
+            // Warning triangle
+            android.graphics.Path path = new android.graphics.Path();
+            path.moveTo(size * 0.5f, 16);
+            path.lineTo(size - 16, size - 16);
+            path.lineTo(16, size - 16);
+            path.close();
+            canvas.drawPath(path, iconPaint);
+
+            // Exclamation mark
+            canvas.drawLine(size * 0.5f, 29, size * 0.5f, 41, iconPaint);
+            iconPaint.setStyle(Paint.Style.FILL);
+            canvas.drawCircle(size * 0.5f, 48, 3.0f, iconPaint);
+
             return new CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build();
         } catch (Exception e) {
             return CarIcon.APP_ICON;

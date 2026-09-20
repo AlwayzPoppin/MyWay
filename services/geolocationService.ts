@@ -1,13 +1,10 @@
-import { registerPlugin, Capacitor } from '@capacitor/core';
-import type { BackgroundGeolocationPlugin, Location as NativeLocation } from '@capacitor-community/background-geolocation';
+import { Capacitor } from '@capacitor/core';
 import { Geolocation as CapGeolocation, Position as CapPosition } from '@capacitor/geolocation';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Geofence, GeofenceTransition, detectTransition } from './geofenceService';
 import { crashDetectionService } from './crashDetectionService';
 import { offlineMapService, computeRadiusBounds } from './offlineMapService';
 import { getDistanceMeters } from '../utils/geo';
-
-const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>('BackgroundGeolocation');
 
 export interface GeolocationState {
     latitude: number;
@@ -87,15 +84,22 @@ class VelocitySmoother {
 
         const rawMph = Math.max(0, rawSpeedMps * 2.23694);
 
-        // Stationary deadband clamp
+        // Stationary deadband clamp - immediately snap to 0 when vehicle halts
         if (rawMph < this.DEADBAND_MPH) {
             this.currentSpeedMph = 0;
             return 0;
         }
 
-        // Dynamic EMA: faster response when braking/decelerating (alpha 0.5), smooth when accelerating (alpha 0.35)
-        const alpha = rawMph < this.currentSpeedMph ? 0.5 : 0.35;
+        // Dynamic EMA: rapid deceleration tracking (alpha 0.85) when braking to eliminate speedometer lag,
+        // smooth filter (alpha 0.40) when accelerating
+        const alpha = rawMph < this.currentSpeedMph ? 0.85 : 0.40;
         this.currentSpeedMph = this.currentSpeedMph + alpha * (rawMph - this.currentSpeedMph);
+
+        // Snap to zero if under deadband threshold to prevent asymptotic creep
+        if (this.currentSpeedMph < this.DEADBAND_MPH) {
+            this.currentSpeedMph = 0;
+            return 0;
+        }
 
         return Math.round(this.currentSpeedMph * 10) / 10;
     }
@@ -145,8 +149,7 @@ class HeadingSmoother {
 
 class GeolocationService {
     private webWatchId: number | null = null;
-    private nativeWatcherId: string | null = null;
-    private nativeWatcherPromise: Promise<string> | null = null;
+    private capacitorWatcherId: string | null = null;
     private isWatching = false;
 
     private readonly ACCURACY_THRESHOLD = 150;
@@ -444,7 +447,7 @@ class GeolocationService {
             this.isWatching = true;
             if (this.isSupported()) {
                 if (Capacitor.isNativePlatform()) {
-                    this.startNativeBackgroundWatch();
+                    this.startNativeForegroundWatch();
                 } else {
                     this.startWebWatch();
                 }
@@ -459,59 +462,41 @@ class GeolocationService {
         };
     }
 
-    private async startNativeBackgroundWatch(): Promise<void> {
+    private async startNativeForegroundWatch(): Promise<void> {
         await this.stopNativeWatch();
 
         if (!this.isWatching) return;
 
         try {
-            console.log('📡 Starting Native Background Geolocation Watcher...');
+            console.log('📡 Starting native foreground geolocation watcher...');
             const distanceFilter = this.trackingTier === 'driving' ? 0 : this.trackingTier === 'transit' ? 5 : 15;
 
-            const addPromise = BackgroundGeolocation.addWatcher(
-                {
-                    backgroundTitle: 'MyWay is active',
-                    backgroundMessage: 'Sharing location with your circle',
-                    requestPermissions: true,
-                    stale: false,
-                    distanceFilter
-                },
-                (location, error) => {
-                    if (error) {
-                        console.error('📡 Background Geolocation Error:', error);
-                        this.notifyErrorSubscribers({
-                            code: error.code ? parseInt(error.code, 10) || 2 : 2,
-                            message: error.message || 'Background location error'
-                        });
+            this.capacitorWatcherId = await CapGeolocation.watchPosition(
+                { enableHighAccuracy: true, timeout: 15_000, interval: 5_000, minimumUpdateInterval: Math.max(1_000, distanceFilter ? 3_000 : 1_000) },
+                (position, error) => {
+                    if (error || !position) {
+                        this.notifyErrorSubscribers({ code: 2, message: error?.message || 'Native location error' });
                         return;
                     }
-
-                    if (location) {
-                        const parsed = this.normalizeAndSmoothPosition(
-                            location.latitude,
-                            location.longitude,
-                            location.accuracy,
-                            location.bearing,
-                            location.speed,
-                            location.time || Date.now()
-                        );
-                        this.updateAdaptiveTier(parsed.speed || 0);
-                        this.evaluateBackgroundHeadless(parsed);
-                        this.notifySubscribers(parsed);
-                    }
+                    const parsed = this.normalizeAndSmoothPosition(
+                        position.coords.latitude,
+                        position.coords.longitude,
+                        position.coords.accuracy,
+                        position.coords.heading,
+                        position.coords.speed,
+                        position.timestamp || Date.now()
+                    );
+                    this.updateAdaptiveTier(parsed.speed || 0);
+                    this.evaluateBackgroundHeadless(parsed);
+                    this.notifySubscribers(parsed);
                 }
             );
-
-            this.nativeWatcherPromise = addPromise;
-            const watcherId = await addPromise;
-            this.nativeWatcherId = watcherId;
-            this.nativeWatcherPromise = null;
 
             if (!this.isWatching) {
                 await this.stopNativeWatch();
             }
         } catch (err: any) {
-            console.error('❌ Failed to initialize Native Background Geolocation, falling back to web watch:', err);
+            console.error('❌ Failed to initialize native geolocation, falling back to web watch:', err);
             if (this.isWatching) {
                 this.startWebWatch();
             }
@@ -619,7 +604,7 @@ class GeolocationService {
                             } else {
                                 const currentBounds = computeRadiusBounds({ lat, lng }, 5);
                                 this.lastDwellingCacheLocation = { lat, lng, timestamp: now };
-                                offlineMapService.downloadArea('Auto-Cache (Dwelling)', currentBounds, 13, 15)
+                                offlineMapService.downloadArea('Nearby area', currentBounds, 13, 15)
                                     .then(() => console.log('📦 [OfflineMapService] Predictive dwelling auto-cache complete (5km radius, z13-z15)'))
                                     .catch(err => console.warn('[OfflineMapService] Predictive dwelling auto-cache skipped/failed:', err));
                             }
@@ -698,23 +683,13 @@ class GeolocationService {
     }
 
     private async stopNativeWatch(): Promise<void> {
-        if (this.nativeWatcherPromise) {
+        if (this.capacitorWatcherId) {
             try {
-                const id = await this.nativeWatcherPromise;
-                await BackgroundGeolocation.removeWatcher({ id });
+                await CapGeolocation.clearWatch({ id: this.capacitorWatcherId });
             } catch (e) {
-                console.warn('⚠️ Error removing pending BackgroundGeolocation watcher:', e);
+                console.warn('⚠️ Error removing native geolocation watcher:', e);
             }
-            this.nativeWatcherPromise = null;
-        }
-
-        if (this.nativeWatcherId) {
-            try {
-                await BackgroundGeolocation.removeWatcher({ id: this.nativeWatcherId });
-            } catch (e) {
-                console.warn('⚠️ Error removing BackgroundGeolocation watcher:', e);
-            }
-            this.nativeWatcherId = null;
+            this.capacitorWatcherId = null;
         }
     }
 

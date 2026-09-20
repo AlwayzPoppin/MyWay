@@ -154,13 +154,13 @@ export function extractStepSpeedLimit(instruction: string, streetNames?: string[
     if (combined.includes('highway') || combined.includes('hwy') || combined.includes('expressway') || combined.includes('us-') || combined.includes('nc-') || combined.includes('sr-') || combined.includes('by-pass') || combined.includes('bypass')) {
         return 55;
     }
-    if (combined.includes('blvd') || combined.includes('boulevard') || combined.includes('pkwy') || combined.includes('parkway') || combined.includes('santa fe') || combined.includes('yadkin') || combined.includes('bragg') || combined.includes('skibo')) {
+    if (combined.includes('blvd') || combined.includes('boulevard') || combined.includes('pkwy') || combined.includes('parkway')) {
         return 45;
     }
     if (combined.includes('road') || combined.includes('rd') || combined.includes('avenue') || combined.includes('ave') || combined.includes('drive') || combined.includes('dr') || combined.includes('pike')) {
         return 35;
     }
-    if (combined.includes('way') || combined.includes('lane') || combined.includes('ln') || combined.includes('court') || combined.includes('ct') || combined.includes('place') || combined.includes('pl') || combined.includes('cir') || combined.includes('circle') || combined.includes('residential')) {
+    if (combined.includes('way') || combined.includes('lane') || combined.includes('ln') || combined.includes('court') || combined.includes('ct') || combined.includes('place') || combined.includes('pl') || combined.includes('cir') || combined.includes('circle') || combined.includes('residential') || combined.includes('street') || combined.includes('st')) {
         return 25;
     }
     if (combined.includes('parking') || combined.includes('aisle') || combined.includes('driveway') || combined.includes('alley') || combined.includes('service')) {
@@ -447,7 +447,11 @@ function parseOSRMRoute(
                 speedLimit,
                 hasCamera,
                 lanes,
-                endLocation: stepEndLocation
+                endLocation: stepEndLocation,
+                roadName: osrmStep.name || '',
+                maneuverType: osrmStep.maneuver?.type,
+                maneuverModifier: osrmStep.maneuver?.modifier,
+                distanceMeters: osrmStep.distance
             };
             steps.push(stepObj);
             legSteps.push(stepObj);
@@ -509,6 +513,303 @@ function parseOSRMRoute(
         routeGeometry,
         trafficSegments
     };
+}
+
+/**
+ * Normalizes and cleans a road name or ref for user-friendly corridor display
+ */
+function cleanRoadName(rawName?: string, rawRef?: string): string {
+    const raw = (rawName || rawRef || '').trim();
+    if (!raw) return '';
+
+    const lower = raw.toLowerCase();
+    // Exclude unnamed roads, ramps, driveways, service roads, internal routing labels
+    if (
+        lower === 'unnamed road' ||
+        lower.startsWith('ramp') ||
+        lower.startsWith('off-ramp') ||
+        lower.startsWith('on-ramp') ||
+        lower.startsWith('slip road') ||
+        lower.includes('service road') ||
+        lower.includes('destination') ||
+        lower.includes('parking') ||
+        lower.includes('driveway') ||
+        lower === 'turn left' ||
+        lower === 'turn right'
+    ) {
+        return '';
+    }
+
+    // Standardize highway prefixes and abbreviations
+    let cleaned = raw
+        .replace(/^via\s+/i, '')
+        .replace(/\bFreeway\b/gi, 'Fwy')
+        .replace(/\bExpressway\b/gi, 'Expy')
+        .replace(/\bParkway\b/gi, 'Pkwy')
+        .replace(/\bHighway\b/gi, 'Hwy')
+        .replace(/\bTurnpike\b/gi, 'Tpke')
+        .replace(/\bInterstate\s+(\d+)\b/gi, 'I-$1')
+        .replace(/\bI\s+(\d+)\b/gi, 'I-$1')
+        .replace(/\bUS\s+(\d+)\b/gi, 'US-$1')
+        .replace(/\bNC\s+(\d+)\b/gi, 'NC-$1')
+        .replace(/\s+/g, ' ')
+        .replace(/[.,;]+$/, '')
+        .trim();
+
+    return cleaned;
+}
+
+/**
+ * Extracts primary arterial roads composing a route corridor, sorted by prominence/distance
+ */
+function extractRoutePrimaryRoads(route: NavigationRoute): string[] {
+    const roadDistances = new Map<string, number>();
+
+    // 1. Incorporate OSRM leg summaries if available
+    const summaryRoads = (route.legs || [])
+        .map(l => (l as any).summary)
+        .filter(Boolean)
+        .join(' / ')
+        .replace(/^via\s+/i, '')
+        .split(/\s*\/\s*|\s*,\s*|\s+&\s+/);
+
+    summaryRoads.forEach(raw => {
+        const cleaned = cleanRoadName(raw);
+        if (cleaned) {
+            // Give summary roads an initial prominence weight
+            roadDistances.set(cleaned, (roadDistances.get(cleaned) || 0) + 1500);
+        }
+    });
+
+    // 2. Accumulate distance per road name across all steps
+    route.steps.forEach(step => {
+        let name = cleanRoadName(step.roadName);
+        if (!name && step.instruction) {
+            const match = step.instruction.match(/(?:onto|on|toward)\s+(.+?)(?:\s+(?:then|and)\s+|$)/i);
+            if (match?.[1]) {
+                name = cleanRoadName(match[1]);
+            }
+        }
+        if (name) {
+            const dist = step.distanceMeters || (
+                step.distance.includes('mi') ? parseFloat(step.distance) * 1609.34 :
+                step.distance.includes('ft') ? parseFloat(step.distance) * 0.3048 : 500
+            );
+            roadDistances.set(name, (roadDistances.get(name) || 0) + dist);
+        }
+    });
+
+    // Sort by descending distance
+    return Array.from(roadDistances.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(entry => entry[0]);
+}
+
+/**
+ * Detects whether a road name indicates an interstate or freeway
+ */
+function isFreewayRoad(roadName: string): boolean {
+    if (!roadName) return false;
+    return /\b(I[- ]?\d+|Interstate|Fwy|Freeway|Expy|Expressway|Turnpike|Tpke|Pkwy|Parkway|Motorway)\b/i.test(roadName);
+}
+
+/**
+ * Detects whether a route utilizes interstates or freeways
+ */
+function routeUsesFreeways(route: NavigationRoute): boolean {
+    return route.steps.some(step => {
+        if (step.roadName && isFreewayRoad(step.roadName)) return true;
+        if (step.instruction && isFreewayRoad(step.instruction)) return true;
+        if (step.speedLimit && step.speedLimit >= 65) return true;
+        return false;
+    });
+}
+
+/**
+ * Compares two road names with normalization to detect similarities (e.g., "I-95" vs "I 95")
+ */
+function isSimilarRoad(roadA: string, roadB: string): boolean {
+    const normA = roadA.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normB = roadB.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!normA || !normB) return false;
+    if (normA === normB) return true;
+    if (normA.includes(normB) || normB.includes(normA)) return true;
+    return false;
+}
+
+/**
+ * Keeps route choices useful to a driver. Providers can return a second path
+ * that briefly enters a service road, parking lot, or side street and then
+ * rejoins the same arterial corridor. That is a geometry variation, not a
+ * meaningful alternative route.
+ */
+function filterLowValueRouteAlternatives(routes: NavigationRoute[]): NavigationRoute[] {
+    if (routes.length < 2) return routes;
+
+    const ordered = [...routes].sort((a, b) => (a.durationMinutes ?? Number.MAX_SAFE_INTEGER) - (b.durationMinutes ?? Number.MAX_SAFE_INTEGER));
+    const fastest = ordered[0];
+    const fastestRoads = extractRoutePrimaryRoads(fastest).slice(0, 2);
+    const fastestDistance = fastest.distanceMeters || parseDistanceToMeters(fastest.totalDistance || '0');
+    const fastestDuration = fastest.durationMinutes || 0;
+    const fastestUsesFreeway = routeUsesFreeways(fastest);
+    const fastestHasTolls = fastest.hasTolls || (fastest.estimatedTolls || 0) > 0;
+
+    return ordered.filter((candidate, index) => {
+        if (index === 0) return true;
+
+        const candidateRoads = extractRoutePrimaryRoads(candidate).slice(0, 2);
+        const introducesDifferentArterial = candidateRoads.some(road =>
+            !fastestRoads.some(primaryRoad => isSimilarRoad(road, primaryRoad))
+        );
+        const candidateUsesFreeway = routeUsesFreeways(candidate);
+        const candidateHasTolls = candidate.hasTolls || (candidate.estimatedTolls || 0) > 0;
+        const distance = candidate.distanceMeters || parseDistanceToMeters(candidate.totalDistance || '0');
+        const distanceDelta = Math.abs(distance - fastestDistance);
+        const durationDelta = Math.abs((candidate.durationMinutes || 0) - fastestDuration);
+        const hasMeaningfulPolicyDifference = candidateUsesFreeway !== fastestUsesFreeway || candidateHasTolls !== fastestHasTolls;
+        const isNearDuplicate = distanceDelta <= Math.max(300, fastestDistance * 0.12) && durationDelta < 3;
+
+        if (!introducesDifferentArterial && !hasMeaningfulPolicyDifference && isNearDuplicate) {
+            console.info('[Routing] Suppressed low-value route variation', {
+                candidate: candidate.summary,
+                fastest: fastest.summary,
+                distanceDelta: Math.round(distanceDelta),
+                durationDelta
+            });
+            return false;
+        }
+        return true;
+    });
+}
+
+/**
+ * Replaces static/mock labels with dynamic corridor-based naming, real relative time deltas,
+ * dynamic eco fuel calculations, and highway/toll attribute badges.
+ */
+function applyDynamicRouteLabelsAndBadges(parsedRoutes: NavigationRoute[]): void {
+    if (parsedRoutes.length === 0) return;
+
+    // Identify fastest route (lowest durationMinutes)
+    let minDurIdx = 0;
+    parsedRoutes.forEach((r, idx) => {
+        const dur = r.durationMinutes || 0;
+        const minDur = parsedRoutes[minDurIdx].durationMinutes || 0;
+        if (dur < minDur) {
+            minDurIdx = idx;
+        }
+    });
+
+    const fastestRoute = parsedRoutes[minDurIdx];
+    const fastestDur = fastestRoute.durationMinutes || 0;
+    const fastestDist = fastestRoute.distanceMeters || 0;
+
+    // Check if any route choices have tolls
+    const choicesHaveTolls = parsedRoutes.some(r => r.hasTolls || (r.estimatedTolls || 0) > 0);
+    // Check if any route choices use freeways
+    const choicesHaveFreeways = parsedRoutes.some(r => routeUsesFreeways(r));
+
+    // Vehicle fuel economy calculation
+    const activeVehicle = vehicleFuelService.getActiveVehicle();
+    const userMpg = vehicleFuelService.getEffectiveMpg(activeVehicle);
+    const gasPrice = vehicleFuelService.getGasPrice();
+
+    const computeFuel = (distMeters: number) => {
+        const miles = distMeters / 1609.34;
+        const gallons = miles / userMpg;
+        const cost = gallons * gasPrice;
+        return { gallons, cost, miles };
+    };
+
+    const fastestFuel = computeFuel(fastestDist);
+
+    // Extract primary roads for each route
+    const routePrimaryRoadsMap = new Map<NavigationRoute, string[]>();
+    parsedRoutes.forEach(r => {
+        routePrimaryRoadsMap.set(r, extractRoutePrimaryRoads(r));
+    });
+
+    const fastestPrimaryRoads = routePrimaryRoadsMap.get(fastestRoute) || [];
+
+    // 1. Format Fastest Route
+    fastestRoute.routeType = 'fastest';
+    fastestRoute.routeLabel = 'Fastest Route ⚡';
+    const fastestSubtitle = fastestPrimaryRoads.length >= 2
+        ? `via ${fastestPrimaryRoads.slice(0, 2).join(', ')}`
+        : fastestPrimaryRoads.length === 1
+        ? `via ${fastestPrimaryRoads[0]}`
+        : (fastestRoute.summary || 'via Main Route');
+    fastestRoute.summary = fastestSubtitle;
+    fastestRoute.savingsLabel = 'Fastest';
+
+    const fastestBadges: string[] = ['Fastest'];
+    if (choicesHaveTolls && (!fastestRoute.hasTolls && (fastestRoute.estimatedTolls || 0) === 0)) {
+        fastestBadges.push('Toll-Free');
+    }
+    if (choicesHaveFreeways && !routeUsesFreeways(fastestRoute)) {
+        fastestBadges.push('Avoids Freeways');
+    }
+    fastestRoute.badges = fastestBadges;
+
+    // 2. Format Alternative Routes (Route 2, Route 3...)
+    parsedRoutes.forEach((r, idx) => {
+        if (idx === minDurIdx) return;
+
+        const altPrimaryRoads = routePrimaryRoadsMap.get(r) || [];
+
+        // Find unique highway / major artery differentiating this route from fastest route
+        const uniqueRoad = altPrimaryRoads.find(road =>
+            !fastestPrimaryRoads.some(fRoad => isSimilarRoad(road, fRoad))
+        );
+
+        const altTitle = uniqueRoad
+            ? `via ${uniqueRoad}`
+            : altPrimaryRoads.length > 0
+            ? `via ${altPrimaryRoads[0]}`
+            : 'Alternative Route';
+
+        r.routeLabel = altTitle;
+
+        const altSubtitle = altPrimaryRoads.length >= 2
+            ? `via ${altPrimaryRoads.slice(0, 2).join(', ')}`
+            : altPrimaryRoads.length === 1
+            ? `via ${altPrimaryRoads[0]}`
+            : (r.summary || 'Alternative Corridor');
+        r.summary = altSubtitle;
+
+        // Compute time delta relative to fastest route
+        const rDur = r.durationMinutes || 0;
+        const timeDiff = Math.max(0, rDur - fastestDur);
+        const timeBadge = timeDiff === 0 ? 'Similar ETA' : `+${timeDiff} min`;
+
+        const badges: string[] = [timeBadge];
+        r.savingsLabel = timeBadge;
+
+        // Dynamic Eco Fuel Calculation:
+        // ONLY display an "Eco 🌿" badge if the route's fuel consumption is measurably lower
+        // (at least 3% less fuel) than the fastest route.
+        const altDist = r.distanceMeters || 0;
+        const altFuel = computeFuel(altDist);
+        const isMeasurablyEco = altFuel.gallons <= (fastestFuel.gallons * 0.97);
+
+        if (isMeasurablyEco) {
+            badges.push('Eco 🌿');
+            r.routeType = 'eco';
+        } else if (r.estimatedTolls === 0 && choicesHaveTolls) {
+            r.routeType = 'toll_free';
+        } else {
+            r.routeType = 'scenic';
+        }
+
+        // Highway & Toll Attribute Badges:
+        if (choicesHaveTolls && (!r.hasTolls && (r.estimatedTolls || 0) === 0)) {
+            badges.push('Toll-Free');
+        }
+        if (choicesHaveFreeways && !routeUsesFreeways(r)) {
+            badges.push('Avoids Freeways');
+        }
+
+        r.badges = badges;
+    });
 }
 
 /**
@@ -662,43 +963,34 @@ export async function fetchRouteOptions(
         return [];
     }
 
-    // Identify fastest, shortest, and toll-free routes
-    let minDurIdx = 0;
-    let minDistIdx = 0;
-    let maxTolls = 0;
+    // Remove service-road loops and other near-duplicate geometry before the
+    // card labels are generated. A route choice needs a different major
+    // corridor, highway/toll policy, or a material time/distance tradeoff.
+    const meaningfulRoutes = filterLowValueRouteAlternatives(parsedRoutes);
+    parsedRoutes.splice(0, parsedRoutes.length, ...meaningfulRoutes);
 
-    parsedRoutes.forEach((r, idx) => {
-        if ((r.durationMinutes || 0) < (parsedRoutes[minDurIdx].durationMinutes || 0)) minDurIdx = idx;
-        if ((r.distanceMeters || 0) < (parsedRoutes[minDistIdx].distanceMeters || 0)) minDistIdx = idx;
-        if ((r.estimatedTolls || 0) > maxTolls) maxTolls = r.estimatedTolls || 0;
-    });
+    // Apply dynamic corridor naming, time deltas, dynamic eco fuel, and highway/toll badges
+    applyDynamicRouteLabelsAndBadges(parsedRoutes);
 
-    const fastestDist = parsedRoutes[minDurIdx].distanceMeters || 0;
-    const fastestDur = parsedRoutes[minDurIdx].durationMinutes || 0;
-
-    parsedRoutes.forEach((r, idx) => {
-        if (idx === minDurIdx) {
-            r.routeType = 'fastest';
-            r.routeLabel = 'Fastest Route ⚡';
-            r.savingsLabel = 'Lowest ETA';
-        } else if (r.estimatedTolls === 0 && maxTolls > 0) {
-            r.routeType = 'toll_free';
-            r.routeLabel = 'Toll-Free Route 🟢';
-            r.savingsLabel = `Save $${maxTolls.toFixed(2)} in tolls`;
-        } else if (idx === minDistIdx && (r.distanceMeters || 0) < fastestDist) {
-            r.routeType = 'shortest';
-            r.routeLabel = 'Shortest Distance 🛣️';
-            const savedMi = Math.max(0.1, (fastestDist - (r.distanceMeters || 0)) / 1609.34);
-            r.savingsLabel = `Save ${savedMi.toFixed(1)} mi`;
-        } else if (r.routeType === 'scenic') {
-            r.routeLabel = 'Inland Route 🌲';
-            r.savingsLabel = 'Bypasses coastal traffic';
-        } else {
-            r.routeType = 'eco';
-            r.routeLabel = 'Eco Fuel Saver 🌿';
-            r.savingsLabel = 'Est. 15% less gas';
+    // The freeway badge reflects an active user preference. Remove it on the
+    // next response when the chip is disabled so route cards never advertise a
+    // filter that is no longer applied.
+    if (!options?.avoidHighways) {
+        parsedRoutes.forEach(route => {
+            route.badges = (route.badges || []).filter(badge => badge !== 'Avoids Freeways');
+        });
+    } else {
+        // OSRM alternatives can include local-road corridors. When the caller
+        // requests freeway avoidance, prefer only those verified freeway-free
+        // choices instead of merely changing their presentation.
+        const freewayFreeRoutes = parsedRoutes.filter(route => !routeUsesFreeways(route));
+        if (freewayFreeRoutes.length > 0) {
+            parsedRoutes.splice(0, parsedRoutes.length, ...freewayFreeRoutes);
+            parsedRoutes.forEach(route => {
+                route.badges = Array.from(new Set([...(route.badges || []), 'Avoids Freeways']));
+            });
         }
-    });
+    }
 
     // Sorting:
     // If avoidTolls is requested, put Toll-Free routes at top
@@ -709,11 +1001,10 @@ export async function fetchRouteOptions(
             return (a.durationMinutes || 0) - (b.durationMinutes || 0);
         });
     } else {
-        // Otherwise fastest first
+        // Otherwise fastest first, then by duration
         parsedRoutes.sort((a, b) => {
             if (a.routeType === 'fastest') return -1;
             if (b.routeType === 'fastest') return 1;
-            if (a.routeType === 'toll_free') return -1;
             return (a.durationMinutes || 0) - (b.durationMinutes || 0);
         });
     }
@@ -885,7 +1176,8 @@ async function fetchRouteFromValhalla(start: Location, endName: string, endLocat
                 endLocation: {
                     lng: endpoint[0],
                     lat: endpoint[1]
-                }
+                },
+                roadName: maneuver.street_names?.[0] || ''
             });
         }
 
@@ -1020,14 +1312,19 @@ export async function geocodePlace(query: string, nearLocation?: Location): Prom
  * to get all travel times in one round-trip. Falls back to per-stop /route queries
  * if the table endpoint is unavailable.
  * 
- * @returns Map of candidateIndex → detour seconds (negative means shortcut)
+ * @returns Map of candidateIndex → added travel time and distance (negative means shortcut)
  */
+export interface DetourDelta {
+    durationSeconds: number;
+    distanceMeters: number;
+}
+
 export async function fetchDetourDeltas(
     origin: Location,
     destination: Location,
     candidates: Location[]
-): Promise<Map<number, number>> {
-    const deltas = new Map<number, number>();
+): Promise<Map<number, DetourDelta>> {
+    const deltas = new Map<number, DetourDelta>();
     if (candidates.length === 0) return deltas;
 
     // Build coordinate string: [origin, destination, ...candidates]
@@ -1043,7 +1340,7 @@ export async function fetchDetourDeltas(
             // e.g. ".../routed-car/route/v1/driving" → ".../routed-car/table/v1/driving"
             const tableUrl = provider.replace('/route/v1/', '/table/v1/');
 
-            const url = `${tableUrl}/${coordStr}?annotations=duration`;
+            const url = `${tableUrl}/${coordStr}?annotations=duration,distance`;
             const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
 
             if (!res.ok) continue;
@@ -1054,15 +1351,22 @@ export async function fetchDetourDeltas(
             // durations[i][j] = travel time from point i to point j (seconds)
             // Index 0 = origin, 1 = destination, 2..N+1 = candidate stops
             const directTime = data.durations[0][1]; // origin → destination
+            const directDistance = data.distances?.[0]?.[1];
 
             for (let i = 0; i < candidates.length; i++) {
                 const stopIdx = i + 2; // offset by origin(0) + destination(1)
                 const toStop = data.durations[0][stopIdx];      // origin → stop
                 const fromStop = data.durations[stopIdx][1];    // stop → destination
 
+                const toStopDistance = data.distances?.[0]?.[stopIdx];
+                const fromStopDistance = data.distances?.[stopIdx]?.[1];
                 if (toStop != null && fromStop != null && directTime != null) {
-                    const detour = (toStop + fromStop) - directTime;
-                    deltas.set(i, Math.round(detour));
+                    deltas.set(i, {
+                        durationSeconds: Math.round((toStop + fromStop) - directTime),
+                        distanceMeters: toStopDistance != null && fromStopDistance != null && directDistance != null
+                            ? Math.round((toStopDistance + fromStopDistance) - directDistance)
+                            : 0,
+                    });
                 }
             }
 
@@ -1095,7 +1399,10 @@ export async function fetchDetourDeltas(
                 if (!res.ok) return;
                 const data: OSRMResponse = await res.json();
                 if (data.code === 'Ok' && data.routes?.[0]) {
-                    deltas.set(i, Math.round(data.routes[0].duration - directDuration));
+                    deltas.set(i, {
+                        durationSeconds: Math.round(data.routes[0].duration - directDuration),
+                        distanceMeters: Math.round(data.routes[0].distance - directData.routes[0].distance),
+                    });
                 }
             } catch { /* skip individual failures */ }
         });

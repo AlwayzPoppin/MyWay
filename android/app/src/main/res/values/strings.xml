@@ -4,5 +4,5 @@
     <string name="title_activity_main">My Way</string>
     <string name="package_name">com.mywaygps.app</string>
     <string name="custom_url_scheme">com.mywaygps.app</string>
-    <string name="default_notification_channel_id">myway_safety</string>
+    <string name="default_notification_channel_id">myway_safety_v2</string>
 </resources>

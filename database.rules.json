@@ -14,8 +14,8 @@
     "safetyEvents": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
     "convoys": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
     "familyCircles": { ".read": "auth != null", "$circleId": { ".write": "auth != null" } },
-    "community_buildings": { ".read": "auth != null", "$id": { ".write": "auth != null" } },
     "public_map_reports": { ".read": "auth != null", "$id": { ".write": "auth != null" } },
+    "road_incidents": { ".read": "auth != null", "$id": { ".write": "auth != null" } },
     "place_corrections": { ".read": "auth != null", "$key": { ".write": "auth != null" } },
     "destination_access_points": { "$normalizedKey": { ".read": "auth != null", ".write": false } },
     "destination_access_point_submissions": {

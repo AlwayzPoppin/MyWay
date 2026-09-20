@@ -1,5 +1,5 @@
-﻿import React from 'react';
-import { AlertTriangle, CarFront, CheckCircle2, CircleOff, Construction, LightbulbOff, ShieldAlert, Siren, ThumbsUp, Trash2, Waves, X } from 'lucide-react';
+import React from 'react';
+import { AlertTriangle, CarFront, CheckCircle2, CircleOff, Construction, LightbulbOff, MapPin, ShieldAlert, Siren, ThumbsUp, Trash2, Waves, X } from 'lucide-react';
 import { IncidentReport } from '../types';
 import { incidentService } from '../services/incidentService';
 import { hapticTick, hapticMilestone, hapticSuccess } from '../utils/haptics';
@@ -35,16 +35,23 @@ const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
             case 'traffic': return { icon: <CarFront className="w-6 h-6" />, title: 'Traffic Jam', color: '#ef4444', badge: 'Heavy Congestion' };
             case 'road_closed': return { icon: <CircleOff className="w-6 h-6" />, title: 'Road Closed', color: '#e11d48', badge: 'Closure / Detour' };
             case 'signal_out': return { icon: <LightbulbOff className="w-6 h-6" />, title: 'Traffic Signal Out', color: '#ca8a04', badge: 'Use Caution' };
+            case 'crash': return { icon: <AlertTriangle className="w-6 h-6" />, title: 'Crash', color: '#e11d48', badge: 'Collision Ahead' };
+            case 'blocked_lane': return { icon: <Construction className="w-6 h-6" />, title: 'Blocked Lane', color: '#ea580c', badge: 'Lane Obstruction' };
+            case 'bad_weather': return { icon: <Waves className="w-6 h-6" />, title: 'Bad Weather', color: '#0284c7', badge: 'Road Conditions' };
+            case 'animal': return { icon: <AlertTriangle className="w-6 h-6" />, title: 'Animal Near Road', color: '#059669', badge: 'Use Caution' };
             case 'safety_alert':
             case 'alert': return { icon: <Waves className="w-6 h-6" />, title: 'Flooded Road', color: '#0ea5e9', badge: 'Water across road' };
-            case 'speed_bump': return { icon: <ShieldAlert className="w-6 h-6" />, title: 'Speed Bump', color: '#64748b', badge: 'Road Feature' };
+            case 'stop_sign': return { icon: <ShieldAlert />, title: 'Stop Sign', color: '#dc2626', badge: 'Road Feature' }; case 'speed_bump': return { icon: <ShieldAlert className="w-6 h-6" />, title: 'Speed Bump', color: '#64748b', badge: 'Road Feature' };
+            case 'missing_vehicle_access': return { icon: <MapPin className="w-6 h-6" />, title: 'Missing Vehicle Access', color: '#7c3aed', badge: 'Map Correction' };
+            case 'wrong_traffic_direction': return { icon: <CarFront className="w-6 h-6" />, title: 'Wrong Traffic Direction', color: '#0891b2', badge: 'Map Correction' };
+            case 'restricted_access': return { icon: <ShieldAlert className="w-6 h-6" />, title: 'Restricted Access', color: '#475569', badge: 'Map Correction' };
             default: return { icon: <Waves className="w-6 h-6" />, title: 'Flooded Road', color: '#0ea5e9', badge: 'Water across road' };
         }
     };
 
     const meta = getIncidentMeta(incident.type);
     const isReporter = !incident.reporterId || incident.reporterId === currentUserId || incident.reporterId === 'anonymous' || incident.reporterName === 'You';
-    const isRoadFeature = incident.isPermanent === true || incident.type === 'speed_bump';
+    const isRoadFeature = incident.isPermanent === true || incident.type === 'speed_bump' || incident.type === 'stop_sign';
     const confirmationCount = incident.upvotes || 1;
     const verificationLabel = incident.verified
         ? 'Verified by the community'

@@ -10,11 +10,12 @@ import {
     query,
     orderBy,
     limit,
-    onSnapshot
+    onSnapshot,
+    deleteDoc
 } from 'firebase/firestore';
 import { Place, Location, EntranceType } from '../types';
 
-export type ContributionType = 'trip_review' | 'pin_correction' | 'place_category';
+export type ContributionType = 'trip_review' | 'pin_correction' | 'place_category' | 'building_photo';
 
 export interface TripContributionPayload {
     id?: string;
@@ -35,6 +36,7 @@ export interface TripContributionPayload {
     userAvatar?: string;
     entranceType?: EntranceType | string;
     imageUrl?: string;
+    reviewStatus?: 'pending' | 'approved' | 'rejected';
 }
 
 export interface CommunityPinRecord {
@@ -189,6 +191,7 @@ class ContributionService {
                 userAvatar: payload.userAvatar || null,
                 entranceType: payload.entranceType || null,
                 imageUrl: payload.imageUrl || null,
+                reviewStatus: payload.reviewStatus || null,
                 ...(payload.correctedCoordinates ? {
                     correctedCoordinates: payload.correctedCoordinates,
                     correctedLocation: payload.correctedLocation || {
@@ -319,16 +322,37 @@ class ContributionService {
                         id: docSnap.id
                     });
                 });
-                if (items.length > 0) {
-                    this.saveLocalCache(uid, items);
-                    callback(items);
-                }
+
+                // Do not let an older remote snapshot erase records that this
+                // device already retained while offline or while a write was
+                // awaiting Firestore. This was especially visible on mobile:
+                // the panel would jump back to the previous server list.
+                const latestCached = this.loadLocalCache(uid);
+                const knownIds = new Set(items.map(item => item.id));
+                latestCached.forEach(item => {
+                    if (item.id && !knownIds.has(item.id)) items.push(item);
+                });
+                items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                this.saveLocalCache(uid, items);
+                callback(items);
             }, (error) => {
                 console.warn('[ContributionService] Snapshot subscription error:', error);
             });
         } catch (err) {
             console.warn('[ContributionService] Subscribe error, using static local:', err);
             return () => {};
+        }
+    }
+
+    /** Remove a contributor-owned history record after its building photo is withdrawn. */
+    public async deleteUserContribution(userId: string | undefined, contributionId: string): Promise<void> {
+        const uid = userId || 'anonymous_user';
+        const remaining = this.loadLocalCache(uid).filter(item => item.id !== contributionId);
+        this.saveLocalCache(uid, remaining);
+        try {
+            await deleteDoc(doc(db, 'users', uid, 'contributions', contributionId));
+        } catch (error) {
+            console.warn('[ContributionService] Contribution history delete could not reach Firestore:', error);
         }
     }
 

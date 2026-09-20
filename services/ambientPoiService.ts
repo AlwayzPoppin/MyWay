@@ -1,9 +1,11 @@
-// Ambient POI Service - High-Accuracy Survey-Grade Coordinates for Gas & Emergency Services
+// Ambient POI Service - High-Accuracy Survey-Grade Coordinates for Useful Roadside Landmarks
 import { Place, Location } from '../types';
 import { getDistanceMeters } from '../utils/geo';
 import { placeCorrectionService } from './placeCorrectionService';
+import { functions } from './firebase';
+import { httpsCallable } from 'firebase/functions';
 
-const STORAGE_PREFIX = 'myway_ambient_pois_v7_';
+const STORAGE_PREFIX = 'myway_ambient_pois_v8_';
 const OVERPASS_MIRRORS = [
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
     'https://overpass-api.de/api/interpreter',
@@ -79,7 +81,9 @@ class AmbientPoiService {
     }
 
     /**
-     * Fetch accurate emergency services and gas stations for the given location or bounds.
+     * Fetch accurate emergency services, fuel, and school landmarks for the
+     * given location or bounds. Schools are landmarks only; school-zone speed
+     * alerts require separate verified road-zone and schedule data.
      */
     public async updateAmbientPois(
         location?: Location | null,
@@ -117,7 +121,7 @@ class AmbientPoiService {
                 try {
                     const parsed: Place[] = JSON.parse(cachedRaw);
                     if (Array.isArray(parsed) && parsed.length > 0) {
-                        const filtered = parsed.filter(p => ['gas', 'fire_station', 'hospital', 'police'].includes(p.type));
+                        const filtered = parsed.filter(p => ['gas', 'fire_station', 'hospital', 'police', 'school'].includes(p.type));
                         this.currentPois = filtered;
                         this.lastFetchCenter = targetLoc;
                         this.notify();
@@ -133,16 +137,16 @@ class AmbientPoiService {
                 fetchedPois = await this.fetchFromNominatim(targetLoc, bounds);
             }
 
-            if (fetchedPois.length > 0) {
-                // Live Overpass / OSM bounding box results are authoritative
-                this.currentPois = fetchedPois;
-                this.lastFetchCenter = targetLoc;
-                try {
-                    localStorage.setItem(cacheKey, JSON.stringify(fetchedPois));
-                    localStorage.setItem('myway_ambient_pois_latest', JSON.stringify(fetchedPois));
-                } catch (e) {}
-                this.notify();
-            }
+            // A viewport result is authoritative, including an empty one. The
+            // old behavior retained POIs from the previous viewport whenever
+            // this area had none, which made a Fire Station appear hardcoded.
+            this.currentPois = fetchedPois;
+            this.lastFetchCenter = targetLoc;
+            try {
+                localStorage.setItem(cacheKey, JSON.stringify(fetchedPois));
+                localStorage.setItem('myway_ambient_pois_latest', JSON.stringify(fetchedPois));
+            } catch (e) {}
+            this.notify();
         } catch (err) {
             console.warn('[AmbientPoiService] Live query failed, retaining cached POIs:', err);
         } finally {
@@ -162,6 +166,22 @@ class AmbientPoiService {
         const n = bounds ? bounds.north + 0.005 : center.lat + 0.05;
         const e = bounds ? bounds.east + 0.005 : center.lng + 0.06;
 
+        // Prefer the authenticated server proxy. This avoids browser CORS and
+        // inconsistent public-endpoint throttling that otherwise makes the
+        // emergency layer disappear outside the initially loaded neighborhood.
+        if (bounds) {
+            try {
+                const getEmergencyPois = httpsCallable<
+                    { bounds: { north: number; south: number; east: number; west: number } },
+                    { pois: Place[] }
+                >(functions, 'getAmbientEmergencyPois');
+                const response = await getEmergencyPois({ bounds });
+                if (Array.isArray(response.data.pois)) return response.data.pois;
+            } catch (error) {
+                console.warn('[AmbientPoiService] Server emergency lookup unavailable; using direct fallback.', error);
+            }
+        }
+
         const overpassQL = `
 [out:json][timeout:8];
 (
@@ -170,6 +190,8 @@ class AmbientPoiService {
   nw["amenity"="hospital"](${s},${w},${n},${e});
   nw["emergency"="ambulance_station"](${s},${w},${n},${e});
   nw["amenity"="police"](${s},${w},${n},${e});
+  nw["amenity"="school"](${s},${w},${n},${e});
+  nw["amenity"="kindergarten"](${s},${w},${n},${e});
 );
 out center 120;
 `;
@@ -233,6 +255,11 @@ out center 120;
                         icon = '🚓';
                         brandColor = '#2563eb';
                         defaultName = 'Police Dept';
+                    } else if (amenity === 'school' || amenity === 'kindergarten') {
+                        placeType = 'school';
+                        icon = '🏫';
+                        brandColor = '#f59e0b';
+                        defaultName = amenity === 'kindergarten' ? 'Early Learning Center' : 'School';
                     } else {
                         return null;
                     }
@@ -254,7 +281,7 @@ out center 120;
                         type: placeType,
                         icon,
                         brandColor,
-                        description: street ? `${street}, ${tags['addr:city'] || ''}` : `${name} (Emergency / Fuel)`,
+                        description: street ? `${street}, ${tags['addr:city'] || ''}` : `${name} (${placeType === 'school' ? 'School' : 'Emergency / Fuel'})`,
                         isAmbient: true
                     };
                 }).filter((p: Place | null): p is Place => p !== null && p.location.lat !== 0 && p.location.lng !== 0);
@@ -280,7 +307,8 @@ out center 120;
             { q: 'gas station', type: 'gas' as const, icon: '⛽', color: '#ea580c' },
             { q: 'fire station', type: 'fire_station' as const, icon: '🚒', color: '#ef4444' },
             { q: 'hospital', type: 'hospital' as const, icon: '🏥', color: '#e11d48' },
-            { q: 'police', type: 'police' as const, icon: '🚓', color: '#2563eb' }
+            { q: 'police', type: 'police' as const, icon: '🚓', color: '#2563eb' },
+            { q: 'school', type: 'school' as const, icon: '🏫', color: '#f59e0b' }
         ];
 
         const results: Place[] = [];
@@ -314,7 +342,7 @@ out center 120;
                             type: cat.type,
                             icon: cat.icon,
                             brandColor: cat.color,
-                            description: d.display_name || `${name} (Emergency / Fuel)`,
+                            description: d.display_name || `${name} (${cat.type === 'school' ? 'School' : 'Emergency / Fuel'})`,
                             isAmbient: true
                         });
                     });

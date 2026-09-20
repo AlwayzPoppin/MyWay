@@ -69,6 +69,8 @@ export const db = firestoreDb;
 export const functions = getFunctions(app);
 // Storage
 export const storage = getStorage(app);
+storage.maxUploadRetryTime = 12000;
+storage.maxOperationRetryTime = 12000;
 
 // Connect to emulator in development
 if (env.DEV && env.VITE_USE_FUNCTIONS_EMULATOR === 'true') {

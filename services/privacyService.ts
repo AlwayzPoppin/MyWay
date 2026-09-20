@@ -4,11 +4,10 @@
  * Levels:
  * 1. 'exact': Full Live GPS (Precise Coordinates, Speed, Heading)
  * 2. 'blurred': Neighborhood Bubble (~1.5 mi radius quantization, hides exact house/street)
- * 3. 'status_only': Milestone Status ("At Home", "At Work", "Driving • 45 MPH" with zero coordinates)
- * 4. 'frozen': Ghost / Paused (Freezes coordinate updates)
+ * 3. 'invisible': No live location is shared with the circle.
  */
 
-export type CirclePrivacyMode = 'exact' | 'blurred' | 'status_only' | 'frozen';
+export type CirclePrivacyMode = 'exact' | 'blurred' | 'invisible';
 
 export interface PrivacyLevelMetadata {
     id: CirclePrivacyMode;
@@ -43,22 +42,12 @@ export const PRIVACY_LEVELS: PrivacyLevelMetadata[] = [
         accentHex: '#6366F1'
     },
     {
-        id: 'status_only',
-        title: 'Status Only (Milestones)',
-        badge: '📋 Milestones Only',
-        icon: '🏷️',
-        tagline: 'No Live Map Coordinates',
-        description: 'Hides map coordinates completely. Only broadcasts milestone check-ins like "At Home", "At Work", or "Driving". Best for community groups.',
-        color: 'amber',
-        accentHex: '#F59E0B'
-    },
-    {
-        id: 'frozen',
-        title: 'Ghost / Paused',
-        badge: '👻 Ghost Mode',
-        icon: '👻',
-        tagline: 'Location Updates Paused',
-        description: 'Completely pauses location transmission to this circle. Members see your status as "Location Paused".',
+        id: 'invisible',
+        title: 'Invisible',
+        badge: '👁️ Invisible',
+        icon: '👁️',
+        tagline: 'No Location Shared',
+        description: 'Stops sharing your live location with this circle until you choose Exact or Blurred again.',
         color: 'purple',
         accentHex: '#8B5CF6'
     }
@@ -70,12 +59,16 @@ export const getCirclePrivacyMode = (circleId: string): CirclePrivacyMode => {
     // Check specific circle setting
     const circleSetting = localStorage.getItem(`myway_privacy_circle_${circleId}`);
     if (circleSetting) {
-        if (circleSetting === 'exact' || circleSetting === 'blurred' || circleSetting === 'status_only' || circleSetting === 'frozen') {
-            return circleSetting as CirclePrivacyMode;
+        if (circleSetting === 'exact' || circleSetting === 'blurred' || circleSetting === 'invisible') {
+            return circleSetting;
+        }
+        if (circleSetting === 'status_only' || circleSetting === 'frozen') {
+            return 'invisible';
         }
         try {
             const parsed = JSON.parse(circleSetting);
-            if (parsed.mode) return parsed.mode;
+            if (parsed.mode === 'exact' || parsed.mode === 'blurred' || parsed.mode === 'invisible') return parsed.mode;
+            if (parsed.mode === 'status_only' || parsed.mode === 'frozen') return 'invisible';
         } catch {
             // ignore
         }
@@ -83,8 +76,11 @@ export const getCirclePrivacyMode = (circleId: string): CirclePrivacyMode => {
 
     // Fallback to legacy global setting if present
     const globalMode = localStorage.getItem('myway_privacy_mode');
-    if (globalMode === 'blurred' || globalMode === 'status_only' || globalMode === 'frozen') {
-        return globalMode as CirclePrivacyMode;
+    if (globalMode === 'blurred' || globalMode === 'invisible') {
+        return globalMode;
+    }
+    if (globalMode === 'status_only' || globalMode === 'frozen') {
+        return 'invisible';
     }
 
     return 'exact';
@@ -93,6 +89,7 @@ export const getCirclePrivacyMode = (circleId: string): CirclePrivacyMode => {
 export const setCirclePrivacyMode = (circleId: string, mode: CirclePrivacyMode): void => {
     if (typeof window === 'undefined' || !circleId) return;
     localStorage.setItem(`myway_privacy_circle_${circleId}`, mode);
+    window.dispatchEvent(new CustomEvent('myway-privacy-mode-changed', { detail: { circleId, mode } }));
 };
 
 export const getAllCirclePrivacyModes = (circleIds: string[]): Record<string, CirclePrivacyMode> => {

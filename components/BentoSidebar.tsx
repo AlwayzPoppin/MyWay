@@ -8,8 +8,8 @@ import { getDistanceMeters, getDistanceMiles } from '../utils/geo';
 import { convoyService } from '../services/convoyService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { FamilyCircle, getCircleColor } from '../services/authService';
-import { MemberStatusText } from '../utils/memberStatus';
-import { MemberAvatarWithRing, AddMemberButton } from './MemberCard';
+import { getMemberViewerLabel, MemberStatusText } from '../utils/memberStatus';
+import { MemberAvatarWithRing, AddMemberButton, CircleMembershipBadge } from './MemberCard';
 import { isOlderCircleSyncProtocol } from '../services/appVersionService';
 import {
     Settings,
@@ -71,15 +71,17 @@ interface BentoSidebarProps {
     onCreateCircle: (name: string) => Promise<any>;
     onJoinCircle: (code: string) => Promise<any>;
     showNotification?: (msg: string, duration?: number) => void;
+    pendingOperationsReviewCount?: number | null;
     onOpenSettings?: () => void;
     onOpenTripHistory?: () => void;
     onOpenNotifications?: () => void;
     onOpenWeeklyReport?: () => void;
     onOpenInviteShare?: () => void;
-    onOpenMessages?: (recipientId?: string) => void;
-    unreadMessagesCount?: number;
+    onOpenContacts?: (recipientId?: string) => void;
     onSOS?: () => void;
     activities?: any[];
+    unreadActivityCount?: number;
+    onLogViewed?: () => void;
     onResolveSOS?: (id: string, memberId?: string) => void;
     userPlaces?: Place[];
     parkedVehicle?: ParkedVehiclePlace | null;
@@ -110,15 +112,17 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
     onCreateCircle,
     onJoinCircle,
     showNotification,
+    pendingOperationsReviewCount,
     onOpenSettings,
     onOpenTripHistory,
     onOpenNotifications,
     onOpenWeeklyReport,
     onOpenInviteShare,
-    onOpenMessages,
-    unreadMessagesCount,
+    onOpenContacts,
     onSOS,
     activities = [],
+    unreadActivityCount = 0,
+    onLogViewed,
     onResolveSOS = () => {},
     userPlaces = [],
     parkedVehicle,
@@ -225,11 +229,12 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                 {onOpenSettings && (
                     <button
                         onClick={onOpenSettings}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-110 active:scale-90
+                        className={`relative w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-110 active:scale-90
                             ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
-                        title="Settings"
+                        title={pendingOperationsReviewCount && pendingOperationsReviewCount > 0 ? `Settings — ${pendingOperationsReviewCount} reviews awaiting moderation` : 'Settings'}
                     >
                         <Settings className="w-4 h-4 text-slate-400" />
+                        {pendingOperationsReviewCount && pendingOperationsReviewCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-violet-600 text-white text-[9px] font-black grid place-items-center ring-2 ring-white" aria-label={`${pendingOperationsReviewCount} reviews awaiting moderation`}>{pendingOperationsReviewCount > 99 ? '99+' : pendingOperationsReviewCount}</span>}
                     </button>
                 )}
                 {/* Collapse Toggle */}
@@ -243,7 +248,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                 </button>
             </div>
 
-            <div className={`mt-14 space-y-4 px-3 transition-opacity duration-300 ${isCollapsed ? 'opacity-100' : 'opacity-100'}`}>
+            <div className={`mt-14 space-y-4 px-3 flex-1 flex flex-col min-h-[calc(100%-3.5rem)] transition-opacity duration-300 ${isCollapsed ? 'opacity-100' : 'opacity-100'}`}>
                 {/* Header Section */}
                 {!isCollapsed && (
                     <div className="flex flex-col gap-3">
@@ -299,17 +304,25 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                             : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                                     }`}
                                 >
-                                    Places ({userPlaces.length})
+                                    {`Places (${userPlaces.length})`}
                                 </button>
                                 <button
-                                    onClick={() => setSidebarTab('log')}
+                                    onClick={() => {
+                                        setSidebarTab('log');
+                                        onLogViewed?.();
+                                    }}
                                     className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
                                         sidebarTab === 'log' 
                                             ? 'bg-indigo-600 text-white shadow-md' 
                                             : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                                     }`}
                                 >
-                                    Log
+                                    <span>Log</span>
+                                    {unreadActivityCount > 0 && (
+                                        <span className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-violet-500 px-1.5 py-0.5 text-[8px] leading-none text-white">
+                                            {unreadActivityCount > 99 ? '99+' : unreadActivityCount}
+                                        </span>
+                                    )}
                                 </button>
                             </div>
                         )}
@@ -323,7 +336,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                         onJoinCircle={onJoinCircle}
                     />
                 ) : (
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-4 flex-1">
                         {sidebarTab === 'members' ? (
                             <>
                                 {/* Summary Card - Hidden when collapsed */}
@@ -343,7 +356,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 <span>{circleName || 'Family Circle'}</span>
                                                 {onOpenCircleSettings && <span className="text-[8px]">▾</span>}
                                             </div>
-                                            <h3 className={`text-sm font-black truncate ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                                            <h3 className={`text-sm font-black truncate mt-0.5 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                                                 {members.filter(m => {
                                                     if (m.status === 'Offline' || m.locationStale) return false;
                                                     const lastFixMs = Date.parse(m.lastUpdated || '');
@@ -439,9 +452,18 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                         const groupId = group.circle?.id;
                                         const isGroupCollapsed = Boolean(groupId && collapsedCircleIds[groupId]);
                                         const groupColor = group.circle?.color || (groupId ? getCircleColor(groupId).hex : '#64748b');
-                                        const memberCircleHex = member.circleColor || '#6366f1';
+                                        // The group is the source of truth for visual identity. Member metadata can be
+                                        // older than the current circle color after a circle customization.
+                                        const memberCircleHex = group.circle?.color || (groupId ? getCircleColor(groupId).hex : undefined) || member.circleColor || '#6366f1';
                                         const isUnresolved = !member.companionDeviceLabel && (!member.location || (member.location.lat === 0 && member.location.lng === 0));
                                         const needsSyncUpdate = isOlderCircleSyncProtocol(member.syncProtocolVersion);
+                                        const isSelf = Boolean(
+                                            (currentUserId && member.id === currentUserId) ||
+                                            member.id === 'demo-you' ||
+                                            (member as any).isSelf
+                                        );
+                                        const viewerLabel = getMemberViewerLabel(member);
+                                        const isDesktopViewer = viewerLabel === 'Desktop';
                                         if (isGroupCollapsed) {
                                             return isFirstInGroup ? (
                                                 <button
@@ -518,6 +540,10 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         ? 'glass-card'
                                                         : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
                                                 }`}
+                                            style={!isCollapsed ? {
+                                                borderColor: selectedId === member.id ? memberCircleHex : `${memberCircleHex}55`,
+                                                boxShadow: `inset 4px 0 0 ${memberCircleHex}`
+                                            } : undefined}
                                             title={isCollapsed 
                                                 ? (isUnresolved
                                                     ? `${member.name} • Locating…`
@@ -527,7 +553,9 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 : undefined}
                                         >
                                             <div 
-                                                className="cursor-pointer shrink-0 transition-transform group-hover:scale-105 active:scale-95"
+                                                className={`cursor-pointer shrink-0 transition-transform group-hover:scale-105 active:scale-95 flex items-center justify-center relative ${
+                                                    isCollapsed ? 'w-10' : 'w-12'
+                                                }`}
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     onSelect(member.id);
@@ -539,21 +567,25 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                     theme={theme}
                                                     isSelected={selectedId === member.id}
                                                     isUnresolved={isUnresolved}
-                                                    circleColor={memberCircleHex}
                                                     renderStatusBadge={true}
                                                 />
                                             </div>
 
                                             {!isCollapsed && (
                                                 <div className="flex-1 text-left min-w-0 animate-in fade-in slide-in-from-left-2">
-                                                    <div className="flex items-center justify-between gap-1">
-                                                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                                    <div className="flex items-center justify-between gap-1.5">
+                                                        <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap">
                                                             {(() => {
-                                                                const isSelf = Boolean(
-                                                                    (currentUserId && member.id === currentUserId) ||
-                                                                    member.id === 'demo-you' ||
-                                                                    (member as any).isSelf
-                                                                );
+                                                                const circleBadgesList = (member.circleBadges && member.circleBadges.length > 0)
+                                                                    ? member.circleBadges
+                                                                    : (member.circleName || group.circle?.name || (hasCircle && circleName))
+                                                                        ? [{
+                                                                            id: member.circleId || group.circle?.id || 'primary',
+                                                                            name: member.circleName || group.circle?.name || (circleName ? (circleName.toUpperCase().includes('FAMILY') ? 'FAM' : circleName.slice(0, 8)) : 'FAM'),
+                                                                            color: memberCircleHex
+                                                                        }]
+                                                                        : [];
+
                                                                 return (
                                                                     <>
                                                                         <h3
@@ -561,7 +593,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                                 e.stopPropagation();
                                                                                 onSelect(member.id);
                                                                             }}
-                                                                            className={`font-black text-sm tracking-tight truncate cursor-pointer hover:underline ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}
+                                                                            className={`font-black text-sm tracking-tight truncate max-w-[110px] shrink-0 cursor-pointer hover:underline ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}
                                                                         >
                                                                             {member.name}
                                                                         </h3>
@@ -572,45 +604,33 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                                 You
                                                                             </span>
                                                                         )}
+                                                                        {circleBadgesList.map(b => (
+                                                                            <CircleMembershipBadge key={b.id} name={b.name} color={b.color || memberCircleHex} />
+                                                                        ))}
+                                                                        {viewerLabel && (
+                                                                            <span className={`text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border shrink-0 flex items-center gap-1 ${
+                                                                                theme === 'dark' ? 'bg-sky-500/20 border-sky-400/35 text-sky-300' : 'bg-sky-50 border-sky-200 text-sky-600'
+                                                                            }`}>
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                                                                                <span>{viewerLabel}</span>
+                                                                            </span>
+                                                                        )}
                                                                     </>
                                                                 );
                                                             })()}
-                                                            {isUnresolved ? (
-                                                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
-                                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                                            {isUnresolved && (
+                                                                <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 ${
+                                                                    theme === 'dark'
+                                                                        ? 'bg-amber-500/25 border-amber-400/50 text-amber-300 font-extrabold shadow-sm'
+                                                                        : 'bg-amber-100 border-amber-400 text-amber-900 font-extrabold shadow-sm'
+                                                                }`}>
+                                                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${theme === 'dark' ? 'bg-amber-300' : 'bg-amber-700'} animate-pulse`} />
                                                                     <span>Locating…</span>
                                                                 </span>
-                                                            ) : member.circleBadges && member.circleBadges.length > 0 ? (
-                                                                member.circleBadges.map(b => (
-                                                                    <span
-                                                                        key={b.id}
-                                                                        style={{
-                                                                            backgroundColor: `${b.color}22`,
-                                                                            borderColor: `${b.color}44`,
-                                                                            color: b.color
-                                                                        }}
-                                                                        className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
-                                                                    >
-                                                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: b.color }} />
-                                                                        <span className="truncate max-w-[70px]">{b.name}</span>
-                                                                    </span>
-                                                                ))
-                                                            ) : member.circleName ? (
-                                                                <span
-                                                                    style={{
-                                                                        backgroundColor: `${memberCircleHex}22`,
-                                                                        borderColor: `${memberCircleHex}44`,
-                                                                        color: memberCircleHex
-                                                                    }}
-                                                                    className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
-                                                                >
-                                                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: memberCircleHex }} />
-                                                                    <span className="truncate max-w-[70px]">{member.circleName}</span>
-                                                                </span>
-                                                            ) : null}
+                                                            )}
                                                         </div>
                                                         <div className="flex items-center gap-1 shrink-0">
-                                                            {onOpenMessages && !(
+                                                            {onOpenContacts && !(
                                                                 (currentUserId && member.id === currentUserId) ||
                                                                 member.id === 'demo-you' ||
                                                                 (member as any).isSelf
@@ -619,13 +639,16 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                     type="button"
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
-                                                                        onOpenMessages(member.id);
+                                                                        onOpenContacts(member.id);
                                                                     }}
-                                                                    className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all hover:scale-110 active:scale-95 shrink-0
-                                                                        ${theme === 'dark' ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/30' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100 shadow-sm'}`}
-                                                                    title={`Direct message with ${member.name}`}
+                                                                    className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-105 active:scale-95 shrink-0 cursor-pointer ${
+                                                                        theme === 'dark'
+                                                                            ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/25 hover:border-indigo-400/50'
+                                                                            : 'bg-indigo-50 border-indigo-200/80 text-indigo-600 hover:bg-indigo-100 hover:border-indigo-300 shadow-xs'
+                                                                    }`}
+                                                                    title={`Text or call ${member.name}`}
                                                                 >
-                                                                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                                                                    <MessageSquare className="w-4 h-4 shrink-0" />
                                                                 </button>
                                                             )}
                                                         </div>
@@ -673,7 +696,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                    ) : member.companionDeviceLabel ? (
+                                                    ) : (member.companionDeviceLabel && !member.companionDeviceLabel.toLowerCase().includes('desktop')) ? (
                                                         <div className="flex items-center gap-1.5 mt-0.5">
                                                             <div className="text-[10px] font-medium text-sky-400/90 flex items-center gap-1.5 truncate">
                                                                 <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block shrink-0" />
@@ -682,8 +705,8 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         </div>
                                                     ) : isUnresolved ? (
                                                         <div className="flex items-center gap-1.5 mt-0.5">
-                                                            <div className="text-[10px] font-medium text-amber-400/90 flex items-center gap-1.5 truncate">
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block shrink-0" />
+                                                            <div className={`text-[10px] font-semibold flex items-center gap-1.5 truncate ${theme === 'dark' ? 'text-amber-300/90' : 'text-amber-800'}`}>
+                                                                <span className={`w-1.5 h-1.5 rounded-full animate-ping inline-block shrink-0 ${theme === 'dark' ? 'bg-amber-400' : 'bg-amber-600'}`} />
                                                                 <span className="truncate">Waiting for device signal…</span>
                                                             </div>
                                                         </div>
@@ -691,24 +714,26 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
                                                             <MemberStatusText
                                                                 member={member}
+                                                                places={userPlaces}
+                                                                hasDesktopBadge={isDesktopViewer}
                                                                 className={`text-[10px] font-medium truncate ${
                                                                     theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
                                                                 }`}
                                                             />
                                                             {member.privacyMode === 'blurred' && (
-                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-purple-500/20 text-purple-300 flex items-center gap-1">
+                                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex items-center gap-1 ${theme === 'dark' ? 'bg-purple-500/20 text-purple-200 border-purple-400/30' : 'bg-purple-100 text-purple-800 border-purple-300'}`}>
                                                                     <EyeOff className="w-2.5 h-2.5 shrink-0" />
                                                                     <span>~1.5 mi</span>
                                                                 </span>
                                                             )}
                                                             {member.privacyMode === 'status_only' && (
-                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 flex items-center gap-1">
+                                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex items-center gap-1 ${theme === 'dark' ? 'bg-amber-500/20 text-amber-200 border-amber-400/30' : 'bg-amber-100 text-amber-900 border-amber-300'}`}>
                                                                     <GraduationCap className="w-2.5 h-2.5 shrink-0" />
                                                                     <span>Milestones</span>
                                                                 </span>
                                                             )}
                                                             {member.privacyMode === 'frozen' && (
-                                                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-sky-500/20 text-sky-300 flex items-center gap-1">
+                                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex items-center gap-1 ${theme === 'dark' ? 'bg-sky-500/20 text-sky-200 border-sky-400/30' : 'bg-sky-100 text-sky-900 border-sky-300'}`}>
                                                                     <Shield className="w-2.5 h-2.5 shrink-0" />
                                                                     <span>Frozen</span>
                                                                 </span>
@@ -740,20 +765,6 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                 {/* Divider */}
                                 {!isCollapsed && <div className={`h-px mx-4 ${theme === 'dark' ? 'bg-white/5' : 'bg-slate-200/50'}`} />}
 
-                                {/* Stats Row - Compact or Hidden when collapsed */}
-                                {!isCollapsed && (
-                                    <div className={`p-3 rounded-2xl border flex items-center justify-center animate-in fade-in slide-in-from-bottom-2
-                                      ${theme === 'dark' ? 'bg-white/5 border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
-                                        <div className="flex items-center gap-2.5 text-emerald-500">
-                                            <Shield className="w-5 h-5 text-emerald-400 shrink-0" />
-                                            <div className="flex flex-col">
-                                                <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{members.length} {members.length === 1 ? 'Member' : 'Members'}</span>
-                                                <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">Protected</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
                                 {/* History & Access Section */}
                                 {isCollapsed ? (
                                     <div className="flex flex-col items-center gap-3 py-2 border-t border-white/5 mt-2">
@@ -777,17 +788,14 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 <Trophy className="w-5 h-5 text-amber-400" />
                                             </button>
                                         )}
-                                        {onOpenMessages && (
+                                        {onOpenContacts && (
                                             <button
-                                                onClick={() => onOpenMessages()}
+                                                onClick={() => onOpenContacts()}
                                                 className={`relative w-10 h-10 rounded-xl flex items-center justify-center border transition-all hover:scale-115 active:scale-90
                                                     ${theme === 'dark' ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'}`}
-                                                title="My Messages"
+                                                title="Circle contacts"
                                             >
                                                 <MessageSquare className="w-5 h-5 text-indigo-400" />
-                                                {typeof unreadMessagesCount === 'number' && unreadMessagesCount > 0 && (
-                                                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full ring-2 ring-slate-900" />
-                                                )}
                                             </button>
                                         )}
                                         {onOpenNotifications && (
@@ -830,56 +838,69 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                             {onOpenTripHistory && (
                                                 <button
                                                     onClick={onOpenTripHistory}
-                                                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
+                                                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95 cursor-pointer min-h-[52px]
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
+                                                    title="My Trips"
                                                 >
-                                                    <Navigation className="w-5 h-5 text-indigo-400 shrink-0" />
-                                                    <div>
-                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Trips</p>
-                                                        <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Journeys</p>
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                        theme === 'dark' ? 'bg-indigo-500/15 text-indigo-400' : 'bg-indigo-50 text-indigo-600'
+                                                    }`}>
+                                                        <Navigation className="w-4 h-4" />
                                                     </div>
+                                                    <span className={`text-xs font-bold leading-snug truncate ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                                                        My Trips
+                                                    </span>
                                                 </button>
                                             )}
                                             {onOpenWeeklyReport && (
                                                 <button
                                                     onClick={onOpenWeeklyReport}
-                                                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
+                                                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95 cursor-pointer min-h-[52px]
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
+                                                    title="Scorecard"
                                                 >
-                                                    <Trophy className="w-5 h-5 text-amber-400 shrink-0" />
-                                                    <div>
-                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>Scorecard</p>
-                                                        <span className="flex items-center gap-1 text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">
-                                                            <Trophy className="w-2.5 h-2.5 shrink-0" />
-                                                            <span>Badges</span>
-                                                        </span>
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                        theme === 'dark' ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-50 text-amber-600'
+                                                    }`}>
+                                                        <Trophy className="w-4 h-4" />
                                                     </div>
+                                                    <span className={`text-xs font-bold leading-snug truncate ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                                                        Scorecard
+                                                    </span>
                                                 </button>
                                             )}
                                             {onOpenNotifications && (
                                                 <button
                                                     onClick={onOpenNotifications}
-                                                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
+                                                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95 cursor-pointer min-h-[52px]
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
+                                                    title="My Alerts"
                                                 >
-                                                    <Bell className="w-5 h-5 text-sky-400 shrink-0" />
-                                                    <div>
-                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Alerts</p>
-                                                        <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Alerts</p>
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                        theme === 'dark' ? 'bg-sky-500/15 text-sky-400' : 'bg-sky-50 text-sky-600'
+                                                    }`}>
+                                                        <Bell className="w-4 h-4" />
                                                     </div>
+                                                    <span className={`text-xs font-bold leading-snug truncate ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                                                        My Alerts
+                                                    </span>
                                                 </button>
                                             )}
                                             {onOpenMaintenance && (
                                                 <button
                                                     onClick={onOpenMaintenance}
-                                                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95
+                                                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95 cursor-pointer min-h-[52px]
                                                         ${theme === 'dark' ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'}`}
+                                                    title="My Garage & Maintenance"
                                                 >
-                                                    <Wrench className="w-5 h-5 text-rose-400 shrink-0" />
-                                                    <div>
-                                                        <p className={`text-xs font-bold leading-none ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>My Garage & Maintenance</p>
-                                                        <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Garage & Logs</p>
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                        theme === 'dark' ? 'bg-rose-500/15 text-rose-400' : 'bg-rose-50 text-rose-600'
+                                                    }`}>
+                                                        <Wrench className="w-4 h-4" />
                                                     </div>
+                                                    <span className={`text-[11px] font-bold leading-tight line-clamp-2 ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                                                        My Garage & Maintenance
+                                                    </span>
                                                 </button>
                                             )}
                                         </div>
@@ -888,11 +909,15 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
 
                                 {/* Emergency SOS Row - Persistent Safety Action */}
                                 {onSOS && (
-                                    <div className="px-2 pb-4">
+                                    <div className={`sticky bottom-0 z-20 mt-auto pt-2 pb-3 px-1 backdrop-blur-md transition-all ${
+                                        theme === 'dark'
+                                            ? 'bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent'
+                                            : 'bg-gradient-to-t from-white via-white/95 to-transparent'
+                                    }`}>
                                         <HoldToActivate
                                             onActivate={onSOS}
                                             duration={1500}
-                                            className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl bg-red-500/10 border border-red-500/20 active:scale-95 transition-all shadow-lg active:ring-2 active:ring-red-500/50"
+                                            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl bg-red-500/10 border border-red-500/20 active:scale-95 transition-all shadow-lg active:ring-2 active:ring-red-500/50 cursor-pointer"
                                         >
                                             <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
                                             {!isCollapsed && <span className="text-xs text-red-500 font-extrabold uppercase tracking-tighter">Emergency SOS</span>}

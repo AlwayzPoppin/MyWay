@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { FamilyMember, Place, DailyInsight, NavigationRoute, CircleTask, IncidentReport, PrivacyZone, Trip, CrashImpactMetadata, ParkedVehiclePlace } from './types';
+import { FamilyMember, Place, DailyInsight, NavigationRoute, RouteWaypoint, CircleTask, IncidentReport, PrivacyZone, Trip, CrashImpactMetadata, ParkedVehiclePlace } from './types';
 import { parkingService } from './services/parkingService';
 // Sidebar removed - replaced by BentoSidebar
 import { App as CapacitorApp } from '@capacitor/app';
@@ -12,6 +12,7 @@ import NavigationOverlay from './components/NavigationOverlay';
 import SearchBox from './components/SearchBox';
 import CoPilotOverlay from './components/CoPilotOverlay';
 import DriveModeHUD from './components/DriveModeHUD';
+import MapEdgeAwareness from './components/MapEdgeAwareness';
 import IncidentReporter from './components/IncidentReporter';
 import PrivacyPanel from './components/PrivacyPanel';
 import PremiumUpsellModal from './components/PremiumUpsellModal';
@@ -20,18 +21,22 @@ import BottomSheet from './components/BottomSheet';
 import QuickStopGrid from './components/QuickStopGrid';
 import SafetyAlerts from './components/SafetyAlerts';
 import QuickActions from './components/QuickActions';
-import MessagingPanel from './components/MessagingPanel';
+import CircleContactsPanel from './components/CircleContactsPanel';
 import SettingsPanel from './components/SettingsPanel';
 import { MapSkinId } from './services/mapSkinService';
 import BentoSidebar from './components/BentoSidebar';
 import EmergencySOSModal from './components/EmergencySOSModal';
 import EditPlaceModal from './components/EditPlaceModal';
 import CorrectLocationModal from './components/CorrectLocationModal';
-import TripCompletedCard, { ArrivalPromptModal } from './components/TripCompletedCard';
+import ApproachingDestinationCard from './components/ApproachingDestinationCard';
+import MultiStopArrivalCard from './components/MultiStopArrivalCard';
+import TripReviewCard from './components/TripReviewCard';
+import TripResumePrompt from './components/TripResumePrompt';
 import CircleSettingsModal from './components/CircleSettingsModal';
 import IncidentDetailModal from './components/IncidentDetailModal';
 import { incidentService } from './services/incidentService';
 import { ambientPoiService } from './services/ambientPoiService';
+import { findSchoolZoneAdvisory, SchoolZoneAdvisory } from './services/schoolZoneService';
 import LoginScreen from './components/LoginScreen';
 import SetupWizardModal from './components/SetupWizardModal';
 import PlaceDetailPanel from './components/PlaceDetailPanel';
@@ -61,8 +66,12 @@ import {
 } from './services/geminiService';
 import { getRouteFromOSRM, geocodePlace } from './services/osrmService';
 import { isGeoIntentUrl, parseGeoIntent } from './utils/geoIntentParser';
-import { syncSavedPlaces } from './services/androidAutoService';
+import { syncMapSkinSettings, syncSavedPlaces } from './services/androidAutoService';
 import { geolocationService } from './services/geolocationService';
+import { nativeBackgroundTrackingService } from './services/nativeBackgroundTrackingService';
+import { isCurrentLocationPublisher } from './services/deviceSessionService';
+import { getCirclePrivacyMode } from './services/privacyService';
+import { getMapReviewAccess, listPendingAccessPointReviews } from './services/mapReviewService';
 import { setupAutoFlush as setupOfflineLocationAutoFlush } from './services/offlineLocationBuffer';
 import {
   updateMemberLocation,
@@ -80,9 +89,11 @@ import {
   getWrappedKeyForUser,
   triggerSOS,
   clearSOS,
-  removeMember
+  removeMember,
+  getCircleSubscriptionEntitlement,
+  CircleSubscriptionEntitlement
 } from './services/authService';
-import { createCheckoutSession, goToBillingPortal } from './services/stripeService';
+import { createCheckoutSession } from './services/stripeService';
 import { Geofence, GeofenceStatus, detectTransition, getGeofenceDisplayName } from './services/geofenceService';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from './utils/avatar';
 import { setKnownPlaces } from './services/locationService';
@@ -126,8 +137,10 @@ import BatteryOptimizationPrompt, { shouldShowBatteryPrompt } from './components
 import ErrorBoundary from './components/ErrorBoundary';
 import PermissionGuard from './components/PermissionGuard';
 import { convoyService, ConvoyInvite } from './services/convoyService';
-import { communityBuildingService } from './services/communityBuildingService';
-import { extractHouseNumber } from './utils/addressUtils';
+import { placePhotoService } from './services/placePhotoService';
+import { nativeStatusBarService } from './services/nativeStatusBarService';
+import { setCirclePrivacyMode } from './services/privacyService';
+import { clearTemporaryVisibility, getTemporaryVisibilityExpiry, startTemporaryVisibility } from './services/temporaryVisibilityService';
 
 // Lazy-loaded modal panels for optimal tree-shaking & main-thread responsiveness
 const OfflineMapManager = React.lazy(() => import('./components/OfflineMapManager'));
@@ -143,7 +156,7 @@ export type ActiveModal =
   | 'privacy'
   | 'quickstop'
   | 'upsell'
-  | 'messaging'
+  | 'contacts'
   | 'offline_maps'
   | 'trip_history'
   | 'circle_admin'
@@ -182,25 +195,19 @@ const App: React.FC = () => {
     logout
   } = useAuth();
 
-  // Instant local profile overrides (e.g. from SetupWizard address verification) before remote Firebase sync settles
+  // Instant local profile overrides from onboarding before remote Firebase sync settles.
   const [localProfileOverride, setLocalProfileOverride] = useState<any>(null);
   const activeUserProfile = useMemo(() => (profile ? { ...profile, ...(localProfileOverride || {}) } : null), [profile, localProfileOverride]);
 
-  // Auto-sync existing verified home address to community-sourced building layer on profile load
+  // Profiles created before setup completion was stored should remain usable.
+  // They are established accounts, not new sign-ups; migrate them once so a
+  // storage reset cannot send them back into the onboarding wizard.
   useEffect(() => {
-    if (!activeUserProfile?.preciseHomeLocation?.lat || !activeUserProfile?.preciseHomeLocation?.lng) return;
-    const phl = activeUserProfile.preciseHomeLocation;
-    const hn = (phl as any).houseNumber || extractHouseNumber(phl.address);
-    if (hn || phl.address) {
-      communityBuildingService.publishVerifiedBuilding({
-        address: phl.address || 'Home',
-        houseNumber: hn || undefined,
-        coordinates: { lat: phl.lat, lng: phl.lng },
-        userId: user?.uid,
-        source: 'user_profile'
-      }).catch(() => {}); // Fire-and-forget; non-critical
-    }
-  }, [activeUserProfile?.preciseHomeLocation?.lat, activeUserProfile?.preciseHomeLocation?.lng, activeUserProfile?.preciseHomeLocation?.address, user?.uid]);
+    if (!user?.uid || !profile || profile.hasCompletedSetup !== undefined) return;
+    void import('./services/authService').then(({ updateUserProfile }) =>
+      updateUserProfile(user.uid, { hasCompletedSetup: true })
+    ).catch(error => console.warn('[App] Could not migrate legacy setup state:', error));
+  }, [user?.uid, profile?.hasCompletedSetup]);
 
   const {
     theme, setTheme,
@@ -209,22 +216,71 @@ const App: React.FC = () => {
     isMobile,
     isDriveMode, setDriveMode,
     is3DMode, set3DMode,
-    isLowDataMode, setIsLowDataMode,
     notification, showNotification
   } = useUI();
 
   // Dynamically resolve activeTheme to 'light' whenever the Default map skin is active
   const activeTheme: 'light' | 'dark' = isDefaultSkin || theme === 'light' ? 'light' : 'dark';
 
+  // Keep Android's edge-to-edge status bar in the same family as the map skin.
+  // The native bridge also selects contrasting system icons for each backdrop.
+  useEffect(() => {
+    void nativeStatusBarService.applyMapSkin(effectiveSkin);
+  }, [effectiveSkin]);
+
+  // Android Auto owns a separate native map surface, so mirror the resolved
+  // phone skin rather than leaving it on the renderer's old dark default.
+  // `effectiveSkin` also resolves Auto Solar Transition before it reaches car.
+  useEffect(() => {
+    void syncMapSkinSettings({
+      skin: effectiveSkin,
+      theme: activeTheme,
+      is3DMode
+    });
+  }, [effectiveSkin, activeTheme, is3DMode]);
+
   const [activeModal, setActiveModal] = useState<ActiveModal | null>(null);
+  const [pendingOperationsReviewCount, setPendingOperationsReviewCount] = useState<number | null>(null);
   const [circleSettingsTab, setCircleSettingsTab] = useState<'circles' | 'invite' | 'manage'>('circles');
   const [activeFilterCircleId, setActiveFilterCircleId] = useState<string | 'all'>('all');
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setPendingOperationsReviewCount(null);
+      return;
+    }
+    let active = true;
+    let refreshId: number | undefined;
+    const refreshPendingReviews = async () => {
+      let shouldRefresh = true;
+      try {
+        const access = await getMapReviewAccess();
+        if (!access.isAdmin) {
+          shouldRefresh = false;
+          if (active) setPendingOperationsReviewCount(null);
+          return;
+        }
+        const submissions = await listPendingAccessPointReviews();
+        if (active) setPendingOperationsReviewCount(submissions.length);
+      } catch {
+        if (active) setPendingOperationsReviewCount(null);
+      } finally {
+        if (active && shouldRefresh) refreshId = window.setTimeout(() => void refreshPendingReviews(), 60_000);
+      }
+    };
+    void refreshPendingReviews();
+    return () => {
+      active = false;
+      if (refreshId !== undefined) window.clearTimeout(refreshId);
+    };
+  }, [user?.uid]);
 
   const [isSearching, startSearchTransition] = React.useTransition();
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   // --- CORE STATE ---
   const [isMapReady, setIsMapReady] = useState(false);
+  const [isMapRecovering, setIsMapRecovering] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [userPlaces, setUserPlaces] = useState<UserPlace[]>([]);
 
@@ -247,33 +303,10 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Auto-register verified saved user places with rooftop house numbers into persistent community building cache and locationService
+  // Keep saved places available to navigation and place features.
   useEffect(() => {
     setKnownPlaces(userPlaces || []);
-    if (userPlaces && userPlaces.length > 0) {
-      userPlaces.forEach(p => {
-        // STRICT PRECISION: Only register places verified with rooftop accuracy or user correction
-        if (!p.isRooftop && !p.isCorrected) return;
-        if (p.geocodePrecision === 'street' || p.geocodePrecision === 'intersection') return;
-        const hn = p.houseNumber || extractHouseNumber(p.address || p.description || p.name || '');
-        const lat = p.location?.lat ?? (p as any).latitude;
-        const lng = p.location?.lng ?? (p as any).longitude;
-        if (hn && typeof lat === 'number' && typeof lng === 'number') {
-          communityBuildingService.registerBuilding({
-            address: p.address || p.name || `${hn} Street`,
-            houseNumber: hn,
-            coordinates: { lat, lng },
-            userId: user?.uid,
-            source: 'place_correction',
-            isRooftop: true,
-            precision: 'rooftop'
-          });
-        }
-      });
-    }
-    // Purge any stray unverified intersection building labels
-    communityBuildingService.purgeStrayBuildings(userPlaces, activeUserProfile?.preciseHomeLocation);
-  }, [userPlaces, user?.uid, activeUserProfile?.preciseHomeLocation]);
+  }, [userPlaces]);
   const [discoveredPlaces, setDiscoveredPlaces] = useState<Place[]>([]);
   const [searchResultPlaces, setSearchResultPlaces] = useState<Place[]>([]);
   const [safetyScore, setSafetyScore] = useState(100);
@@ -288,32 +321,129 @@ const App: React.FC = () => {
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [isMemberDetailOpen, setIsMemberDetailOpen] = useState<boolean>(false);
+  const [isMemberIdentityInspectorOpen, setIsMemberIdentityInspectorOpen] = useState(false);
   const lastMemberSelectedAtRef = useRef<number>(0);
-  const [messagingRecipientId, setMessagingRecipientId] = useState<string | null>(null);
+  const [contactAction, setContactAction] = useState<'text' | 'call'>('text');
+  const [contactRecipientId, setContactRecipientId] = useState<string | null>(null);
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+  const [plannedWaypoints, setPlannedWaypoints] = useState<RouteWaypoint[]>([]);
+  const [keepStopPlannerOpen, setKeepStopPlannerOpen] = useState(false);
   const [isPlaceDetailOpen, setIsPlaceDetailOpen] = useState<boolean>(false);
+  const [photoSavedConfirmation, setPhotoSavedConfirmation] = useState<{ name: string; place: Place | null; isSynced: boolean } | null>(null);
+  useEffect(() => {
+    if (!photoSavedConfirmation) return;
+    const timer = window.setTimeout(() => setPhotoSavedConfirmation(null), 4_500);
+    return () => window.clearTimeout(timer);
+  }, [photoSavedConfirmation]);
+  useEffect(() => {
+    const retryPendingPhotos = () => {
+      void placePhotoService.retryPendingContributions().then(count => {
+        if (count > 0) showNotification(`✅ ${count} building photo${count === 1 ? '' : 's'} synced`, 3500);
+      });
+    };
+    if (navigator.onLine) retryPendingPhotos();
+    window.addEventListener('online', retryPendingPhotos);
+    return () => window.removeEventListener('online', retryPendingPhotos);
+  }, [showNotification]);
   const [parkedVehicle, setParkedVehicle] = useState<ParkedVehiclePlace | null>(() => parkingService.getParkedVehicle());
   const [searchText, setSearchText] = useState('');
   const [previewRoute, setPreviewRoute] = useState<NavigationRoute | null>(null);
   const [incomingConvoyInvite, setIncomingConvoyInvite] = useState<ConvoyInvite | null>(null);
   const [reviewedTrip, setReviewedTrip] = useState<Trip | null>(null);
   const [isBottomSheetExpanded, setIsBottomSheetExpanded] = useState(false);
-  const [userSettings, setUserSettings] = useState({
-    theme: 'dark' as 'light' | 'dark' | 'auto',
-    notifications: true,
-    locationSharing: true,
-    batteryAlerts: true,
-    arrivalAlerts: true,
-    speedAlerts: false,
-    mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
-    units: 'imperial' as 'imperial' | 'metric',
-    mapSkin: mapSkin,
-    buildingScale: ((localStorage.getItem('myway_building_scale') as any) || 'enhanced') as 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental',
-    landmarkGlow: localStorage.getItem('myway_landmark_glow') !== 'false',
-    showTrafficControls: localStorage.getItem('myway_show_traffic_controls') !== 'false',
-    avoidTolls: localStorage.getItem('myway_avoid_tolls') === 'true',
-    avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
+  // Phones remain touch devices in landscape, but the wide canvas is far
+  // better served by the sidebar than by a full-width bottom sheet.
+  const getIsLandscapeHandheld = () => typeof window !== 'undefined'
+    && isMobile
+    && window.innerWidth >= 900
+    && window.innerWidth > window.innerHeight;
+  const [isLandscapeHandheld, setIsLandscapeHandheld] = useState(getIsLandscapeHandheld);
+  useEffect(() => {
+    const syncLayout = () => setIsLandscapeHandheld(getIsLandscapeHandheld());
+    syncLayout();
+    window.addEventListener('resize', syncLayout, { passive: true });
+    window.addEventListener('orientationchange', syncLayout, { passive: true });
+    return () => {
+      window.removeEventListener('resize', syncLayout);
+      window.removeEventListener('orientationchange', syncLayout);
+    };
+  }, [isMobile]);
+  const usesMobileSheetLayout = isMobile && !isLandscapeHandheld;
+  const [userSettings, setUserSettings] = useState(() => {
+    let cachedSpeedAlerts = false;
+    try {
+      const direct = localStorage.getItem('setting_speed_alerts');
+      if (direct !== null) {
+        cachedSpeedAlerts = JSON.parse(direct) === true;
+      } else {
+        const myway = localStorage.getItem('myway_speed_alerts');
+        if (myway !== null) {
+          cachedSpeedAlerts = myway === 'true' || JSON.parse(myway) === true;
+        }
+      }
+    } catch (e) {
+      console.warn('[App] Failed to parse cached speedAlerts setting:', e);
+    }
+
+    const storedBuildingScale = localStorage.getItem('myway_building_scale');
+    const buildingScale = storedBuildingScale === 'none' || storedBuildingScale === 'flat' || storedBuildingScale === 'realistic'
+      ? storedBuildingScale
+      : 'realistic';
+    if (storedBuildingScale && storedBuildingScale !== buildingScale) {
+      localStorage.setItem('myway_building_scale', buildingScale);
+    }
+    localStorage.removeItem('myway_landmark_glow');
+
+    return {
+      theme: 'dark' as 'light' | 'dark' | 'auto',
+      notifications: true,
+      locationSharing: true,
+      batteryAlerts: true,
+      arrivalAlerts: true,
+      speedAlerts: cachedSpeedAlerts,
+      privacyMode: 'exact' as const,
+      mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
+      units: 'imperial' as 'imperial' | 'metric',
+      mapSkin: mapSkin,
+      buildingScale,
+      showTrafficControls: localStorage.getItem('myway_show_traffic_controls') !== 'false',
+      avoidTolls: localStorage.getItem('myway_avoid_tolls') === 'true',
+      avoidHighways: localStorage.getItem('myway_avoid_highways') === 'true'
+    };
   });
+
+  // Synchronize and hydrate userSettings when remote profile finishes loading
+  useEffect(() => {
+    if (!profile?.settings) return;
+    setUserSettings(prev => {
+      const profileSpeedAlerts = (profile.settings as any).speedAlerts;
+      const effectiveSpeedAlerts = typeof profileSpeedAlerts === 'boolean'
+        ? profileSpeedAlerts
+        : prev.speedAlerts;
+
+      if (typeof profileSpeedAlerts === 'boolean') {
+        try {
+          localStorage.setItem('setting_speed_alerts', JSON.stringify(profileSpeedAlerts));
+          localStorage.setItem('myway_speed_alerts', JSON.stringify(profileSpeedAlerts));
+        } catch {}
+      }
+
+      return {
+        ...prev,
+        theme: profile.settings.theme || prev.theme,
+        notifications: profile.settings.notifications ?? prev.notifications,
+        locationSharing: profile.settings.locationSharing ?? prev.locationSharing,
+        batteryAlerts: (profile.settings as any).batteryAlerts ?? prev.batteryAlerts,
+        arrivalAlerts: (profile.settings as any).arrivalAlerts ?? prev.arrivalAlerts,
+        speedAlerts: effectiveSpeedAlerts,
+        privacyMode: (profile.settings as any).privacyMode === 'blurred'
+          ? 'blurred'
+          : ((profile.settings as any).privacyMode === 'invisible' || profile.settings.locationSharing === false)
+            ? 'invisible'
+            : 'exact'
+      };
+    });
+  }, [profile?.settings]);
 
   // Dynamic Parking Service Subscription & Alert Handlers
   useEffect(() => {
@@ -345,18 +475,65 @@ const App: React.FC = () => {
   const [editingPlace, setEditingPlace] = useState<Place | null>(null);
   const [correctingPlace, setCorrectingPlace] = useState<Place | null>(null);
 
+  // The floating destination bar can sit above the bottom sheet. Use the
+  // highest active bottom overlay as the map-controls boundary on phones.
+  useEffect(() => {
+    if (!isMobile || isDriveMode || typeof ResizeObserver === 'undefined') {
+      document.documentElement.style.removeProperty('--mobile-map-controls-bottom');
+      return;
+    }
+    const root = document.documentElement;
+    const updateControlsBoundary = () => {
+      const tops = Array.from(document.querySelectorAll<HTMLElement>('[data-map-bottom-obstruction]'))
+        .map(overlay => overlay.getBoundingClientRect())
+        .filter(rect => rect.height > 0 && rect.top < window.innerHeight)
+        .map(rect => rect.top);
+      if (!tops.length) {
+        root.style.removeProperty('--mobile-map-controls-bottom');
+        return;
+      }
+      root.style.setProperty('--mobile-map-controls-bottom', `${Math.ceil(window.innerHeight - Math.min(...tops) + 12)}px`);
+    };
+    const observer = new ResizeObserver(updateControlsBoundary);
+    document.querySelectorAll<HTMLElement>('[data-map-bottom-obstruction]').forEach(overlay => observer.observe(overlay));
+    updateControlsBoundary();
+    window.addEventListener('resize', updateControlsBoundary, { passive: true });
+    window.visualViewport?.addEventListener('resize', updateControlsBoundary, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateControlsBoundary);
+      window.visualViewport?.removeEventListener('resize', updateControlsBoundary);
+      root.style.removeProperty('--mobile-map-controls-bottom');
+    };
+  }, [isMobile, isDriveMode, isBottomSheetExpanded, activeModal, selectedPlace, isPlaceDetailOpen, correctingPlace]);
+
   // Real-time Road Incidents sync across all drivers & circle members
   useEffect(() => {
     return incidentService.subscribe(setIncidents);
   }, []);
 
-  // Ambient Map POIs (Always-visible Gas, Fire, Hospitals, Police, Supermarkets)
+  // Ambient map POIs: emergency services, fuel, and schools from the current viewport.
   const [ambientPlaces, setAmbientPlaces] = useState<Place[]>(() => ambientPoiService.getPois());
+  const [schoolZoneAdvisory, setSchoolZoneAdvisory] = useState<SchoolZoneAdvisory | null>(null);
 
   useEffect(() => {
     return ambientPoiService.subscribe(setAmbientPlaces);
   }, []);
   const [activities, setActivities] = useState<AppNotification[]>([]);
+  const ACTIVITY_LOG_LAST_VIEWED_KEY = 'myway_activity_log_last_viewed';
+  const [activityLogLastViewedAt, setActivityLogLastViewedAt] = useState(() => {
+    const stored = Number(localStorage.getItem(ACTIVITY_LOG_LAST_VIEWED_KEY));
+    return Number.isFinite(stored) && stored > 0 ? stored : Date.now();
+  });
+  const unreadActivityCount = useMemo(
+    () => activities.filter(activity => activity.timestamp > activityLogLastViewedAt).length,
+    [activities, activityLogLastViewedAt]
+  );
+  const markActivityLogViewed = useCallback(() => {
+    const viewedAt = Date.now();
+    localStorage.setItem(ACTIVITY_LOG_LAST_VIEWED_KEY, String(viewedAt));
+    setActivityLogLastViewedAt(viewedAt);
+  }, []);
   const prevMembersRef = useRef<Record<string, { sosActive: boolean; battery: number; status: string }>>({});
 
   // Free-look camera state during navigation
@@ -439,6 +616,86 @@ const App: React.FC = () => {
   );
 
   const members = liveMembers;
+  const [circleEntitlement, setCircleEntitlement] = useState<CircleSubscriptionEntitlement | null>(null);
+  useEffect(() => {
+    if (!currentCircle?.id) {
+      setCircleEntitlement(null);
+      return;
+    }
+    let active = true;
+    getCircleSubscriptionEntitlement(currentCircle.id)
+      .then(value => { if (active) setCircleEntitlement(value); })
+      .catch(error => {
+        // The settings screen remains usable if entitlement refresh is temporarily unavailable.
+        console.warn('[App] Could not refresh Circle subscription entitlement:', error);
+        if (active) setCircleEntitlement(null);
+      });
+    return () => { active = false; };
+  }, [currentCircle?.id]);
+  const hasCirclePremium = circleEntitlement?.active === true;
+  const temporaryVisibilityCircleId = activeFilterCircleId !== 'all'
+    ? activeFilterCircleId
+    : (currentCircle?.id || profile?.familyCircleId || 'default');
+  const [temporaryVisibilityExpiry, setTemporaryVisibilityExpiry] = useState<number | null>(() => getTemporaryVisibilityExpiry(temporaryVisibilityCircleId));
+  const [temporaryVisibilityRemainingMs, setTemporaryVisibilityRemainingMs] = useState(() => {
+    const expiresAt = getTemporaryVisibilityExpiry(temporaryVisibilityCircleId);
+    return expiresAt ? Math.max(0, expiresAt - Date.now()) : 0;
+  });
+  const beginOneHourVisibility = useCallback(async () => {
+    const circleId = temporaryVisibilityCircleId;
+    const expiresAt = startTemporaryVisibility(circleId);
+    setTemporaryVisibilityExpiry(expiresAt);
+    setTemporaryVisibilityRemainingMs(Math.max(0, expiresAt - Date.now()));
+    setCirclePrivacyMode(circleId, 'exact');
+    localStorage.setItem('myway_privacy_mode', 'exact');
+    setUserSettings(prev => ({ ...prev, privacyMode: 'exact', locationSharing: true }));
+    if (user?.uid) {
+      await updateUserProfile(user.uid, { settings: { ...profile?.settings, privacyMode: 'exact', locationSharing: true } } as any);
+    }
+    await forcePublishLocation?.(true);
+  }, [temporaryVisibilityCircleId, user?.uid, profile?.settings, forcePublishLocation]);
+  useEffect(() => {
+    const circleId = temporaryVisibilityCircleId;
+    const expiresAt = temporaryVisibilityExpiry || getTemporaryVisibilityExpiry(circleId);
+    if (!expiresAt) {
+      setTemporaryVisibilityRemainingMs(0);
+      return;
+    }
+    const restoreInvisible = async () => {
+      clearTemporaryVisibility(circleId);
+      setTemporaryVisibilityExpiry(null);
+      setTemporaryVisibilityRemainingMs(0);
+      setCirclePrivacyMode(circleId, 'invisible');
+      localStorage.setItem('myway_privacy_mode', 'invisible');
+      setUserSettings(prev => ({ ...prev, privacyMode: 'invisible', locationSharing: false }));
+      if (user?.uid) await updateUserProfile(user.uid, { settings: { ...profile?.settings, privacyMode: 'invisible', locationSharing: false } } as any);
+      await forcePublishLocation?.(false);
+    };
+    const updateRemaining = () => setTemporaryVisibilityRemainingMs(Math.max(0, expiresAt - Date.now()));
+    updateRemaining();
+    const countdown = window.setInterval(updateRemaining, 15_000);
+    const delay = expiresAt - Date.now();
+    if (delay <= 0) { void restoreInvisible(); return; }
+    const timer = window.setTimeout(() => { void restoreInvisible(); }, delay);
+    return () => {
+      window.clearInterval(countdown);
+      window.clearTimeout(timer);
+    };
+  }, [temporaryVisibilityCircleId, temporaryVisibilityExpiry, user?.uid, profile?.settings, forcePublishLocation]);
+
+  // Development-only diagnostic: Ctrl/Cmd + Shift + I exposes identity data
+  // without putting any debug controls in the production navigation UI.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        setIsMemberIdentityInspectorOpen(open => !open);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Keep ambient POIs updated around user's live position or current map view
   useEffect(() => {
@@ -491,6 +748,7 @@ const App: React.FC = () => {
   const { ecdhKeyPair } = useE2EE(user, profile, currentCircle, isOwner);
   const {
     activeRoute,
+    upcomingGuidance,
     alternativeRoutes,
     activeRouteIndex,
     isRecalculatingRoutes,
@@ -513,18 +771,32 @@ const App: React.FC = () => {
     handleCancelNavigation,
     handleDiscovery,
     handleQuickSearch,
-    arrivalTripData,
-    setArrivalTripData,
+    onTripCompleted,
+    pendingTripResume,
+    isResumingTrip,
+    handleResumeTrip,
+    handleDiscardTripResume,
+    approachingTripData,
+    setApproachingTripData,
+    completedTripData,
+    setCompletedTripData,
+    multiStopArrival,
+    handleContinueAfterStop,
+    handleDismissStopApproach,
     setIsNavigating,
     setActiveRoute,
+    liveSpeedMph,
     liveFuelSnapshot,
     lowFuelAlert,
     handleSelectGasStationStop,
     handleAddStop,
-    handleDismissLowFuelAlert
+    handleDismissLowFuelAlert,
+    fuelUpdatePromptNonce,
+    handleQuickFuelUpdate
   } = useNavigation(
     user,
     profile,
+    userSettings.speedAlerts,
     members,
     userLocation,
     showNotification,
@@ -537,6 +809,18 @@ const App: React.FC = () => {
     safetyScore,
     startSearchTransition
   );
+
+  useEffect(() => {
+    if (!isNavigating || !userLocation) {
+      setSchoolZoneAdvisory(null);
+      return;
+    }
+    let active = true;
+    void findSchoolZoneAdvisory(userLocation).then(advisory => {
+      if (active) setSchoolZoneAdvisory(advisory);
+    });
+    return () => { active = false; };
+  }, [isNavigating, userLocation?.lat, userLocation?.lng]);
 
   // --- SIDE EFFECTS ---
 
@@ -714,6 +998,45 @@ const App: React.FC = () => {
       listener.then(l => l.remove()).catch(() => {});
     };
   }, [showNotification]);
+
+  // Android's native foreground service owns background updates after the
+  // Capacitor WebView is closed. Keep its configuration in sync with the
+  // signed-in mobile device, selected Circles, and per-Circle privacy choice.
+  const backgroundCircleKey = useMemo(() => userCircles.map(circle => circle.id).sort().join(','), [userCircles]);
+  const [privacyRevision, setPrivacyRevision] = useState(0);
+  useEffect(() => {
+    const refreshNativePrivacy = () => setPrivacyRevision(value => value + 1);
+    window.addEventListener('myway-privacy-mode-changed', refreshNativePrivacy);
+    return () => window.removeEventListener('myway-privacy-mode-changed', refreshNativePrivacy);
+  }, []);
+  useEffect(() => {
+    if (!nativeBackgroundTrackingService.isSupported()) return;
+    if (!user?.uid || profile?.settings?.locationSharing === false || !isCurrentLocationPublisher()) {
+      void nativeBackgroundTrackingService.stop().catch(() => {});
+      return;
+    }
+
+    const circles = userCircles.map(circle => ({
+      id: circle.id,
+      privacyMode: getCirclePrivacyMode(circle.id)
+    }));
+    if (circles.length === 0) {
+      void nativeBackgroundTrackingService.stop().catch(() => {});
+      return;
+    }
+
+    let cancelled = false;
+    void nativeBackgroundTrackingService.start({
+      uid: user.uid,
+      displayName: profile.displayName || user.displayName,
+      photoURL: profile.photoURL || user.photoURL,
+      role: profile.role,
+      circles
+    }).catch(error => {
+      if (!cancelled) console.warn('[BackgroundTracking] Native service was not started:', error?.message || error);
+    });
+    return () => { cancelled = true; };
+  }, [user?.uid, profile?.settings?.locationSharing, profile?.displayName, profile?.photoURL, profile?.role, backgroundCircleKey, privacyRevision]);
 
   // Offline Handling
   useEffect(() => {
@@ -907,6 +1230,8 @@ const App: React.FC = () => {
 
   const handleClearSelectedPlace = useCallback(() => {
     setSelectedPlace(null);
+    setPlannedWaypoints([]);
+    setKeepStopPlannerOpen(false);
     setIsPlaceDetailOpen(false);
     setPreviewRoute(null);
     setSearchResultPlaces([]);
@@ -918,10 +1243,21 @@ const App: React.FC = () => {
     setPreviewRoute(route);
   }, []);
 
+  const handlePromoteRouteStop = useCallback((destination: Place, remainingStops: RouteWaypoint[]) => {
+    setPlannedWaypoints(remainingStops);
+    setKeepStopPlannerOpen(true);
+    setSelectedPlace(destination);
+    setIsPlaceDetailOpen(true);
+    setSearchText(destination.name || destination.address || '');
+    setMapCenter([destination.location.lat, destination.location.lng]);
+  }, []);
+
   const handleSelectPlace = useCallback((place: Place) => {
     // Guard: ignore if a circle member was just selected within 800ms (prevents map click race conditions)
     if (Date.now() - lastMemberSelectedAtRef.current < 800) return;
     console.log('Place clicked:', place);
+    setPlannedWaypoints([]);
+    setKeepStopPlannerOpen(false);
     // Dismiss bottom sheet expansion and modals so Place Details / Family Hub Card displays cleanly
     setIsBottomSheetExpanded(false);
     setActiveModal(null);
@@ -1029,11 +1365,10 @@ const App: React.FC = () => {
           isSaved: false,
         };
 
-        // Drop the pin on the map and open place details
+        // Drop the pin on the map and open the pre-trip route preview. External
+        // apps should never silently start a drive; the user still chooses the
+        // route and taps Go in MyWay.
         handleSelectPlace(intentPlace);
-
-        // Immediately start navigation and calculate turn-by-turn route
-        handleStartNavigation(targetName, targetCoords);
       } else {
         showNotification(`⚠️ Could not resolve destination: ${parsed.name}`, 4000);
         if (parsed.query) {
@@ -1059,7 +1394,7 @@ const App: React.FC = () => {
     } catch {
       // Non-HTTP URI, safely ignore
     }
-  }, [userLocation, handleSelectPlace, handleStartNavigation, showNotification, user, joinCircle, setSearchText]);
+  }, [userLocation, handleSelectPlace, showNotification, user, joinCircle, setSearchText]);
 
   // Process any pending geo intent once user is signed in
   useEffect(() => {
@@ -1686,9 +2021,9 @@ const App: React.FC = () => {
     }`}>
       {!isDriveMode && null}
 
-      <div className={`flex flex-1 relative overflow-hidden ${isMobile && !isDriveMode ? 'flex-col-reverse' : 'flex-row'}`}>
+      <div className={`flex flex-1 relative overflow-hidden ${usesMobileSheetLayout && !isDriveMode ? 'flex-col-reverse' : 'flex-row'}`}>
         {/* Desktop Sidebar - Bento Grid style */}
-        {!isDriveMode && !isMobile && !arrivalTripData && (
+        {!isDriveMode && !usesMobileSheetLayout && (
           <BentoSidebar
             members={members}
             currentUserId={user?.uid || ''}
@@ -1709,6 +2044,7 @@ const App: React.FC = () => {
             onCreateCircle={createCircle}
             onJoinCircle={joinCircle}
             showNotification={showNotification}
+            pendingOperationsReviewCount={pendingOperationsReviewCount}
             onOpenSettings={() => setActiveModal('settings')}
             onOpenTripHistory={() => setActiveModal('trip_history')}
             onOpenNotifications={() => setActiveModal('notifications')}
@@ -1717,12 +2053,14 @@ const App: React.FC = () => {
               setCircleSettingsTab('invite');
               setActiveModal('circle_settings');
             }}
-            onOpenMessages={(recipientId) => {
-              setMessagingRecipientId(typeof recipientId === 'string' && recipientId.trim() ? recipientId : null);
-              setActiveModal('messaging');
+            onOpenContacts={(recipientId) => {
+              setContactRecipientId(typeof recipientId === 'string' && recipientId.trim() ? recipientId : null);
+              setContactAction('text'); setActiveModal('contacts');
             }}
             onSOS={handleManualSOS}
             activities={activities}
+            unreadActivityCount={unreadActivityCount}
+            onLogViewed={markActivityLogViewed}
             onResolveSOS={handleResolveSOS}
             userPlaces={userPlaces}
             parkedVehicle={parkedVehicle}
@@ -1738,30 +2076,31 @@ const App: React.FC = () => {
         )}
 
         {/* Mobile-only Settings FAB - a gear is clearer than a profile photo. */}
-        {!isDriveMode && isMobile && !activeModal && !isBottomSheetExpanded && !arrivalTripData && (
+        {!isDriveMode && usesMobileSheetLayout && !activeModal && !isBottomSheetExpanded && (
           <button
             onClick={() => setActiveModal('settings')}
-            className="absolute top-14 left-4 z-[90] group flex items-center gap-3 transition-all duration-300 pointer-events-auto"
+            className="absolute top-16 left-4 z-[90] group flex items-center gap-3 transition-all duration-300 pointer-events-auto"
           >
-            <span className={`w-11 h-11 rounded-2xl border flex items-center justify-center shadow-xl transition-all duration-300 ${activeTheme === 'dark' ? 'bg-slate-900/90 border-white/15 text-slate-100' : 'bg-white border-slate-200 text-slate-700 shadow-md'}`}>
+            <span className={`relative w-11 h-11 rounded-2xl border flex items-center justify-center shadow-xl transition-all duration-300 ${activeTheme === 'dark' ? 'bg-slate-900/90 border-white/15 text-slate-100' : 'bg-white border-slate-200 text-slate-700 shadow-md'}`}>
               <Settings className="w-5 h-5" />
+              {pendingOperationsReviewCount && pendingOperationsReviewCount > 0 && <span className="absolute -right-1 -top-1 min-w-5 h-5 px-1 rounded-full bg-violet-600 text-white text-[10px] font-black grid place-items-center ring-2 ring-white" aria-label={`${pendingOperationsReviewCount} reviews awaiting moderation`}>{pendingOperationsReviewCount > 99 ? '99+' : pendingOperationsReviewCount}</span>}
             </span>
           </button>
         )}
 
-        {/* Ghost Mode Active Banner - Audit UX Fix: prevents users from forgetting they're invisible */}
-        {!isDriveMode && !activeModal && !isBottomSheetExpanded && !arrivalTripData && members.find(m => m.id === user?.uid)?.isGhostMode && (
+        {/* Persistent visibility state: the user should never have to infer whether their Circle can see them. */}
+        {!isDriveMode && !activeModal && !isBottomSheetExpanded && (userSettings.privacyMode === 'invisible' || temporaryVisibilityRemainingMs > 0) && (
           <div
             className="absolute top-4 left-1/2 -translate-x-1/2 z-[95] px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer shadow-lg backdrop-blur-md transition-all duration-300 animate-pulse"
             style={{
               background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.85), rgba(79, 70, 229, 0.85))',
               border: '1px solid rgba(255,255,255,0.2)'
             }}
-            onClick={() => setActiveModal('privacy')}
           >
             <EyeOff className="w-5 h-5 text-purple-200 shrink-0" />
-            <span className="text-white text-sm font-semibold tracking-wide">Ghost Mode Active</span>
-            <span className="text-white/60 text-xs">• Tap to manage</span>
+            <span className="text-white text-sm font-semibold tracking-wide">{temporaryVisibilityRemainingMs > 0 ? `Sharing for ${Math.max(1, Math.ceil(temporaryVisibilityRemainingMs / 60_000))} min` : 'Invisible'}</span>
+            {temporaryVisibilityRemainingMs <= 0 && <button type="button" onClick={() => void beginOneHourVisibility()} className="rounded-full bg-white/20 hover:bg-white/30 px-2 py-1 text-[10px] font-black text-white transition-colors">Share 1 hour</button>}
+            <button type="button" onClick={() => setActiveModal('privacy')} className="text-white/70 hover:text-white text-xs">Manage</button>
           </div>
         )}
 
@@ -1778,10 +2117,10 @@ const App: React.FC = () => {
               theme={activeTheme}
               mapSkin={userSettings.mapSkin}
               buildingScale={userSettings.buildingScale}
-              landmarkGlow={userSettings.landmarkGlow}
               showTrafficControls={userSettings.showTrafficControls}
               selectedMemberId={selectedMemberId}
               selectedPlaceId={selectedPlace?.id || null}
+              selectedPlace={selectedPlace}
               center={mapboxCenter}
               zoom={mapZoom}
               onZoomChange={handleZoomChange}
@@ -1802,20 +2141,55 @@ const App: React.FC = () => {
               splitIndex={navState.splitIndex}
               remainingDistanceMeters={navState.remainingDistanceMeters}
               hasArrived={navState.hasArrived}
+              onMapRecoveryStateChange={setIsMapRecovering}
               onSelectPlace={handleSelectPlace}
               onSelectMember={handleSelectMember}
               onSelectIncident={setSelectedIncident}
               onBoundsChange={handleBoundsChange}
               mapStyle={userSettings.mapStyle}
-              isMobile={isMobile}
+              isMobile={usesMobileSheetLayout}
               isCameraFree={isCameraFree}
               onCameraFreeChange={setIsCameraFree}
-              isLowDataMode={isLowDataMode}
               onToggle3DMode={() => set3DMode(prev => !prev)}
               onSelectMapStyle={(style) => setUserSettings(prev => ({ ...prev, mapStyle: style }))}
               onOpenAlerts={() => setActiveModal('incident')}
             />
           </div>
+
+          {!isDriveMode && !activeModal && !isBottomSheetExpanded && (
+            <MapEdgeAwareness
+              bounds={mapBounds}
+              members={members}
+              savedPlaces={userPlaces}
+              currentUserId={user?.uid}
+              onSelectMember={handleSelectMember}
+              onSelectPlace={handleSelectPlace}
+            />
+          )}
+
+          {import.meta.env.DEV && isMemberIdentityInspectorOpen && !isDriveMode && (
+            <aside className="absolute right-3 top-3 z-[130] w-[min(22rem,calc(100%-1.5rem))] rounded-2xl border border-slate-700 bg-slate-950/95 p-3 text-left text-white shadow-2xl backdrop-blur" aria-label="Member identity inspector">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-indigo-300">Dev only · Member identities</p>
+                  <p className="text-xs font-semibold text-slate-300">Authenticated ID: {user.uid}</p>
+                </div>
+                <button type="button" onClick={() => setIsMemberIdentityInspectorOpen(false)} className="rounded-lg px-2 py-1 text-xs font-bold text-slate-300 hover:bg-white/10">Close</button>
+              </div>
+              <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                {members.map(member => (
+                  <div key={member.id} className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
+                    <p className="truncate text-xs font-bold">{member.name}</p>
+                    <p className="truncate font-mono text-[10px] text-slate-400">{member.id}</p>
+                    <p className={`text-[10px] font-bold ${member.id === user.uid ? 'text-emerald-300' : member.isSelf ? 'text-rose-300' : 'text-slate-400'}`}>
+                      {member.id === user.uid ? 'AUTHENTICATED SELF' : member.isSelf ? 'INVALID SELF FLAG' : 'CIRCLE MEMBER'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-[10px] text-slate-400">Toggle: Ctrl/Cmd + Shift + I</p>
+            </aside>
+          )}
 
           {/* UI Overlays - z-10 and above to appear over the map */}
           {notification && (
@@ -1824,6 +2198,30 @@ const App: React.FC = () => {
                 {notification}
               </div>
             </div>
+          )}
+
+          {photoSavedConfirmation && (
+            <aside className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+18px)] left-3 right-3 z-[210] mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-emerald-200 bg-white/95 p-3 shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-3 duration-200">
+              <div className="rounded-xl bg-emerald-500/15 p-2 text-emerald-600"><CheckCircle2 className="h-5 w-5" /></div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-black text-slate-900">Building photo saved</p>
+                <p className="truncate text-[11px] font-bold text-slate-500">{photoSavedConfirmation.isSynced ? `${photoSavedConfirmation.name} · Trip complete` : `${photoSavedConfirmation.name} · Saved on device, syncing automatically`}</p>
+              </div>
+              {photoSavedConfirmation.place && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPlace(photoSavedConfirmation.place);
+                    setIsPlaceDetailOpen(true);
+                    setPhotoSavedConfirmation(null);
+                  }}
+                  className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white shadow-sm active:scale-95"
+                >
+                  View
+                </button>
+              )}
+              <button type="button" onClick={() => setPhotoSavedConfirmation(null)} aria-label="Dismiss photo saved confirmation" className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+            </aside>
           )}
 
           {/* Real-time Caravan / Convoy Invite Banner */}
@@ -1880,7 +2278,7 @@ const App: React.FC = () => {
           )}
 
           {/* Safety Alerts */}
-          {!isDriveMode && !arrivalTripData && (
+          {!isDriveMode && (
             <OverlayManager>
               <div className="absolute z-[70] top-18 right-4 pointer-events-auto flex flex-col items-end">
                 <SafetyAlerts
@@ -1903,10 +2301,13 @@ const App: React.FC = () => {
             <OverlayManager>
               <DriveModeHUD
                 route={activeRoute}
+                upcomingGuidance={upcomingGuidance}
                 onCancel={handleCancelNavigation}
-                speed={members.find(m => m.id === user?.uid)?.speed || 0}
+                speed={liveSpeedMph}
+                speedAlertsEnabled={userSettings.speedAlerts}
                 theme={activeTheme}
                 stepIndex={navState.currentStepIndex}
+                isMapRecovering={isMapRecovering}
                 safetyScore={safetyScore}
                 sessionPoints={sessionPoints}
                 isMobile={isMobile}
@@ -1935,9 +2336,14 @@ const App: React.FC = () => {
                 onRecenter={handleRecenter}
                 liveFuelSnapshot={liveFuelSnapshot}
                 lowFuelAlert={lowFuelAlert}
+                schoolZoneAdvisory={schoolZoneAdvisory}
                 onSelectGasStationStop={handleSelectGasStationStop}
                 onAddStop={handleAddStop}
                 onDismissLowFuelAlert={handleDismissLowFuelAlert}
+                fuelUpdatePromptNonce={fuelUpdatePromptNonce}
+                onQuickFuelUpdate={handleQuickFuelUpdate}
+                onContinueAfterFuelStop={handleContinueAfterStop}
+                savedPlaces={userPlaces}
               />
             </OverlayManager>
           ) : (
@@ -1978,8 +2384,8 @@ const App: React.FC = () => {
                 </OverlayManager>
               )}
 
-              {/* Member detail panel - desktop only, mobile uses BottomSheet */}
-              {selectedMemberId && isMemberDetailOpen && activeModal !== 'privacy' && !isMobile && (() => {
+              {/* Wide landscape follows the sidebar composition, including this detail panel. */}
+              {selectedMemberId && isMemberDetailOpen && activeModal !== 'privacy' && !usesMobileSheetLayout && (() => {
                 const selectedMember = members.find(m => m.id === selectedMemberId);
                 return selectedMember ? (
                   <OverlayManager priority={8}>
@@ -1997,13 +2403,13 @@ const App: React.FC = () => {
                       <QuickActions
                         member={selectedMember}
                         isCurrentUser={selectedMemberId === user?.uid}
-                        onMessage={() => {
+                        onText={() => {
                           if (selectedMember.id !== user?.uid) {
-                            setMessagingRecipientId(selectedMember.id);
+                            setContactRecipientId(selectedMember.id);
                           } else {
-                            setMessagingRecipientId(null);
+                            setContactRecipientId(null);
                           }
-                          setActiveModal('messaging');
+                          setContactAction('text'); setActiveModal('contacts');
                           setSelectedMemberId(null);
                           setIsMemberDetailOpen(false);
                         }}
@@ -2018,7 +2424,7 @@ const App: React.FC = () => {
                             }
                         }
                         onSendEmoji={(emoji) => showNotification(`✨ Sent ${emoji} to ${selectedMember.name}`, 2000)}
-                        onCall={() => showNotification(`📞 Calling ${selectedMember.name}...`, 3000)}
+                        onCall={() => { setContactRecipientId(selectedMember.id); setContactAction('call'); setActiveModal('contacts'); }}
                         onNavigateTo={() => {
                           handleStartNavigation(selectedMember.name, selectedMember.location);
                           setSelectedMemberId(null);
@@ -2033,7 +2439,7 @@ const App: React.FC = () => {
               })()}
 
               {/* Mobile Member Detail — compact floating card when marker tapped */}
-              {selectedMemberId && isMemberDetailOpen && !activeModal && !isBottomSheetExpanded && isMobile && (() => {
+              {selectedMemberId && isMemberDetailOpen && !activeModal && !isBottomSheetExpanded && usesMobileSheetLayout && (() => {
                 const selectedMember = members.find(m => m.id === selectedMemberId);
                 if (!selectedMember) return null;
                 const isSelf = selectedMember.id === user?.uid || selectedMember.id === 'demo-you';
@@ -2124,18 +2530,23 @@ const App: React.FC = () => {
                           <div className="grid grid-cols-4 gap-2">
                             <button
                               onClick={() => {
-                                setMessagingRecipientId(selectedMember.id);
-                                setActiveModal('messaging');
+                                setContactRecipientId(selectedMember.id);
+                                setContactAction('text'); setActiveModal('contacts');
                                 setSelectedMemberId(null);
                                 setIsMemberDetailOpen(false);
                               }}
                               className="py-2.5 rounded-xl bg-purple-500/20 text-purple-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5"
                             >
                               <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                              <span>Message</span>
+                              <span>Text</span>
                             </button>
                             <button
-                              onClick={() => showNotification(`📞 Calling ${selectedMember.name}...`, 3000)}
+                            onClick={() => {
+                              setContactRecipientId(selectedMember.id);
+                              setContactAction('call'); setActiveModal('contacts');
+                              setSelectedMemberId(null);
+                              setIsMemberDetailOpen(false);
+                            }}
                               className="py-2.5 rounded-xl bg-blue-500/20 text-blue-400 text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5"
                             >
                               <Phone className="w-3.5 h-3.5 shrink-0" />
@@ -2204,7 +2615,7 @@ const App: React.FC = () => {
               {/* ────────────────────────────────────────────────────────── */}
               {/* UNIFIED INTERACTION CONTAINER (DESKTOP / LANDSCAPE: MAP ROUTING COLUMN) */}
               {/* ────────────────────────────────────────────────────────── */}
-              {!isMobile && !isDriveMode && !activeModal && !correctingPlace && !arrivalTripData && (
+              {!usesMobileSheetLayout && !isDriveMode && !activeModal && !correctingPlace && (
                 <div className="absolute left-1/2 -translate-x-1/2 bottom-6 md:bottom-8 lg:bottom-10 landscape:bottom-6 landscape:md:bottom-8 w-full max-w-[min(620px,calc(100%-2rem))] z-[120] flex flex-col-reverse gap-2 sm:gap-3 pointer-events-none max-h-[calc(100%-2rem)] md:max-h-[calc(100%-4rem)] landscape:max-h-[calc(100dvh-4rem)] justify-start transition-all duration-300">
                   {/* Search Input Bar (Anchors dropdown directly above) */}
                   <div className="w-full pointer-events-auto">
@@ -2215,9 +2626,9 @@ const App: React.FC = () => {
                       onCategorySearch={handleQuickSearch}
                       onLocate={handleLocateSelf}
                       onQuickStop={() => setActiveModal('quickstop')}
-                      onOpenMessages={() => {
-                        setMessagingRecipientId(null);
-                        setActiveModal('messaging');
+                      onOpenContacts={() => {
+                        setContactRecipientId(null);
+                        setContactAction('text'); setActiveModal('contacts');
                       }}
                       theme={activeTheme}
                       userPlaces={userPlaces}
@@ -2243,6 +2654,9 @@ const App: React.FC = () => {
                           handleClearSelectedPlace();
                         }}
                         onSelectRoutePreview={handleSelectRoutePreview}
+                        onPromoteStop={handlePromoteRouteStop}
+                        initialWaypoints={plannedWaypoints}
+                        keepStopPlannerOpen={keepStopPlannerOpen}
                         theme={activeTheme}
                         userLocation={userLocation}
                         onUpdateRadius={handleUpdatePlaceRadius}
@@ -2265,7 +2679,7 @@ const App: React.FC = () => {
               )}
 
               {/* Safety Insights - Repositioned to Top Center Drawer as per Audit */}
-              {!activeModal && !isBottomSheetExpanded && !arrivalTripData && (
+              {!activeModal && !isBottomSheetExpanded && (
                 <div className={`absolute left-1/2 -translate-x-1/2 z-50 pointer-events-none ${isMobile ? 'top-14 w-auto max-w-[90%]' : 'top-3 sm:top-6 w-auto max-w-[calc(100%-4rem)]'}`}>
                   <InsightsBar
                     insights={insights}
@@ -2282,24 +2696,23 @@ const App: React.FC = () => {
 
 
 
-          {/* Messaging Panel */}
-          {activeModal === 'messaging' && (
+          {/* Native contact actions and number sharing */}
+          {activeModal === 'contacts' && (
             <OverlayManager>
-              {/* Audit #4: On mobile during navigation, show chat in bottom half so HUD stays visible */}
+              {/* Audit #4: On mobile during navigation, show contacts in bottom half so HUD stays visible */}
               <div className={`absolute z-[150] pointer-events-auto ${isMobile 
                 ? (isNavigating ? 'inset-x-4 bottom-4 top-[50%]' : 'inset-4')
                 : 'right-6 bottom-6 w-96 h-[500px]'
               }`}>
-                <MessagingPanel
+                <CircleContactsPanel
                   members={members}
                   currentUserId={user?.uid || ''}
-                  circleId={profile?.familyCircleId}
                   userCircles={userCircles}
-                  activeFilterCircleId={activeFilterCircleId}
-                  initialRecipientId={messagingRecipientId}
+                  initialAction={contactAction}
+                  initialRecipientId={contactRecipientId}
                   onClose={() => {
                     setActiveModal(null);
-                    setMessagingRecipientId(null);
+                    setContactRecipientId(null);
                   }}
                   theme={activeTheme}
                 />
@@ -2369,6 +2782,12 @@ const App: React.FC = () => {
             onCorrectLocation={(place) => setCorrectingPlace(place)}
             userLocation={userLocation}
             theme={activeTheme}
+            currentUserId={user?.uid}
+            currentUserName={profile?.name || user?.displayName || 'You'}
+            currentUserAvatar={profile?.avatar || user?.photoURL || undefined}
+            onPhotoUploaded={(placeId, imageUrl) => {
+              void handleUpdatePlace(placeId, { imageUrl, needsBuildingPhoto: false });
+            }}
           />
 
           {/* Precision Address & Pin Location Correction Modal */}
@@ -2381,6 +2800,12 @@ const App: React.FC = () => {
             userId={user?.uid}
             userName={profile?.name || user?.displayName || 'You'}
             userAvatar={profile?.avatar || user?.photoURL || undefined}
+            onPendingSubmitted={(placeName, status) => showNotification(
+                status === 'approved'
+                    ? `${placeName} was auto-approved as an Operations contribution.`
+                    : `Submitted ${placeName} to My Way Operations for review.`,
+                4000
+            )}
             onSave={(correctedPlace) => {
               // 1. Update selectedPlace if active so panel and route preview update
               if (selectedPlace && (selectedPlace.id === correctedPlace.id || selectedPlace.name === correctedPlace.name)) {
@@ -2395,6 +2820,15 @@ const App: React.FC = () => {
                   address: correctedPlace.address,
                   type: correctedPlace.type,
                   location: correctedPlace.location,
+                  entrancePin: correctedPlace.entrancePin,
+                  entranceLocation: correctedPlace.entranceLocation,
+                  entrancePrecision: correctedPlace.entrancePrecision,
+                  entranceType: correctedPlace.entranceType,
+                  originalLocation: correctedPlace.originalLocation,
+                  isCorrected: correctedPlace.isCorrected,
+                  isCommunityVerified: correctedPlace.isCommunityVerified,
+                  correctedAt: correctedPlace.correctedAt,
+                  visibility: correctedPlace.visibility,
                   imageUrl: correctedPlace.imageUrl,
                   submitterId: correctedPlace.submitterId,
                   submitterName: correctedPlace.submitterName,
@@ -2413,27 +2847,68 @@ const App: React.FC = () => {
             }}
           />
 
-          {/* Post-Drive Arrival & Rating Prompt Modal / TripCompletedCard */}
-          <TripCompletedCard
-            arrivalData={arrivalTripData}
-            isOpen={!!arrivalTripData}
-            onClose={() => {
-              setArrivalTripData(null);
-              handleCancelNavigation();
-            }}
+          <ApproachingDestinationCard
+            key={approachingTripData ? `${approachingTripData.destinationPlace?.id || approachingTripData.destinationName}:${approachingTripData.arrivedAt || ''}` : 'arrival-card-closed'}
+            arrivalData={approachingTripData}
+            isOpen={!!approachingTripData}
+            onDismiss={() => setApproachingTripData(null)}
             onFixLocation={(destinationPlace) => {
               setCorrectingPlace(destinationPlace);
             }}
+            onPhotoSaved={(placeId, imageUrl, isSynced) => {
+              const savedPlace = userPlaces.find(place => place.id === placeId);
+              if (savedPlace?.createdBy === user?.uid) {
+                void handleUpdatePlace(placeId, { imageUrl, needsBuildingPhoto: false });
+              }
+              setPhotoSavedConfirmation({
+                name: savedPlace?.name || approachingTripData?.destinationName || 'Destination',
+                place: savedPlace || null,
+                isSynced
+              });
+              // A successful contribution is the driver's completion action.
+              // End this trip now instead of leaving an ambiguous shared state.
+              onTripCompleted(undefined, true);
+            }}
             theme={activeTheme}
-            userLocation={userLocation}
             userId={user?.uid}
             userName={profile?.displayName || user?.displayName || 'Driver'}
             userAvatar={profile?.photoURL || user?.photoURL || ''}
           />
 
+          <MultiStopArrivalCard
+            state={multiStopArrival}
+            theme={activeTheme}
+            onResume={handleContinueAfterStop}
+            onEndTrip={handleCancelNavigation}
+            onDismissApproach={handleDismissStopApproach}
+          />
+
+          {pendingTripResume && (
+            <TripResumePrompt
+              destinationName={pendingTripResume.destinationName}
+              isResuming={isResumingTrip}
+              onResume={() => { void handleResumeTrip(); }}
+              onEndTrip={handleDiscardTripResume}
+            />
+          )}
+
+          <TripReviewCard
+            arrivalData={completedTripData}
+            isOpen={Boolean(completedTripData)}
+            theme={activeTheme}
+            userId={user?.uid}
+            userName={profile?.displayName || user?.displayName || 'Driver'}
+            userAvatar={profile?.photoURL || user?.photoURL || ''}
+            onClose={() => setCompletedTripData(null)}
+            onReportPin={(place) => {
+              setCompletedTripData(null);
+              setCorrectingPlace(place);
+            }}
+          />
+
           {/* New User Onboarding Setup Wizard Modal */}
           <SetupWizardModal
-            isOpen={Boolean(user && activeUserProfile && activeUserProfile.hasCompletedSetup !== true && !authLoading)}
+            isOpen={Boolean(user && activeUserProfile && activeUserProfile.hasCompletedSetup === false && !authLoading)}
             user={user}
             profile={activeUserProfile}
             theme={activeTheme as 'light' | 'dark'}
@@ -2450,7 +2925,7 @@ const App: React.FC = () => {
                   return updated;
                 });
               }
-              showNotification('🎉 Welcome to MyWay! Your profile and home base are set.', 4500);
+              showNotification(createdPlace ? '🎉 Welcome to MyWay! Your profile and first place are ready.' : '🎉 Welcome to MyWay! Your profile is ready.', 4500);
             }}
           />
 
@@ -2475,8 +2950,8 @@ const App: React.FC = () => {
               await updateCircleColor(circleId, color);
               showNotification('🎨 Circle color theme updated!', 2500);
             }}
-            onLeaveCircle={async (id) => {
-              await leaveCurrentCircle(id);
+            onLeaveCircle={async (id, successorId) => {
+              await leaveCurrentCircle(id, successorId);
             }}
             onDeleteCircle={deleteCircle}
             onRemoveMember={(memberId) => {
@@ -2499,12 +2974,26 @@ const App: React.FC = () => {
           {/* Settings Panel */}
           {activeModal === 'settings' && (
             <OverlayManager>
-              <div className={`absolute z-[150] flex flex-col pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-96 h-[calc(100dvh-120px)]'}`}>
+              <div
+                className={`absolute z-[150] flex flex-col pointer-events-auto ${isMobile ? 'mobile-modal-safe-frame' : 'right-6 top-20 w-96 h-[calc(100dvh-120px)]'}`}
+              >
                 <SettingsPanel
+                onOpenContacts={() => { setContactRecipientId(null); setContactAction('text'); setActiveModal('contacts'); }}
+                  userCircles={userCircles}
+                  pendingReviewCount={pendingOperationsReviewCount}
                   settings={userSettings}
                   onUpdateSettings={async (newSettings) => {
-                    const prevSharing = userSettings.locationSharing;
-                    setUserSettings(newSettings);
+                    const prevSharing = userSettings.privacyMode !== 'invisible';
+                    const nextSharing = newSettings.privacyMode !== 'invisible';
+                    const normalizedSettings = { ...newSettings, locationSharing: nextSharing };
+                    setUserSettings(normalizedSettings);
+
+                    // Optimistic localStorage persistence for Speed Alerts
+                    try {
+                      localStorage.setItem('setting_speed_alerts', JSON.stringify(newSettings.speedAlerts));
+                      localStorage.setItem('myway_speed_alerts', JSON.stringify(newSettings.speedAlerts));
+                    } catch (e) {}
+
                     if (newSettings.theme !== 'auto') {
                       setTheme(newSettings.theme);
                     }
@@ -2515,23 +3004,34 @@ const App: React.FC = () => {
                     if (newSettings.buildingScale) {
                       localStorage.setItem('myway_building_scale', newSettings.buildingScale);
                     }
-                    if (typeof newSettings.landmarkGlow === 'boolean') {
-                      localStorage.setItem('myway_landmark_glow', String(newSettings.landmarkGlow));
-                    }
                     if (typeof newSettings.showTrafficControls === 'boolean') {
                       localStorage.setItem('myway_show_traffic_controls', String(newSettings.showTrafficControls));
                     }
 
-                    if (user?.uid && newSettings.locationSharing !== prevSharing) {
+                    // Save settings to user profile (RTDB & Firestore)
+                    if (user?.uid) {
                       try {
                         const { updateUserProfile } = await import('./services/authService');
                         await updateUserProfile(user.uid, {
                           settings: {
                             ...profile?.settings,
-                            locationSharing: newSettings.locationSharing
+                            theme: newSettings.theme,
+                            notifications: newSettings.notifications,
+                            locationSharing: nextSharing,
+                            privacyMode: normalizedSettings.privacyMode,
+                            batteryAlerts: newSettings.batteryAlerts,
+                            arrivalAlerts: newSettings.arrivalAlerts,
+                            speedAlerts: newSettings.speedAlerts
                           }
                         });
-                        if (newSettings.locationSharing) {
+                      } catch (err) {
+                        console.warn('[App] Failed to update user settings in profile:', err);
+                      }
+                    }
+
+                    if (user?.uid && nextSharing !== prevSharing) {
+                      try {
+                        if (nextSharing) {
                           const { claimLocationSharingForCurrentDevice } = await import('./services/deviceSessionService');
                           await claimLocationSharingForCurrentDevice();
                           if (forcePublishLocation) {
@@ -2549,14 +3049,14 @@ const App: React.FC = () => {
                   }}
                   onClose={() => setActiveModal(null)}
                   onOpenOfflineMaps={() => setActiveModal('offline_maps')}
-                  onOpenBatteryPrompt={() => setActiveModal('battery_prompt')}
                   theme={activeTheme}
                   userName={profile?.displayName || user?.displayName || 'User'}
+                  userEmail={user?.email || profile?.email || null}
                   userId={user?.uid}
                   circleId={profile?.familyCircleId || undefined}
                   userAvatar={profile?.photoURL || user?.photoURL || ''}
                   onUpgrade={() => setActiveModal('upsell')}
-                  isPremium={profile?.membershipTier === 'gold' || profile?.membershipTier === 'platinum'}
+                  isPremium={hasCirclePremium || profile?.membershipTier === 'gold' || profile?.membershipTier === 'platinum'}
                   onUpdateProfile={async (name, file) => {
                     if (!user) return;
                     try {
@@ -2571,6 +3071,11 @@ const App: React.FC = () => {
                         displayName: name, 
                         photoURL: photoURL 
                       });
+                      // Existing building photos show their contributor in
+                      // search and arrival panels. Keep that attribution in
+                      // sync with the profile the user just saved.
+                      void placePhotoService.refreshContributorIdentity(user.uid, name, photoURL)
+                        .catch(error => console.warn('[App] Could not refresh building-photo contributor identity:', error));
                       
                       showNotification('👤 Profile updated successfully!', 3000);
                     } catch (err: any) {
@@ -2580,18 +3085,6 @@ const App: React.FC = () => {
                   }}
                   onSignOut={() => {
                     logout();
-                  }}
-                  onManageSubscription={async () => {
-                    try {
-                      await goToBillingPortal();
-                    } catch (err: any) {
-                      showNotification(`❌ ${err.message}`, 5000);
-                    }
-                  }}
-                  onShowPrivacy={() => window.open('https://myway-gps.com/privacy', '_blank')}
-                  onManageCircle={() => {
-                    setCircleSettingsTab('manage');
-                    setActiveModal('circle_settings');
                   }}
                   onOpenKeyRecovery={() => setActiveModal('key_recovery')}
                   onDeleteAccount={deleteUserAccount}
@@ -2603,13 +3096,17 @@ const App: React.FC = () => {
           {/* Offline Maps Panel */}
           {activeModal === 'offline_maps' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 bottom-6 w-96'}`}>
+              <div className="absolute inset-0 z-[200] pointer-events-none">
                 <React.Suspense fallback={<div className="glass-panel p-6 text-center text-xs text-slate-400 font-bold rounded-2xl">Loading Offline Maps...</div>}>
                   <OfflineMapManager
                     currentBounds={mapBounds}
-                    userLocation={userLocation}
                     theme={activeTheme}
+                    isMobile={isMobile}
                     onClose={() => setActiveModal(null)}
+                    onDownloadComplete={(area) => {
+                      setActiveModal(null);
+                      showNotification(`Map saved for offline use: ${area.name}`, 4000);
+                    }}
                   />
                 </React.Suspense>
               </div>
@@ -2619,7 +3116,7 @@ const App: React.FC = () => {
           {/* Trip History Panel */}
           {activeModal === 'trip_history' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'mobile-modal-safe-frame' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
                   <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Trip History...</div>}>
                     <TripHistoryPanel
@@ -2649,7 +3146,7 @@ const App: React.FC = () => {
           {/* Circle Admin Panel */}
           {activeModal === 'circle_admin' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'mobile-modal-safe-frame' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
                   <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Circle Admin...</div>}>
                     <CircleAdminPanel
@@ -2681,7 +3178,7 @@ const App: React.FC = () => {
           {/* Notification Center */}
           {activeModal === 'notifications' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[400px] max-h-[calc(100dvh-120px)]'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'mobile-modal-safe-frame' : 'right-6 top-20 w-[400px] max-h-[calc(100dvh-120px)]'}`}>
                 <div className="glass-panel rounded-2xl overflow-hidden max-h-full">
                   <NotificationCenter
                     onClose={() => setActiveModal(null)}
@@ -2696,7 +3193,7 @@ const App: React.FC = () => {
           {/* Weekly Safety Report */}
           {activeModal === 'weekly_report' && (
             <OverlayManager>
-              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'inset-4' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
+              <div className={`absolute z-[200] pointer-events-auto ${isMobile ? 'mobile-modal-safe-frame' : 'right-6 top-20 w-[420px] max-h-[calc(100dvh-120px)]'}`}>
                 <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-h-full border border-slate-200">
                   <React.Suspense fallback={<div className="p-6 text-center text-xs text-slate-400 font-bold">Loading Weekly Report...</div>}>
                     <WeeklySafetyReport
@@ -2771,7 +3268,7 @@ const App: React.FC = () => {
 
       {/* Mobile Bottom Sheet - replaces sidebar on mobile */}
       {
-        isMobile && !isDriveMode && !activeModal && !arrivalTripData && (
+        usesMobileSheetLayout && !isDriveMode && !activeModal && (
           <BottomSheet
             className={selectedPlace ? 'landscape:hidden' : ''}
             isExpanded={isBottomSheetExpanded}
@@ -2820,13 +3317,15 @@ const App: React.FC = () => {
               setIsBottomSheetExpanded(false);
               setActiveModal('maintenance');
             }}
-            onOpenMessages={(recipientId) => {
+            onOpenContacts={(recipientId) => {
               setIsBottomSheetExpanded(false);
-              setMessagingRecipientId(typeof recipientId === 'string' && recipientId.trim() ? recipientId : null);
-              setActiveModal('messaging');
+              setContactRecipientId(typeof recipientId === 'string' && recipientId.trim() ? recipientId : null);
+              setContactAction('text'); setActiveModal('contacts');
             }}
             onSOS={handleManualSOS}
             activities={activities}
+            unreadActivityCount={unreadActivityCount}
+            onLogViewed={markActivityLogViewed}
             onResolveSOS={handleResolveSOS}
             userPlaces={userPlaces}
             selectedPlaceId={selectedPlace?.id}
@@ -2849,11 +3348,11 @@ const App: React.FC = () => {
       {/* ────────────────────────────────────────────────────────── */}
       {/* UNIFIED INTERACTION CONTAINER (MOBILE: UNIFIED BOTTOM SHEET) */}
       {/* ────────────────────────────────────────────────────────── */}
-      {isMobile && !isDriveMode && !activeModal && (!isBottomSheetExpanded || isPlaceDetailOpen || selectedPlace) && !correctingPlace && !arrivalTripData && (
+      {usesMobileSheetLayout && !isDriveMode && !activeModal && (!isBottomSheetExpanded || isPlaceDetailOpen || selectedPlace) && !correctingPlace && (
         <OverlayManager priority={isPlaceDetailOpen || selectedPlace ? 8 : 5}>
           <div className="contents">
             {/* Search Input Bar (Floats above bottom peek sheet, cleanly pushes down and hides when a place is selected) */}
-            <div className={`absolute inset-x-0 bottom-[calc(116px+env(safe-area-inset-bottom,0px))] px-4 pb-1 max-h-[min(50vh,360px)] z-[90] pointer-events-none transition-all duration-300 ${
+            <div data-map-bottom-obstruction className={`absolute inset-x-0 bottom-[calc(116px+env(safe-area-inset-bottom,0px))] px-4 pb-1 max-h-[min(50vh,360px)] z-[90] pointer-events-none transition-all duration-300 ${
               (selectedPlace && isPlaceDetailOpen) ? 'translate-y-8 opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
             }`}>
               <div className="w-full pointer-events-auto">
@@ -2864,9 +3363,9 @@ const App: React.FC = () => {
                   onCategorySearch={handleQuickSearch}
                   onLocate={handleLocateSelf}
                   onQuickStop={() => setActiveModal('quickstop')}
-                  onOpenMessages={() => {
-                    setMessagingRecipientId(null);
-                    setActiveModal('messaging');
+                  onOpenContacts={() => {
+                    setContactRecipientId(null);
+                    setContactAction('text'); setActiveModal('contacts');
                   }}
                   theme={activeTheme}
                   userPlaces={userPlaces}
@@ -2893,6 +3392,9 @@ const App: React.FC = () => {
                     handleClearSelectedPlace();
                   }}
                   onSelectRoutePreview={handleSelectRoutePreview}
+                  onPromoteStop={handlePromoteRouteStop}
+                  initialWaypoints={plannedWaypoints}
+                  keepStopPlannerOpen={keepStopPlannerOpen}
                   theme={activeTheme}
                   userLocation={userLocation}
                   isMobile={true}

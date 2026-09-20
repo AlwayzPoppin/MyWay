@@ -5,7 +5,6 @@ import {
     Bell, 
     Compass, 
     Map, 
-    Settings, 
     User, 
     ChevronDown, 
     Pencil, 
@@ -13,26 +12,15 @@ import {
     X, 
     EyeOff, 
     MapPin, 
-    Snowflake, 
-    Radio, 
-    Zap, 
-    CreditCard, 
     ShieldCheck, 
     Key, 
     AlertTriangle, 
-    LogOut, 
     Lock, 
     Trash2, 
     Sparkles, 
-    Building, 
     Building2, 
-    Landmark, 
     Square, 
     Minus, 
-    Sun, 
-    Sunrise, 
-    Sunset, 
-    Moon, 
     Cpu,
     Award,
     History,
@@ -44,21 +32,22 @@ import {
     Monitor
 } from 'lucide-react';
 import { MapSkinId, MAP_SKINS } from '../services/mapSkinService';
-import { solarService, SolarInfo } from '../services/solarService';
-import StorageManager from './StorageManager';
 import { PrivacyMode } from '../types';
-import { useUI } from '../contexts/UIContext';
-import { nativeSettingsService } from '../services/nativeSettingsService';
+import { setCirclePrivacyMode } from '../services/privacyService';
 import { contributionService, TripContributionPayload } from '../services/contributionService';
-import { APP_VERSION, CIRCLE_SYNC_PROTOCOL_VERSION } from '../services/appVersionService';
+import { placePhotoService } from '../services/placePhotoService';
+import { APP_VERSION } from '../services/appVersionService';
+import { nativeBackgroundTrackingService } from '../services/nativeBackgroundTrackingService';
+import { FamilyCircle } from '../services/authService';
+import { loadCircleContacts } from '../services/nativeContactService';
 import MapReviewPanel from './MapReviewPanel';
 import { assignAdminRole, getAdminDeletionProtection, getMapReviewAccess } from '../services/mapReviewService';
 import {
     TrustedDevice,
     claimLocationSharingForCurrentDevice,
     getCurrentDeviceId,
+    getCurrentDeviceLabel,
     isCurrentDeviceMobile,
-    revokeTrustedDevice,
     signOutEverywhere,
     subscribeToTrustedDevices
 } from '../services/deviceSessionService';
@@ -74,8 +63,7 @@ export interface UserSettings {
     mapStyle: 'standard' | 'satellite' | 'terrain';
     units: 'imperial' | 'metric';
     mapSkin: MapSkinId;
-    buildingScale?: 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental';
-    landmarkGlow?: boolean;
+    buildingScale?: 'none' | 'flat' | 'realistic';
     showTrafficControls?: boolean;
     avoidTolls?: boolean;
     avoidHighways?: boolean;
@@ -86,9 +74,13 @@ interface SettingsPanelProps {
     settings: UserSettings;
     onUpdateSettings: (settings: UserSettings) => void;
     onClose: () => void;
+    onOpenContacts?: () => void;
+    userCircles?: FamilyCircle[];
+    pendingReviewCount?: number | null;
     onOpenOfflineMaps?: () => void;
     theme: 'light' | 'dark';
     userName: string;
+    userEmail?: string | null;
     userId?: string;
     circleId?: string;
     userAvatar: string;
@@ -96,11 +88,7 @@ interface SettingsPanelProps {
     isPremium?: boolean;
     // New props for account management
     onSignOut?: () => void;
-    onManageSubscription?: () => void;
-    onShowPrivacy?: () => void;
-    onManageCircle?: () => void;
     onOpenKeyRecovery?: () => void;
-    onOpenBatteryPrompt?: () => void;
     onUpdateProfile?: (name: string, avatarFile?: File) => Promise<void>;
     onDeleteAccount?: (password?: string) => Promise<void>;
     onOpenContributions?: () => void;
@@ -111,27 +99,45 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     settings,
     onUpdateSettings,
     onClose,
+    onOpenContacts,
+    userCircles = [],
+    pendingReviewCount = null,
     onOpenOfflineMaps,
     theme,
     userName,
+    userEmail,
     userId,
     circleId,
     userAvatar,
     onUpgrade,
     isPremium = false,
     onSignOut,
-    onManageSubscription,
-    onShowPrivacy,
-    onManageCircle,
     onOpenKeyRecovery,
-    onOpenBatteryPrompt,
     onUpdateProfile,
     onDeleteAccount,
     onOpenContributions,
     initialView = 'main'
 }) => {
-    const [currentView, setCurrentView] = useState<'main' | 'contributions'>(initialView);
-    const { isLowDataMode, setIsLowDataMode } = useUI();
+    const [currentView, setCurrentView] = useState<'main' | 'contributions' | 'account'>(initialView);
+    const [contactSharingStatus, setContactSharingStatus] = useState<string | null>(null);
+    const circleContactKey = userCircles.map(circle => circle.id).sort().join('|');
+
+    useEffect(() => {
+        if (currentView !== 'account' || !onOpenContacts) return;
+        let active = true;
+        void loadCircleContacts(circleContactKey ? circleContactKey.split('|') : [])
+            .then(({ preferences }) => {
+                if (!active) return;
+                const sharedCircleCount = preferences.circleIds.filter(id => userCircles.some(circle => circle.id === id)).length;
+                setContactSharingStatus(!preferences.phone
+                    ? 'No contact number added'
+                    : sharedCircleCount === 0
+                        ? 'Number saved, not shared with a Circle'
+                        : `Shared with ${sharedCircleCount} ${sharedCircleCount === 1 ? 'Circle' : 'Circles'}`);
+            })
+            .catch(() => { if (active) setContactSharingStatus('Sharing status unavailable'); });
+        return () => { active = false; };
+    }, [currentView, circleContactKey]);
 
     const handleOpenContributions = () => {
         if (onOpenContributions) {
@@ -140,34 +146,90 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         setCurrentView('contributions');
     };
     const [localSettings, setLocalSettings] = useState(settings);
-    const [solarInfo, setSolarInfo] = useState<SolarInfo>(() => solarService.getSolarInfo());
-    const [isPromptDisabled, setIsPromptDisabled] = useState(() => nativeSettingsService.isPromptDisabledByUser());
-    const [isBatteryIgnored, setIsBatteryIgnored] = useState(false);
+
+    useEffect(() => {
+        setLocalSettings(settings);
+    }, [settings]);
     const [trustedDevices, setTrustedDevices] = useState<TrustedDevice[]>([]);
     const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
     const [deviceActionPending, setDeviceActionPending] = useState(false);
     const [isMapAdmin, setIsMapAdmin] = useState(false);
     const [isMapReviewOpen, setIsMapReviewOpen] = useState(false);
+    const [isNativeBackgroundTrackingActive, setIsNativeBackgroundTrackingActive] = useState<boolean | null>(null);
     const [hasRecoveryAdmin, setHasRecoveryAdmin] = useState(true);
     const [recoveryAdminEmail, setRecoveryAdminEmail] = useState('');
     const [isAssigningRecoveryAdmin, setIsAssigningRecoveryAdmin] = useState(false);
     const [recoveryAdminMessage, setRecoveryAdminMessage] = useState<string | null>(null);
     const currentDeviceId = getCurrentDeviceId();
     const currentDeviceIsMobile = isCurrentDeviceMobile();
+    const currentDevice = React.useMemo(() => {
+        const detected = getCurrentDeviceLabel();
+        return trustedDevices.find(device => device.id === currentDeviceId && !device.revokedAt) || {
+            id: currentDeviceId,
+            label: detected.label,
+            platform: detected.platform,
+            createdAt: 0,
+            lastActiveAt: 0,
+            isLocationPublisher: false
+        };
+    }, [trustedDevices, currentDeviceId]);
 
     // Crowdsourced Contribution History State
     const [contributions, setContributions] = useState<TripContributionPayload[]>([]);
+    const [withdrawingPhotoId, setWithdrawingPhotoId] = useState<string | null>(null);
 
     useEffect(() => {
         if (currentView === 'contributions') {
             const unsub = contributionService.subscribeUserContributions(userId, (items) => {
-                setContributions(items);
+                void placePhotoService.getPhotosForUser(userId).then(photos => {
+                    const photoItems: TripContributionPayload[] = photos.map(photo => ({
+                        id: `photo_${photo.id}`,
+                        tripId: `photo_${photo.id}`,
+                        destinationAddress: photo.placeName || 'Saved place',
+                        destinationName: photo.placeName || 'Building photo',
+                        placeId: photo.placeId,
+                        rating: 0,
+                        tags: ['building_photo'],
+                        placeType: null,
+                        isAccurate: true,
+                        type: 'building_photo',
+                        timestamp: photo.createdAt,
+                        imageUrl: photo.url,
+                        reviewStatus: photo.reviewStatus || 'pending'
+                    }));
+                    const photoIds = new Set(photoItems.map(item => item.tripId));
+                    setContributions([...photoItems, ...items.filter(item => !photoIds.has(item.tripId))].sort((a, b) => b.timestamp - a.timestamp));
+                });
             });
             return () => {
                 unsub();
             };
         }
     }, [currentView, userId]);
+
+    const withdrawBuildingPhoto = async (item: TripContributionPayload) => {
+        const photoId = item.tripId?.startsWith('photo_') ? item.tripId.slice('photo_'.length) : '';
+        if (!photoId || withdrawingPhotoId) return;
+        const action = item.reviewStatus === 'approved' ? 'Remove this approved community photo?' : 'Withdraw this photo submission?';
+        if (!window.confirm(`${action}\n\nIt will no longer appear to other drivers or in My Way Operations.`)) return;
+
+        setWithdrawingPhotoId(photoId);
+        try {
+            const photos = await placePhotoService.getPhotosForUser(userId);
+            const photo = photos.find(candidate => candidate.id === photoId);
+            if (photo) await placePhotoService.withdrawPhotoContribution(photo);
+            else {
+                // A locally retained, not-yet-synced photo has no server record.
+                await contributionService.deleteUserContribution(userId, item.id || '');
+            }
+            setContributions(current => current.filter(contribution => contribution.tripId !== item.tripId));
+        } catch (error) {
+            console.error('[SettingsPanel] Could not withdraw building photo:', error);
+            window.alert('We could not withdraw this photo. Check your connection and try again.');
+        } finally {
+            setWithdrawingPhotoId(null);
+        }
+    };
 
     // Delete Account Modal State
     const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -177,10 +239,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
-        nativeSettingsService.isIgnoringBatteryOptimizations().then(setIsBatteryIgnored);
-    }, []);
-
-    useEffect(() => {
         getMapReviewAccess().then(async access => {
             setIsMapAdmin(access.isAdmin);
             if (access.isAdmin) {
@@ -188,6 +246,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 setHasRecoveryAdmin(protection.hasRecoveryAdmin);
             }
         }).catch(() => setIsMapAdmin(false));
+    }, []);
+
+    useEffect(() => {
+        if (!nativeBackgroundTrackingService.isSupported()) return;
+        let active = true;
+        const readStatus = () => nativeBackgroundTrackingService.isRunning()
+            .then(value => { if (active) setIsNativeBackgroundTrackingActive(value); })
+            .catch(() => { if (active) setIsNativeBackgroundTrackingActive(false); });
+        void readStatus();
+        const refresh = window.setInterval(readStatus, 30_000);
+        return () => { active = false; window.clearInterval(refresh); };
     }, []);
 
     const addRecoveryAdmin = async () => {
@@ -227,18 +296,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         }
     };
 
-    const revokeOtherDevice = async (deviceId: string) => {
-        setDeviceActionPending(true);
-        setDeviceActionError(null);
-        try {
-            await revokeTrustedDevice(deviceId);
-        } catch (error: any) {
-            setDeviceActionError(error?.message || 'Could not sign out that device.');
-        } finally {
-            setDeviceActionPending(false);
-        }
-    };
-
     const handleSignOutEverywhere = async () => {
         setDeviceActionPending(true);
         setDeviceActionError(null);
@@ -252,10 +309,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         }
     };
 
-    useEffect(() => {
-        return solarService.subscribe(setSolarInfo);
-    }, []);
- 
     // Profile Edit State
     const [isEditingProfile, setIsEditingProfile] = useState(false);
     const [editName, setEditName] = useState(userName);
@@ -264,15 +317,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
     // Accordion State
     const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-        privacy: true, // open by default
+        privacy: false,
         alerts: false,
         navigation_routing: false,
-        map_visuals: false, // collapsed by default to reduce scroll fatigue
-        system: false,
-        account: false
+        map_offline_storage: false,
+        account: false,
+        operations: false
     });
+    const [lastOpenedSection, setLastOpenedSection] = useState<string | null>(null);
+    const previousViewRef = useRef(currentView);
 
     const toggleSection = (section: string) => {
+        if (!expandedSections[section]) {
+            setLastOpenedSection(section);
+        }
         setExpandedSections(prev => ({
             ...prev,
             [section]: !prev[section]
@@ -283,32 +341,51 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
     const toggleAllSections = () => {
         const targetValue = !hasAnyExpanded;
+        setLastOpenedSection(targetValue ? (lastOpenedSection || 'privacy') : null);
         setExpandedSections({
             privacy: targetValue,
             alerts: targetValue,
             navigation_routing: targetValue,
-            map_visuals: targetValue,
-            system: targetValue,
-            account: targetValue
+            map_offline_storage: targetValue,
+            account: targetValue,
+            operations: targetValue
         });
     };
+
+    // Returning from a settings subpage should land on the section the user was editing.
+    // This is in-memory only: closing Settings still starts with a compact, collapsed list.
+    useEffect(() => {
+        const previousView = previousViewRef.current;
+        previousViewRef.current = currentView;
+        if (currentView !== 'main' || previousView === 'main' || !lastOpenedSection) return;
+
+        const restoreTimeout = window.setTimeout(() => {
+            document.getElementById(`settings-section-${lastOpenedSection}`)?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }, 0);
+        return () => window.clearTimeout(restoreTimeout);
+    }, [currentView, lastOpenedSection]);
 
     const AccordionSection = ({
         id,
         title,
         subtitle,
         icon: Icon,
+        badge,
         children
     }: {
         id: string;
         title: string;
         subtitle?: string;
         icon: React.ComponentType<{ className?: string }>;
+        badge?: React.ReactNode;
         children: React.ReactNode;
     }) => {
         const isOpen = !!expandedSections[id];
         return (
-            <div className={`border-b ${theme === 'dark' ? 'border-white/5' : 'border-slate-100'} pb-3`}>
+            <div id={`settings-section-${id}`} className={`border-b ${theme === 'dark' ? 'border-white/5' : 'border-slate-100'} pb-3`}>
                 <button
                     onClick={() => toggleSection(id)}
                     className="w-full flex items-center justify-between py-3 text-left focus:outline-none group/btn transition-colors"
@@ -328,7 +405,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             )}
                         </div>
                     </div>
-                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 shrink-0 ${isOpen ? 'rotate-180 text-indigo-400' : ''}`} />
+                    <span className="flex items-center gap-2 shrink-0">
+                        {badge}
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180 text-indigo-400' : ''}`} />
+                    </span>
                 </button>
                 <div
                     className={`grid transition-all duration-300 ease-in-out ${
@@ -348,6 +428,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     const updateSetting = <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
         const updated = { ...localSettings, [key]: value };
         setLocalSettings(updated);
+        if (key === 'speedAlerts') {
+            try {
+                localStorage.setItem('setting_speed_alerts', JSON.stringify(value));
+                localStorage.setItem('myway_speed_alerts', JSON.stringify(value));
+            } catch (e) {}
+        }
         onUpdateSettings(updated);
     };
 
@@ -381,6 +467,91 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             {children}
         </div>
     );
+
+    // Keep account actions out of the primary settings list to preserve vertical space.
+    if (currentView === 'account') {
+        return (
+            <div className={`flex flex-col h-full max-h-full rounded-3xl overflow-hidden shadow-2xl border ${theme === 'dark'
+                ? 'bg-slate-900/95 border-white/10 text-white'
+                : 'bg-[#fdfbf7]/95 border-slate-200/80 shadow-2xl text-slate-900'}`}>
+                <div className={`p-6 border-b shrink-0 ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'}`}>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <button type="button" onClick={() => setCurrentView('main')}
+                                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${theme === 'dark'
+                                    ? 'bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                                    : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200'}`}
+                                aria-label="Back to settings">
+                                <ArrowLeft className="w-4 h-4" /><span>Back</span>
+                            </button>
+                            <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Account settings</h2>
+                        </div>
+                        <button type="button" onClick={onClose}
+                            className={`p-2 rounded-full transition-colors ${theme === 'dark' ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-black/5 hover:text-slate-800'}`}
+                            aria-label="Close settings">
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 no-scrollbar">
+                    <section className={`rounded-2xl border p-4 ${theme === 'dark' ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Signed in as</p>
+                        <p className={`mt-1 text-sm font-bold break-all ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{userEmail || 'Email unavailable'}</p>
+                    </section>
+
+                    <div className="mt-4 space-y-3">
+                        {onOpenContacts && (
+                            <button type="button" onClick={onOpenContacts}
+                                className={`w-full rounded-2xl border p-4 text-left transition-colors ${theme === 'dark'
+                                    ? 'bg-violet-500/10 border-violet-400/25 hover:bg-violet-500/15'
+                                    : 'bg-violet-50/70 border-violet-200 hover:bg-violet-50'}`}>
+                                <span className="flex items-center gap-3">
+                                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-violet-600"><Smartphone className="h-4 w-4" /></span>
+                                    <span>
+                                        <span className={`block text-sm font-bold ${theme === 'dark' ? 'text-violet-200' : 'text-violet-800'}`}>Contact number & Circle sharing</span>
+                                        <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{contactSharingStatus || 'Checking sharing status…'}</span>
+                                    </span>
+                                </span>
+                            </button>
+                        )}
+                        {onOpenKeyRecovery && (
+                            <button type="button" onClick={onOpenKeyRecovery}
+                                className={`w-full rounded-2xl border p-4 text-left transition-colors ${theme === 'dark'
+                                    ? 'bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/10'
+                                    : 'bg-amber-50/70 border-amber-200 hover:bg-amber-50'}`}>
+                                <span className="flex items-center gap-3">
+                                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600"><Key className="h-4 w-4" /></span>
+                                    <span>
+                                        <span className={`block text-sm font-bold ${theme === 'dark' ? 'text-amber-200' : 'text-amber-800'}`}>Recover encrypted data</span>
+                                        <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">Use this after changing or losing a device.</span>
+                                    </span>
+                                </span>
+                            </button>
+                        )}
+                        <button type="button" onClick={onSignOut}
+                            className={`w-full rounded-2xl border px-4 py-3 text-sm font-bold transition-colors flex items-center justify-between ${theme === 'dark'
+                                ? 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-100'
+                                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-800 shadow-sm'}`}>
+                            <span className="flex items-center gap-2"><Lock className="w-4 h-4 text-indigo-500" />Sign out</span>
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400">This device</span>
+                        </button>
+                        <button type="button" onClick={() => {
+                            // The confirmation dialog is owned by the main settings shell.
+                            setCurrentView('main');
+                            setShowDeleteModal(true);
+                            setDeleteConfirmText('');
+                            setDeletePassword('');
+                            setDeleteError(null);
+                        }}
+                            className={`w-full rounded-2xl px-4 py-3 text-xs font-bold transition-colors flex items-center justify-center gap-2 ${theme === 'dark' ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`}>
+                            <Trash2 className="w-4 h-4" />Permanently delete account
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     // Contribution History View
     if (currentView === 'contributions') {
@@ -476,6 +647,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
                             {contributions.map((item) => {
                                 const isPinCorrection = item.type === 'pin_correction' || item.isAccurate === false;
+                                const isBuildingPhoto = item.type === 'building_photo';
                                 const dateFormatted = new Date(item.timestamp).toLocaleDateString(undefined, {
                                     month: 'short',
                                     day: 'numeric',
@@ -497,7 +669,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     >
                                         {/* Top Meta Row */}
                                         <div className="flex items-center justify-between gap-2 mb-2">
-                                            {isPinCorrection ? (
+                                            {isBuildingPhoto ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-violet-500/15 text-violet-500 border border-violet-500/30">
+                                                    <Camera className="w-3 h-3" />
+                                                    <span>Building Photo</span>
+                                                </span>
+                                            ) : isPinCorrection ? (
                                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/15 text-amber-500 border border-amber-500/30">
                                                     <MapPin className="w-3 h-3" />
                                                     <span>Pin Correction</span>
@@ -508,9 +685,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                                     <span>Trip Review</span>
                                                 </span>
                                             )}
-                                            <span className="text-[10px] font-semibold text-slate-400 shrink-0">
-                                                {dateFormatted} · {timeFormatted}
-                                            </span>
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                <span className="text-[10px] font-semibold text-slate-400">
+                                                    {dateFormatted} · {timeFormatted}
+                                                </span>
+                                                {isBuildingPhoto && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void withdrawBuildingPhoto(item)}
+                                                        disabled={withdrawingPhotoId === item.tripId?.slice('photo_'.length)}
+                                                        className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-50 transition-colors"
+                                                        title={item.reviewStatus === 'approved' ? 'Remove photo' : 'Withdraw submission'}
+                                                        aria-label={item.reviewStatus === 'approved' ? 'Remove photo' : 'Withdraw submission'}
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
 
                                         {/* Destination Title & Address */}
@@ -521,6 +712,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                             <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">
                                                 {item.destinationAddress}
                                             </p>
+                                        )}
+                                        {isBuildingPhoto && item.imageUrl && (
+                                            <img src={item.imageUrl} alt="Submitted building" className="mt-3 h-28 w-full rounded-xl border border-slate-200/30 object-cover" />
                                         )}
 
                                         {/* Badges / Details Row */}
@@ -542,7 +736,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                                 </span>
                                             )}
 
-                                            {item.isAccurate ? (
+                                            {(isBuildingPhoto || isPinCorrection) ? (
+                                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${item.reviewStatus === 'approved' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : item.reviewStatus === 'rejected' ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
+                                                    {item.reviewStatus === 'approved' ? (isPinCorrection ? '✓ Auto-approved' : '✓ Approved') : item.reviewStatus === 'rejected' ? 'Not approved' : '◷ In review'}
+                                                </span>
+                                            ) : item.isAccurate ? (
                                                 <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                                     ✅ Pin Perfect
                                                 </span>
@@ -586,11 +784,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         >
             {/* Header */}
             <div className={`p-6 border-b ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'} `}>
-                <div className="flex items-center justify-between mb-8">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
                     <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'} `}>
                         My Settings
                     </h2>
                     <div className="flex items-center gap-2">
+                        {!isEditingProfile && (
+                            <button
+                                type="button"
+                                onClick={() => setCurrentView('account')}
+                                className={`px-3 py-2 rounded-xl border text-sm font-bold transition-all flex items-center gap-1.5 ${theme === 'dark'
+                                    ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'}`}
+                            >
+                                <User className="w-3.5 h-3.5" />
+                                <span>Account</span>
+                            </button>
+                        )}
                         {!isEditingProfile ? (
                             <button
                                 onClick={() => {
@@ -735,7 +945,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     id="privacy"
                     title="Privacy & Visibility"
                     icon={Shield}
-                    subtitle={`${localSettings.privacyMode === 'blurred' ? 'Neighborhood Blurred' : localSettings.privacyMode === 'status_only' ? 'Status Only' : localSettings.privacyMode === 'frozen' ? 'Location Frozen' : 'Exact GPS'} • ${localSettings.locationSharing ? 'Sharing On' : 'Sharing Off'}`}
+                    subtitle={`${localSettings.privacyMode === 'blurred' ? 'Neighborhood Blurred' : localSettings.privacyMode === 'invisible' ? 'Invisible' : 'Exact GPS'}`}
                 >
                     {/* Granular Ghost & Privacy Blur Selector */}
                     <div className="mb-4 pb-3 border-b border-white/10">
@@ -748,18 +958,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <p className="text-[11px] text-slate-400">Control how circle members see your location</p>
                             </div>
                             <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300">
-                                {localSettings.privacyMode === 'blurred' ? 'Blurred' : localSettings.privacyMode === 'status_only' ? 'Milestones' : localSettings.privacyMode === 'frozen' ? 'Frozen' : 'Exact'}
+                                {localSettings.privacyMode === 'blurred' ? 'Blurred' : localSettings.privacyMode === 'invisible' ? 'Invisible' : 'Exact'}
                             </span>
                         </div>
 
-                        <div className={`grid grid-cols-2 gap-1.5 p-1 rounded-xl border mt-2 ${
+                        <div className={`grid grid-cols-3 gap-1.5 p-1 rounded-xl border mt-2 ${
                             theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'
                         }`}>
                             {[
                                 { id: 'exact', icon: MapPin, label: 'Exact (5m)', desc: 'Live GPS Pin' },
                                 { id: 'blurred', icon: EyeOff, label: 'Blurred (~1.5mi)', desc: 'Neighborhood Halo' },
-                                { id: 'status_only', icon: Building, label: 'Status Only', desc: 'Geofences Only' },
-                                { id: 'frozen', icon: Snowflake, label: 'Frozen', desc: 'Pause Location' }
+                                { id: 'invisible', icon: EyeOff, label: 'Invisible', desc: 'Hide from circle' }
                             ].map(mode => {
                                 const isCurrent = (localSettings.privacyMode || 'exact') === mode.id;
                                 const ModeIcon = mode.icon;
@@ -768,8 +977,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         key={mode.id}
                                         type="button"
                                         onClick={() => {
-                                            updateSetting('privacyMode', mode.id as any);
+                                            updateSetting('privacyMode', mode.id as PrivacyMode);
+                                            updateSetting('locationSharing', mode.id !== 'invisible');
                                             localStorage.setItem('myway_privacy_mode', mode.id);
+                                            if (circleId) setCirclePrivacyMode(circleId, mode.id as PrivacyMode);
                                         }}
                                         className={`p-2 rounded-lg text-left transition-all border ${
                                             isCurrent
@@ -790,9 +1001,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         </div>
                     </div>
 
-                    <SettingRow label="Location Sharing" description="Share your location with family">
-                        <ToggleSwitch enabled={localSettings.locationSharing} onChange={(v) => updateSetting('locationSharing', v)} />
-                    </SettingRow>
                 </AccordionSection>
 
                 {/* 2. Notifications & Alerts */}
@@ -812,7 +1020,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         <ToggleSwitch enabled={localSettings.arrivalAlerts} onChange={(v) => updateSetting('arrivalAlerts', v)} />
                     </SettingRow>
                     <SettingRow label="Speed Alerts" description="Alert when members exceed speed limits">
-                        <ToggleSwitch enabled={localSettings.speedAlerts} onChange={(v) => updateSetting('speedAlerts', v)} />
+                        <ToggleSwitch enabled={!!localSettings.speedAlerts} onChange={(v) => {
+                            try {
+                                localStorage.setItem('setting_speed_alerts', JSON.stringify(v));
+                                localStorage.setItem('myway_speed_alerts', JSON.stringify(v));
+                            } catch (e) {}
+                            updateSetting('speedAlerts', v);
+                        }} />
                     </SettingRow>
                 </AccordionSection>
 
@@ -835,17 +1049,26 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             localStorage.setItem('myway_avoid_highways', String(v));
                         }} />
                     </SettingRow>
+                    <SettingRow
+                        label="Road & Rail Alerts"
+                        description="Show signals, crossings, speed cameras, and stop signs while navigating"
+                    >
+                        <ToggleSwitch
+                            enabled={localSettings.showTrafficControls !== false}
+                            onChange={(v) => updateSetting('showTrafficControls', v)}
+                        />
+                    </SettingRow>
                 </AccordionSection>
 
 
-                {/* 5. Map & 3D Visuals */}
+                {/* 5. Map & Offline */}
                 <AccordionSection
-                    id="map_visuals"
-                    title="Map & 3D Visuals"
+                    id="map_offline_storage"
+                    title="Map & Offline"
                     icon={Map}
-                    subtitle={`${localSettings.buildingScale === 'none' ? 'No Buildings (Clean)' : localSettings.buildingScale === 'flat' ? 'Flat 2D Mode' : localSettings.buildingScale === 'monumental' ? 'Metropolis Mode' : localSettings.buildingScale === 'realistic' ? 'Realistic Scale' : 'Enhanced Heights'} • ${localSettings.landmarkGlow ? 'Glow On' : 'Glow Off'}`}
+                    subtitle={localSettings.buildingScale === 'none' ? 'Clean Map' : localSettings.buildingScale === 'flat' ? 'Flat 2D' : 'Realistic 3D'}
                 >
-                    <div className="space-y-4">
+                    <div className="flex flex-col gap-4">
                         {/* 3D Building Scale */}
                         <div>
                             <div className="flex items-center justify-between mb-2">
@@ -854,7 +1077,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                     <p className="text-[11px] text-slate-500">Scale skyline & downtown structures</p>
                                 </div>
                                 <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-400">
-                                    {localSettings.buildingScale === 'none' ? 'None (Clean)' : localSettings.buildingScale === 'flat' ? 'Flat (0x)' : localSettings.buildingScale === 'monumental' ? '2.6x' : localSettings.buildingScale === 'realistic' ? '1.0x' : '1.8x'}
+                                    {localSettings.buildingScale === 'none' ? 'None (Clean)' : localSettings.buildingScale === 'flat' ? 'Flat (0x)' : '1.0x'}
                                 </span>
                             </div>
                             <div className={`grid grid-cols-2 sm:flex p-1 rounded-xl border gap-1 ${
@@ -863,12 +1086,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 {[
                                     { id: 'none', label: 'None', icon: Minus },
                                     { id: 'flat', label: 'Flat', icon: Square },
-                                    { id: 'realistic', label: 'Real (1x)', icon: Building },
-                                    { id: 'enhanced', label: 'Enhanced (1.8x)', icon: Building2 },
-                                    { id: 'monumental', label: 'Metropolis (2.6x)', icon: Landmark }
+                                    { id: 'realistic', label: 'Real (1x)', icon: Building2 }
                                 ].map(scale => {
                                     const ScaleIcon = scale.icon;
-                                    const isSelected = (localSettings.buildingScale || 'enhanced') === scale.id;
+                                    const isSelected = (localSettings.buildingScale || 'realistic') === scale.id;
                                     return (
                                         <button
                                             key={scale.id}
@@ -887,86 +1108,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             </div>
                         </div>
 
-                        {/* Ambient Landmark Glow */}
-                        <SettingRow
-                            label="Ambient Landmark Glow"
-                            description="Illuminated rim lighting on major structures & geofences"
-                        >
-                            <ToggleSwitch
-                                enabled={localSettings.landmarkGlow !== false}
-                                onChange={(v) => updateSetting('landmarkGlow', v)}
-                            />
-                        </SettingRow>
-
-                        {/* Traffic Controls & Railroad Crossings */}
-                        <SettingRow
-                            label="Traffic Controls & Rail Crossings"
-                            description="Show stop signs, traffic signals, speed cameras, and train crossings on map & HUD"
-                        >
-                            <ToggleSwitch
-                                enabled={localSettings.showTrafficControls !== false}
-                                onChange={(v) => updateSetting('showTrafficControls', v)}
-                            />
-                        </SettingRow>
-
-                        {/* Astronomical Solar Status Widget */}
-                        <div className={`p-3 rounded-2xl border flex items-center justify-between gap-3 ${
-                            solarInfo.isDaylight 
-                                ? 'bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 border-amber-500/30' 
-                                : 'bg-gradient-to-r from-indigo-950/40 via-purple-950/30 to-slate-900/40 border-indigo-500/30'
-                        }`}>
-                            <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
-                                    {solarInfo.solarPhase === 'day' ? (
-                                        <Sun className="w-5 h-5 text-amber-400 shrink-0 animate-spin-slow" />
-                                    ) : solarInfo.solarPhase === 'golden_hour' ? (
-                                        <Sunrise className="w-5 h-5 text-orange-400 shrink-0" />
-                                    ) : solarInfo.solarPhase === 'twilight' ? (
-                                        <Sunset className="w-5 h-5 text-rose-400 shrink-0" />
-                                    ) : (
-                                        <Moon className="w-5 h-5 text-indigo-300 shrink-0" />
-                                    )}
-                                </div>
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <h5 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                            {solarInfo.isDaylight ? 'Solar Daylight Active' : 'Solar Night Active'}
-                                        </h5>
-                                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
-                                            solarInfo.isDaylight ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                                        }`}>
-                                            {solarInfo.sunElevationDeg > 0 ? `+${solarInfo.sunElevationDeg}°` : `${solarInfo.sunElevationDeg}°`} Sun
-                                        </span>
-                                    </div>
-                                    <p className="text-[10px] text-slate-400 font-bold mt-0.5 flex items-center gap-2">
-                                        <span className="inline-flex items-center gap-1">
-                                            <Sunrise className="w-3 h-3 text-amber-400" /> Rise: {solarInfo.sunriseTime}
-                                        </span>
-                                        <span>•</span>
-                                        <span className="inline-flex items-center gap-1">
-                                            <Sunset className="w-3 h-3 text-orange-400" /> Set: {solarInfo.sunsetTime}
-                                        </span>
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="text-right shrink-0">
-                                <span className="text-[9px] uppercase font-bold text-slate-400 block">Auto Skin</span>
-                                <span className="text-xs font-black text-emerald-400">
-                                    {solarInfo.isDaylight ? 'Default' : 'Carbon Amber'}
-                                </span>
-                            </div>
-                        </div>
-
                         {/* Map Skin Selector */}
-                        <div>
+                        <div className="order-first">
                             <div className="flex items-center justify-between mb-2">
                                 <h4 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Map Theme & Skin</h4>
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${theme === 'dark' ? 'bg-white/10 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
                                     {MAP_SKINS.length} Themes
                                 </span>
                             </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            <div className="grid grid-cols-3 gap-1.5">
                                 {MAP_SKINS.map((skin) => {
                                     const selectedSkinId = localSettings.mapSkin || 'default';
                                     const isSelected = selectedSkinId === skin.id || (selectedSkinId === 'warm_cream' && skin.id === 'default');
@@ -974,7 +1124,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         <button
                                             key={skin.id}
                                             onClick={() => updateSetting('mapSkin', skin.id)}
-                                            className={`p-2.5 rounded-xl border text-left flex flex-col gap-1 transition-all relative overflow-hidden ${
+                                            title={skin.description}
+                                            aria-label={`${skin.name}: ${skin.description}`}
+                                            className={`min-w-0 rounded-xl border px-2 py-2 text-left transition-all relative overflow-hidden ${
                                                 isSelected
                                                     ? 'bg-indigo-600/20 border-indigo-500 ring-2 ring-indigo-500/40 text-white shadow-lg'
                                                     : theme === 'dark'
@@ -982,15 +1134,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                                             }`}
                                         >
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-base">{skin.preview}</span>
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className="text-sm shrink-0">{skin.preview}</span>
+                                                <span className="font-black text-[10px] leading-tight truncate flex-1">{skin.name}</span>
                                                 {isSelected && (
-                                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                                    <span className="w-1.5 h-1.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
                                                 )}
-                                            </div>
-                                            <div className="font-black text-xs leading-tight">{skin.name}</div>
-                                            <div className={`text-[10px] leading-tight line-clamp-1 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-                                                {skin.description}
                                             </div>
                                         </button>
                                     );
@@ -998,113 +1147,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             </div>
                         </div>
                     </div>
-                </AccordionSection>
 
-                {/* 6. System & Offline Storage */}
-                <AccordionSection
-                    id="system"
-                    title="System & Storage"
-                    icon={Settings}
-                    subtitle="Cache, Space & Region Maps"
-                >
-                    <div className="space-y-3">
-                        {/* Background Tracking & Battery Optimization Controls */}
-                        <div className={`p-3.5 rounded-2xl border space-y-3 ${
-                            theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-                        }`}>
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2.5">
-                                    <div className="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center shrink-0">
-                                        <Radio className="w-4 h-4 text-indigo-400" />
-                                    </div>
-                                    <div>
-                                        <h4 className={`text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                            Continuous Background Tracking
-                                        </h4>
-                                        <p className="text-[10px] text-slate-400">
-                                            Keep location live when phone is locked or app is closed
-                                        </p>
-                                    </div>
-                                </div>
-                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${
-                                    isBatteryIgnored
-                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                        : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                }`}>
-                                    {isBatteryIgnored ? 'Unrestricted ✓' : 'Optimized'}
-                                </span>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => nativeSettingsService.openAppSettings()}
-                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all flex items-center justify-center gap-1.5 ${
-                                        theme === 'dark'
-                                            ? 'bg-white/5 hover:bg-white/10 text-slate-200 border-white/10'
-                                            : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
-                                    }`}
-                                >
-                                    <MapPin className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                                    <span>Phone Permissions</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        nativeSettingsService.requestIgnoreBatteryOptimizations();
-                                        setTimeout(() => {
-                                            nativeSettingsService.isIgnoringBatteryOptimizations().then(setIsBatteryIgnored);
-                                        }, 1500);
-                                    }}
-                                    className={`py-2 px-2.5 rounded-xl text-[11px] font-bold border text-center transition-all flex items-center justify-center gap-1.5 ${
-                                        theme === 'dark'
-                                            ? 'bg-white/5 hover:bg-white/10 text-slate-200 border-white/10'
-                                            : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
-                                    }`}
-                                >
-                                    <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                    <span>Battery Optimization</span>
-                                </button>
-                            </div>
-
-                            <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-                                <div>
-                                    <div className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
-                                        Prompt on Startup
-                                    </div>
-                                    <div className="text-[10px] text-slate-400">
-                                        Remind if background settings are not fully enabled
-                                    </div>
-                                </div>
-                                <ToggleSwitch
-                                    enabled={!isPromptDisabled}
-                                    onChange={(enabled) => {
-                                        const disabled = !enabled;
-                                        setIsPromptDisabled(disabled);
-                                        nativeSettingsService.setPromptDisabledByUser(disabled);
-                                    }}
-                                />
-                            </div>
-
-                            {onOpenBatteryPrompt && (
-                                <button
-                                    type="button"
-                                    onClick={onOpenBatteryPrompt}
-                                    className="w-full py-1.5 text-center text-[11px] font-extrabold text-indigo-400 hover:text-indigo-300 transition-colors"
-                                >
-                                    View Full Setup Guide & Explanation →
-                                </button>
-                            )}
-                        </div>
-
-                        <StorageManager theme={theme} />
-                        <SettingRow label="Low Data Mode" description="Disable 3D extrusions & raster imagery to conserve mobile bandwidth">
-                            <ToggleSwitch
-                                enabled={isLowDataMode}
-                                onChange={(v) => setIsLowDataMode(v)}
-                            />
-                        </SettingRow>
-                        <SettingRow label="Offline Maps" description="Manage downloaded regions">
+                    <div className={`border-t pt-4 ${theme === 'dark' ? 'border-white/10' : 'border-slate-200'}`}>
+                        <SettingRow label="Downloads" description="Manage saved map areas">
                             <button
                                 onClick={onOpenOfflineMaps}
                                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${theme === 'dark'
@@ -1118,7 +1163,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     </div>
                 </AccordionSection>
 
-                {/* 7. Account & Security */}
+                {/* 6. Account & Security */}
                 <AccordionSection
                     id="account"
                     title="Membership & Security"
@@ -1126,26 +1171,21 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     subtitle="Circle Locker & Billing"
                 >
                     <div className="space-y-3">
-                        {isMapAdmin && (
-                            <div className="space-y-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setIsMapReviewOpen(true)}
-                                    className={`w-full flex items-center justify-between rounded-2xl border p-3.5 text-left transition-colors ${theme === 'dark' ? 'bg-violet-500/10 border-violet-400/25 hover:bg-violet-500/15' : 'bg-violet-50 border-violet-200 hover:bg-violet-100'}`}
-                                >
-                                    <span className="flex items-center gap-2.5"><ShieldCheck className="w-5 h-5 text-violet-500" /><span><span className="block text-sm font-black">My Way Operations</span><span className="block text-[11px] text-slate-500">Review exceptional community map submissions</span></span></span>
-                                    <ChevronRight className="w-4 h-4 text-slate-400" />
-                                </button>
-                                {!hasRecoveryAdmin && (
-                                    <div className={`rounded-2xl border p-3 ${theme === 'dark' ? 'bg-amber-500/10 border-amber-400/25' : 'bg-amber-50 border-amber-200'}`}>
-                                        <p className="text-xs font-black text-amber-500">Add a recovery admin</p>
-                                        <p className="mt-1 text-[11px] text-slate-500">Required before this app-admin account can be deleted.</p>
-                                        <div className="mt-2 flex gap-2"><input value={recoveryAdminEmail} onChange={event => setRecoveryAdminEmail(event.target.value)} placeholder="trusted@email.com" type="email" className="min-w-0 flex-1 rounded-xl border border-slate-300/30 bg-white/5 px-3 py-2 text-xs outline-none" /><button type="button" disabled={!recoveryAdminEmail.trim() || isAssigningRecoveryAdmin} onClick={() => void addRecoveryAdmin()} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-black text-slate-950 disabled:opacity-50">{isAssigningRecoveryAdmin ? 'Adding…' : 'Add'}</button></div>
-                                        {recoveryAdminMessage && <p className="mt-2 text-[11px] text-slate-500">{recoveryAdminMessage}</p>}
-                                    </div>
-                                )}
+                        <div className={`rounded-2xl border p-3.5 ${theme === 'dark'
+                            ? 'bg-emerald-500/10 border-emerald-400/20'
+                            : 'bg-emerald-50/70 border-emerald-100'
+                            }`}>
+                            <div className="flex items-start gap-2.5">
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-white">
+                                    <User className="h-4 w-4" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className={`text-sm font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Signed-in account</p>
+                                    <p className="mt-0.5 break-all text-xs font-bold text-slate-600 dark:text-slate-300">{userEmail || 'Email unavailable for this sign-in method'}</p>
+                                    <p className="mt-1 text-[10px] leading-relaxed text-slate-500">This is the account currently connected to MyWay.</p>
+                                </div>
                             </div>
-                        )}
+                        </div>
                         <div className={`rounded-2xl border p-3.5 ${theme === 'dark'
                             ? 'bg-indigo-500/10 border-indigo-400/20'
                             : 'bg-indigo-50/70 border-indigo-100'
@@ -1156,63 +1196,41 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         <Smartphone className="w-4 h-4" />
                                     </div>
                                     <div>
-                                        <p className={`text-sm font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Your devices</p>
-                                        <p className="text-[11px] leading-relaxed text-slate-500">One device shares live location. Every trusted device can still receive alerts and use chat.</p>
+                                        <p className={`text-sm font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>This device</p>
+                                        <p className="text-[11px] leading-relaxed text-slate-500">The device currently open in MyWay.</p>
                                     </div>
-                                </div>
-                                {trustedDevices.length > 0 && (
-                                    <span className="rounded-full bg-indigo-500/15 px-2 py-1 text-[10px] font-black text-indigo-500 whitespace-nowrap">
-                                        {trustedDevices.length} trusted
-                                    </span>
-                                )}
-                            </div>
-
-                            <div className={`mb-2 flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${theme === 'dark' ? 'bg-slate-950/35' : 'bg-white/70'}`}>
-                                <div className="min-w-0">
-                                    <p className={`text-[10px] font-black uppercase tracking-wide ${theme === 'dark' ? 'text-slate-200' : 'text-slate-700'}`}>My Way v{APP_VERSION}</p>
-                                    <p className="text-[10px] text-slate-500">Circle sync protocol {CIRCLE_SYNC_PROTOCOL_VERSION}</p>
                                 </div>
                                 <span className={`rounded-full px-2 py-1 text-[9px] font-black whitespace-nowrap ${currentDeviceIsMobile ? 'bg-emerald-500/15 text-emerald-600' : 'bg-sky-500/15 text-sky-600'}`}>
                                     {currentDeviceIsMobile ? 'PHONE GPS READY' : 'COMPANION SCREEN'}
                                 </span>
                             </div>
 
-                            <div className="space-y-2">
-                                {trustedDevices.length === 0 ? (
-                                    <p className="rounded-xl bg-white/50 px-3 py-2.5 text-xs text-slate-500">Setting up this device securely…</p>
-                                ) : trustedDevices.filter(device => !device.revokedAt).map(device => {
-                                    const isCurrent = device.id === currentDeviceId;
-                                    return (
-                                        <div key={device.id} className={`rounded-xl px-3 py-2.5 ${theme === 'dark' ? 'bg-slate-950/35' : 'bg-white/80'}`}>
-                                            <div className="flex items-center justify-between gap-2">
-                                                <div className="min-w-0 flex items-center gap-2">
-                                                    {device.platform === 'web' ? <Monitor className="w-4 h-4 text-slate-400 shrink-0" /> : <Smartphone className="w-4 h-4 text-slate-400 shrink-0" />}
-                                                    <div className="min-w-0">
-                                                        <p className={`truncate text-xs font-bold ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>{device.label}{isCurrent ? ' · This device' : ''}</p>
-                                                        <p className="text-[10px] text-slate-500">{device.isLocationPublisher ? 'Sharing live location' : 'Alerts, chat & map access'}</p>
-                                                    </div>
-                                                </div>
-                                                {device.isLocationPublisher && <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[9px] font-black text-emerald-600">LIVE GPS</span>}
-                                            </div>
-                                            <div className="mt-2 flex justify-end gap-2">
-                                                {isCurrent && currentDeviceIsMobile && !device.isLocationPublisher && (
-                                                    <button type="button" disabled={deviceActionPending} onClick={claimThisDeviceForLocation} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[10px] font-black text-white disabled:opacity-50">
-                                                        Share location here
-                                                    </button>
-                                                )}
-                                                {isCurrent && !currentDeviceIsMobile && (
-                                                    <span className="text-[10px] font-semibold text-slate-500">Companion screen</span>
-                                                )}
-                                                {!isCurrent && (
-                                                    <button type="button" disabled={deviceActionPending} onClick={() => revokeOtherDevice(device.id)} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-[10px] font-black text-red-600 disabled:opacity-50">
-                                                        Sign out
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                            <div className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 ${theme === 'dark' ? 'bg-slate-950/35' : 'bg-white/80'}`}>
+                                <div className="min-w-0 flex items-center gap-2">
+                                    {currentDevice.platform === 'web' ? <Monitor className="w-4 h-4 shrink-0 text-slate-400" /> : <Smartphone className="w-4 h-4 shrink-0 text-slate-400" />}
+                                    <div className="min-w-0">
+                                        <p className={`truncate text-xs font-bold ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>{currentDevice.label} · This device</p>
+                                        <p className="text-[10px] text-slate-500">{currentDevice.isLocationPublisher ? 'Sharing live location' : 'Alerts & map access'} · My Way v{APP_VERSION}</p>
+                                    </div>
+                                </div>
+                                {currentDevice.isLocationPublisher && <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[9px] font-black text-emerald-600">LIVE GPS</span>}
                             </div>
+                            {currentDeviceIsMobile && !currentDevice.isLocationPublisher && (
+                                <button type="button" disabled={deviceActionPending} onClick={claimThisDeviceForLocation} className="mt-2 w-full rounded-lg bg-indigo-600 px-2.5 py-2 text-[10px] font-black text-white disabled:opacity-50">
+                                    Share location from this phone
+                                </button>
+                            )}
+                            {nativeBackgroundTrackingService.isSupported() && currentDevice.isLocationPublisher && (
+                                <div className={`mt-2 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${isNativeBackgroundTrackingActive ? (theme === 'dark' ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-emerald-200 bg-emerald-50') : (theme === 'dark' ? 'border-amber-400/25 bg-amber-500/10' : 'border-amber-200 bg-amber-50')}`}>
+                                    <div>
+                                        <p className={`text-[11px] font-black ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>Background location</p>
+                                        <p className="mt-0.5 text-[10px] text-slate-500">{isNativeBackgroundTrackingActive ? 'Continues after you close the MyWay screen.' : 'Open MyWay once to activate secure background tracking.'}</p>
+                                    </div>
+                                    <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${isNativeBackgroundTrackingActive ? 'bg-emerald-500/15 text-emerald-600' : 'bg-amber-500/15 text-amber-600'}`}>
+                                        {isNativeBackgroundTrackingActive ? 'ACTIVE' : 'NOT ACTIVE'}
+                                    </span>
+                                </div>
+                            )}
                             {deviceActionError && <p className="mt-2 text-[11px] font-semibold text-red-500">{deviceActionError}</p>}
                             <button
                                 type="button"
@@ -1226,49 +1244,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             </button>
                         </div>
 
-                        {onManageSubscription && (
-                            <button
-                                onClick={onManageSubscription}
-                                className={`w-full py-3 px-4 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 ${theme === 'dark'
-                                    ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                    } `}
-                            >
-                                <CreditCard className="w-4 h-4 text-indigo-400 shrink-0" />
-                                <span>Manage Subscription</span>
-                            </button>
-                        )}
-                        <button
-                            onClick={onManageCircle}
-                            className={`w-full py-3 rounded-xl font-medium transition-colors ${theme === 'dark'
-                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                } `}>
-                            Manage Family Circle
-                        </button>
-                        <button
-                            onClick={onShowPrivacy}
-                            className={`w-full py-3 rounded-xl font-bold flex items-center justify-between px-4 transition-colors ${theme === 'dark'
-                                ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                } `}>
-                            <span className="flex items-center gap-2">
-                                <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
-                                <span>Circle Privacy & Visibility</span>
-                            </span>
-                            <span className="text-xs text-indigo-400 font-bold">Configure →</span>
-                        </button>
-                        {onOpenKeyRecovery && (
-                            <button
-                                onClick={onOpenKeyRecovery}
-                                className={`w-full py-3 px-4 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 ${theme === 'dark'
-                                    ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                    } `}>
-                                <Key className="w-4 h-4 text-amber-400 shrink-0" />
-                                <span>My Security Locker</span>
-                            </button>
-                        )}
                         <button
                             onClick={handleOpenContributions}
                             className={`w-full py-3 px-4 rounded-xl font-medium transition-colors flex items-center justify-between ${theme === 'dark'
@@ -1310,80 +1285,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     </button>
                 </div>
 
-                {/* ⚠️ Dedicated Danger Zone */}
-                <div className={`mt-8 p-4 rounded-2xl border ${
-                    theme === 'dark'
-                        ? 'bg-red-950/20 border-red-500/20'
-                        : 'bg-red-50/70 border-red-200'
-                }`}>
-                    <div className="flex items-center gap-2 mb-3">
-                        <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
-                        <h4 className={`text-xs font-black uppercase tracking-wider ${
-                            theme === 'dark' ? 'text-red-400' : 'text-red-600'
-                        }`}>
-                            Danger Zone
-                        </h4>
-                    </div>
-
-                    <div className="space-y-2.5">
-                        {onManageCircle && (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    if (confirm('Are you sure you want to leave this circle? Your location data will be removed from the group.')) {
-                                        onManageCircle();
-                                    }
-                                }}
-                                className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-between border ${
-                                    theme === 'dark'
-                                        ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/20 text-amber-300'
-                                        : 'bg-white hover:bg-amber-50 border-amber-200 text-amber-700 shadow-sm'
-                                }`}
-                            >
-                                <span className="flex items-center gap-2">
-                                    <LogOut className="w-4 h-4 text-amber-400 shrink-0" />
-                                    <span>Leave MyFamily Circle</span>
-                                </span>
-                                <span className="text-[10px] uppercase tracking-wider font-extrabold opacity-75">Leave</span>
-                            </button>
-                        )}
-
-                        <button
-                            type="button"
-                            onClick={onSignOut}
-                            className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-between border ${
-                                theme === 'dark'
-                                    ? 'bg-red-500/10 hover:bg-red-500/20 border-red-500/30 text-red-300'
-                                    : 'bg-white hover:bg-red-50 border-red-200 text-red-600 shadow-sm'
-                            }`}
-                        >
-                            <span className="flex items-center gap-2">
-                                <Lock className="w-4 h-4 text-red-400 shrink-0" />
-                                <span>Sign Out</span>
-                            </span>
-                            <span className="text-[10px] uppercase tracking-wider font-extrabold opacity-75">End Session</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setShowDeleteModal(true);
-                                setDeleteConfirmText('');
-                                setDeletePassword('');
-                                setDeleteError(null);
-                            }}
-                            className={`w-full py-2 px-3 rounded-xl text-[11px] font-bold text-center transition-all flex items-center justify-center gap-1.5 ${
-                                theme === 'dark'
-                                    ? 'text-red-400/80 hover:text-red-300 hover:bg-red-500/10'
-                                    : 'text-red-600/80 hover:text-red-700 hover:bg-red-100/50'
-                            }`}
-                        >
-                            <Trash2 className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                            <span>Permanently Delete Account</span>
-                        </button>
-                    </div>
-                </div>
-
                 {/* Upgrade Banner */}
                 {!isPremium && onUpgrade && (
                     <div className="pt-4">
@@ -1396,6 +1297,39 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             <span>Upgrade to Gold</span>
                         </button>
                     </div>
+                )}
+
+                {isMapAdmin && (
+                    <AccordionSection
+                        id="operations"
+                        title="My Way Operations"
+                        icon={ShieldCheck}
+                        subtitle="Community map review & admin recovery"
+                        badge={pendingReviewCount && pendingReviewCount > 0 ? (
+                            <span className="min-w-5 h-5 px-1.5 rounded-full bg-violet-600 text-white text-[10px] font-black grid place-items-center shadow-sm" aria-label={`${pendingReviewCount} submissions pending review`}>
+                                {pendingReviewCount > 99 ? '99+' : pendingReviewCount}
+                            </span>
+                        ) : undefined}
+                    >
+                        <div className="space-y-3">
+                            <button
+                                type="button"
+                                onClick={() => setIsMapReviewOpen(true)}
+                                className={`w-full flex items-center justify-between rounded-2xl border p-3.5 text-left transition-colors ${theme === 'dark' ? 'bg-violet-500/10 border-violet-400/25 hover:bg-violet-500/15' : 'bg-violet-50 border-violet-200 hover:bg-violet-100'}`}
+                            >
+                                <span className="flex items-center gap-2.5"><ShieldCheck className="w-5 h-5 text-violet-500" /><span><span className="block text-sm font-black">Review community submissions</span><span className="block text-[11px] text-slate-500">Resolve exceptional map edits and reports</span></span></span>
+                                <ChevronRight className="w-4 h-4 text-slate-400" />
+                            </button>
+                            {!hasRecoveryAdmin && (
+                                <div className={`rounded-2xl border p-3 ${theme === 'dark' ? 'bg-amber-500/10 border-amber-400/25' : 'bg-amber-50 border-amber-200'}`}>
+                                    <p className="text-xs font-black text-amber-500">Add a recovery admin</p>
+                                    <p className="mt-1 text-[11px] text-slate-500">Required before this app-admin account can be deleted.</p>
+                                    <div className="mt-2 flex gap-2"><input value={recoveryAdminEmail} onChange={event => setRecoveryAdminEmail(event.target.value)} placeholder="trusted@email.com" type="email" className="min-w-0 flex-1 rounded-xl border border-slate-300/30 bg-white/5 px-3 py-2 text-xs outline-none" /><button type="button" disabled={!recoveryAdminEmail.trim() || isAssigningRecoveryAdmin} onClick={() => void addRecoveryAdmin()} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-black text-slate-950 disabled:opacity-50">{isAssigningRecoveryAdmin ? 'Adding…' : 'Add'}</button></div>
+                                    {recoveryAdminMessage && <p className="mt-2 text-[11px] text-slate-500">{recoveryAdminMessage}</p>}
+                                </div>
+                            )}
+                        </div>
+                    </AccordionSection>
                 )}
 
                 {/* Version */}
@@ -1557,7 +1491,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     </div>
                 </div>
             )}
-            {isMapReviewOpen && <MapReviewPanel theme={theme} onClose={() => setIsMapReviewOpen(false)} />}
+            {isMapReviewOpen && <MapReviewPanel theme={theme} onClose={() => setIsMapReviewOpen(false)} onQueueCountChange={setPendingReviewCount} />}
         </div>
     );
 };

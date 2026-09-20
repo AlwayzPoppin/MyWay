@@ -3,6 +3,7 @@ import { Geolocation } from '@capacitor/geolocation';
 import { App } from '@capacitor/app';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
+import { nativeSettingsService } from '../services/nativeSettingsService';
 
 interface PermissionGuardProps {
     children: React.ReactNode;
@@ -132,6 +133,10 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
         checkPermissions();
     };
 
+    const openPhoneSettings = async () => {
+        await nativeSettingsService.openAppSettings();
+    };
+
     const handleBypass = () => {
         try {
             localStorage.setItem('myway_bypass_permissions', 'true');
@@ -174,19 +179,19 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
                 <div className="w-full max-w-sm space-y-4">
                     {status.location !== 'granted' && (
                         <button
-                            onClick={requestLocation}
+                            onClick={status.location === 'denied' ? openPhoneSettings : requestLocation}
                             className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold text-lg shadow-lg transition-all active:scale-95 cursor-pointer"
                         >
-                            Enable Precise Location
+                            {status.location === 'denied' ? 'Open Phone Settings for Location' : 'Enable Precise Location'}
                         </button>
                     )}
 
                     {status.notifications !== 'granted' && (
                         <button
-                            onClick={requestNotifications}
+                            onClick={status.notifications === 'denied' ? openPhoneSettings : requestNotifications}
                             className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-bold text-lg shadow-lg transition-all active:scale-95 border border-white/10 cursor-pointer"
                         >
-                            Enable Notifications
+                            {status.notifications === 'denied' ? 'Open Phone Settings for Notifications' : 'Enable Notifications'}
                         </button>
                     )}
 
@@ -199,7 +204,7 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, theme }) =>
                 </div>
 
                 <p className="mt-12 text-sm opacity-60">
-                    MyWay GPS uses your location <b>only</b> for safety features and E2EE messaging within your family circle.
+                    MyWay GPS uses your location <b>only</b> for location sharing and safety features within your family circle.
                 </p>
             </div>
         );

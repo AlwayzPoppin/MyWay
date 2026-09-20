@@ -4,7 +4,7 @@ import { formatMemberStatus } from '../utils/memberStatus';
 
 interface QuickActionsProps {
     member: FamilyMember;
-    onMessage?: () => void;
+    onText?: () => void;
     onCheckIn: () => void;
     onSendEmoji: (emoji: string) => void;
     onCall: () => void;
@@ -16,7 +16,7 @@ interface QuickActionsProps {
 
 const QuickActions: React.FC<QuickActionsProps> = ({
     member,
-    onMessage,
+    onText,
     onCheckIn,
     onSendEmoji,
     onCall,
@@ -75,13 +75,13 @@ const QuickActions: React.FC<QuickActionsProps> = ({
             {/* Action buttons (Only for other circle members) */}
             {!isCurrentUser ? (
                 <div className="grid grid-cols-4 gap-2">
-                    {onMessage && (
+                    {onText && (
                         <button
-                            onClick={onMessage}
+                            onClick={onText}
                             className="flex flex-col items-center gap-1 p-2.5 rounded-xl bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 transition-all active:scale-95"
                         >
                             <span className="text-lg">💬</span>
-                            <span className="text-[10px] font-bold uppercase">Message</span>
+                            <span className="text-[10px] font-bold uppercase">Text</span>
                         </button>
                     )}
 

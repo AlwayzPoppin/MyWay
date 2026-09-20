@@ -372,7 +372,7 @@ class ConvoyService {
 
             // Include if in convoy session OR within 15 miles while driving
             if (isConvoyOn && !isMemberInConvoy) return;
-            if (!isConvoyOn && (distNum > 15 || member.privacyMode === 'frozen')) return;
+            if (!isConvoyOn && (distNum > 15 || member.privacyMode === 'invisible' || member.privacyMode === 'frozen')) return;
 
             // Determine if member is ahead or behind based on coordinates relative to destination or speed
             let isAhead = false;

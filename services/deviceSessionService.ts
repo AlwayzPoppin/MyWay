@@ -110,7 +110,7 @@ export const subscribeToTrustedDevices = (userId: string, callback: (devices: Tr
 
 /** Returns true only for the one device permitted to publish Circle GPS. */
 export const isCurrentLocationPublisher = (activeLocationDeviceId?: string | null): boolean => {
-    // A desktop is a companion screen: it can plan, chat, and receive alerts,
+    // A desktop is a companion screen: it can plan routes, open contacts, and receive alerts,
     // but only a phone supplies the account's shared live position.
     if (!isCurrentDeviceMobile()) return false;
     // Older profiles are allowed until their first device registration completes.

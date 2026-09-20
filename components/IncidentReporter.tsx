@@ -1,107 +1,57 @@
-﻿import React, { useState } from 'react';
-import { IncidentType, IncidentReport } from '../types';
-import { hapticSuccess } from '../utils/haptics';
-import { AlertTriangle, CarFront, CircleOff, Construction, LightbulbOff, MapPin, Radio, Siren, Trash2, Waves, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { AlertTriangle, ArrowLeftRight, CarFront, Check, CircleOff, CloudRain, Construction, LightbulbOff, LockKeyhole, MapPin, MapPinned, PawPrint, Radio, Siren, TrafficCone, Trash2, Waves, X } from 'lucide-react';
+import { IncidentReport, IncidentType } from '../types';
+import { hapticSuccess, hapticTick } from '../utils/haptics';
 
-interface IncidentReporterProps {
-  onReport: (type: IncidentType, details?: string) => void;
-  onClose: () => void;
-  theme?: 'light' | 'dark';
-  isMobile?: boolean;
-  activeIncidents?: IncidentReport[];
-  onRemoveIncident?: (id: string) => void;
-  currentUserId?: string;
-}
+interface IncidentReporterProps { onReport: (type: IncidentType, details?: string) => void; onClose: () => void; theme?: 'light' | 'dark'; isMobile?: boolean; activeIncidents?: IncidentReport[]; onRemoveIncident?: (id: string) => void; currentUserId?: string; }
+type Icon = React.ComponentType<{ className?: string }>;
+interface ReportChoice { label: string; details: string; icon: Icon; type?: IncidentType; }
+interface ReportCategory { id: string; type: IncidentType; label: string; sublabel: string; icon: Icon; color: string; choices: ReportChoice[]; permanent?: boolean; }
 
-interface IncidentOption {
-  type: IncidentType;
-  label: string;
-  sublabel: string;
-  icon: React.ComponentType<{ className?: string }>;
-  bgColor: string;
-  borderColor: string;
-  glowColor: string;
-}
-
-const INCIDENT_OPTIONS: IncidentOption[] = [
-  { type: 'police', label: 'Police Trap', sublabel: 'Radar / hidden', icon: Siren, bgColor: 'from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600', borderColor: 'border-blue-400/40', glowColor: 'shadow-[0_0_25px_rgba(59,130,246,0.5)]' },
-  { type: 'hazard', label: 'Road Hazard', sublabel: 'Debris / object', icon: AlertTriangle, bgColor: 'from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500', borderColor: 'border-amber-400/40', glowColor: 'shadow-[0_0_25px_rgba(245,158,11,0.5)]' },
-  { type: 'shoulder', label: 'On Shoulder', sublabel: 'Stopped vehicle', icon: CarFront, bgColor: 'from-purple-600 to-pink-700 hover:from-purple-500 hover:to-pink-600', borderColor: 'border-purple-400/40', glowColor: 'shadow-[0_0_25px_rgba(168,85,247,0.5)]' },
-  { type: 'construction', label: 'Construction', sublabel: 'Work / lane closed', icon: Construction, bgColor: 'from-orange-600 to-amber-700 hover:from-orange-500 hover:to-amber-600', borderColor: 'border-orange-400/40', glowColor: 'shadow-[0_0_25px_rgba(249,115,22,0.5)]' },
-  { type: 'traffic', label: 'Traffic Jam', sublabel: 'Standstill / slow', icon: TrafficJamCars, bgColor: 'from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600', borderColor: 'border-red-400/40', glowColor: 'shadow-[0_0_25px_rgba(239,68,68,0.5)]' },
-  { type: 'safety_alert', label: 'Flooded Road', sublabel: 'Water across road', icon: FloodWarning, bgColor: 'from-sky-600 to-cyan-700 hover:from-sky-500 hover:to-cyan-600', borderColor: 'border-sky-300/45', glowColor: 'shadow-[0_0_25px_rgba(14,165,233,0.5)]' },
-  { type: 'road_closed', label: 'Road Closed', sublabel: 'Blocked / detour', icon: CircleOff, bgColor: 'from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600', borderColor: 'border-rose-400/40', glowColor: 'shadow-[0_0_25px_rgba(244,63,94,0.5)]' },
-  { type: 'signal_out', label: 'Signal Out', sublabel: 'Traffic light', icon: LightbulbOff, bgColor: 'from-yellow-600 to-amber-700 hover:from-yellow-500 hover:to-amber-600', borderColor: 'border-yellow-400/40', glowColor: 'shadow-[0_0_25px_rgba(234,179,8,0.45)]' }
+const CATEGORIES: ReportCategory[] = [
+  { id: 'crash', type: 'crash', label: 'Crash', sublabel: 'Collision ahead', icon: AlertTriangle, color: 'rose', choices: [{ label: 'Crash', details: 'Crash', icon: AlertTriangle }, { label: 'Multi-vehicle', details: 'Multi-vehicle crash', icon: CarFront }, { label: 'Other side', details: 'Crash on the other side', icon: ArrowLeftRight }] },
+  { id: 'traffic', type: 'traffic', label: 'Traffic', sublabel: 'Slow or stopped', icon: TrafficCone, color: 'red', choices: [{ label: 'Traffic', details: 'Moderate traffic', icon: TrafficCone }, { label: 'Heavy', details: 'Heavy traffic', icon: CarFront }, { label: 'Standstill', details: 'Standstill traffic', icon: CircleOff }] },
+  { id: 'hazard', type: 'hazard', label: 'Hazard', sublabel: 'Object or danger', icon: AlertTriangle, color: 'amber', choices: [{ label: 'Road hazard', details: 'Road hazard', icon: AlertTriangle }, { label: 'Debris', details: 'Debris in road', icon: Construction }, { label: 'Vehicle on shoulder', details: 'Stopped vehicle on shoulder', icon: CarFront, type: 'shoulder' }] },
+  { id: 'blocked-lane', type: 'blocked_lane', label: 'Blocked lane', sublabel: 'Lane obstruction', icon: TrafficCone, color: 'orange', choices: [{ label: 'Any lane', details: 'Blocked lane', icon: TrafficCone }, { label: 'Left lane', details: 'Left lane blocked', icon: ArrowLeftRight }, { label: 'Center lane', details: 'Center lane blocked', icon: TrafficCone }, { label: 'Right lane', details: 'Right lane blocked', icon: ArrowLeftRight }] },
+  { id: 'weather', type: 'bad_weather', label: 'Bad weather', sublabel: 'Road conditions', icon: CloudRain, color: 'sky', choices: [{ label: 'Rain', details: 'Heavy rain', icon: CloudRain }, { label: 'Fog', details: 'Low visibility fog', icon: CloudRain }, { label: 'Icy road', details: 'Icy road', icon: AlertTriangle }, { label: 'Flooding', details: 'Flooded road', icon: Waves }] },
+  { id: 'animal', type: 'animal', label: 'Animal', sublabel: 'On or near road', icon: PawPrint, color: 'emerald', choices: [{ label: 'Animal', details: 'Animal near road', icon: PawPrint }, { label: 'In lane', details: 'Animal in lane', icon: PawPrint }, { label: 'On shoulder', details: 'Animal on shoulder', icon: PawPrint }] },
+  { id: 'closure', type: 'road_closed', label: 'Road closed', sublabel: 'Blocked or detour', icon: CircleOff, color: 'violet', choices: [{ label: 'Road closed', details: 'Road closed', icon: CircleOff }, { label: 'Construction', details: 'Construction closure', icon: Construction, type: 'construction' }, { label: 'Signal out', details: 'Traffic signal out', icon: LightbulbOff, type: 'signal_out' }] },
+  { id: 'access', type: 'missing_vehicle_access', label: 'Map & access', sublabel: 'Lasting map correction', icon: MapPinned, color: 'indigo', permanent: true, choices: [{ label: 'Missing vehicle access', details: 'Missing vehicle access', icon: MapPinned }, { label: 'Wrong direction', details: 'Wrong traffic direction', icon: ArrowLeftRight, type: 'wrong_traffic_direction' }, { label: 'Restricted access', details: 'Private or restricted access', icon: LockKeyhole, type: 'restricted_access' }] },
 ];
-
-const ROAD_FEATURE_OPTIONS: IncidentOption[] = [
-  { type: 'speed_bump', label: 'Speed Bump', sublabel: 'Permanent road feature', icon: SpeedBumpSign, bgColor: 'from-slate-600 to-slate-700 hover:from-slate-500 hover:to-slate-600', borderColor: 'border-slate-300/35', glowColor: 'shadow-[0_0_20px_rgba(100,116,139,0.35)]' }
-];
-
-function SpeedBumpSign({ className }: { className?: string }) {
-  return <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
-    <rect x="4.2" y="4.2" width="15.6" height="15.6" rx="1.3" transform="rotate(45 12 12)" fill="#facc15" stroke="#fff" strokeWidth="1.15" />
-    <path d="M6.8 15.2h2.2c.55-2.7 1.5-4.05 3-4.05s2.45 1.35 3 4.05h2.2" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>;
-}
-
-function TrafficJamCars({ className }: { className?: string }) {
-  return <svg viewBox="0 0 36 28" aria-hidden="true" className={className}>
-    <g transform="translate(1 7)">
-      <path d="M2 14v-7l3-5h10l3 5v7H2Z" fill="#ffffff" />
-      <path d="M6 4.5h8l1.6 3H4.4l1.6-3Z" fill="#991b1b" />
-      <circle cx="5.5" cy="14" r="2" fill="#991b1b" /><circle cx="14.5" cy="14" r="2" fill="#991b1b" />
-    </g>
-    <g transform="translate(16 1)">
-      <path d="M2 16v-8l3-5h10l3 5v8H2Z" fill="#ffffff" />
-      <path d="M6 5h8l1.6 3H4.4L6 5Z" fill="#991b1b" />
-      <circle cx="5.5" cy="16" r="2" fill="#991b1b" /><circle cx="14.5" cy="16" r="2" fill="#991b1b" />
-    </g>
-  </svg>;
-}
-
-function FloodWarning({ className }: { className?: string }) {
-  return <svg viewBox="0 0 28 28" aria-hidden="true" className={className} fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 10c1.6-1.8 3.2-1.8 4.8 0 1.6 1.8 3.2 1.8 4.8 0 1.6-1.8 3.2-1.8 4.8 0 1.6 1.8 3.2 1.8 4.8 0" />
-    <path d="M3 16c1.6-1.8 3.2-1.8 4.8 0 1.6 1.8 3.2 1.8 4.8 0 1.6-1.8 3.2-1.8 4.8 0 1.6 1.8 3.2 1.8 4.8 0" />
-    <path d="M3 22c1.6-1.8 3.2-1.8 4.8 0 1.6 1.8 3.2 1.8 4.8 0 1.6-1.8 3.2-1.8 4.8 0 1.6 1.8 3.2 1.8 4.8 0" />
-  </svg>;
-}
-
-const iconForType = (type: IncidentType): React.ComponentType<{ className?: string }> => {
-  const option = [...INCIDENT_OPTIONS, ...ROAD_FEATURE_OPTIONS].find(item => item.type === type);
-  return option?.icon || AlertTriangle;
-};
-
-const ReportTile: React.FC<{ option: IncidentOption; onSelect: (type: IncidentType) => void }> = ({ option, onSelect }) => {
-  const Icon = option.icon;
-  return <button key={option.type} onClick={() => onSelect(option.type)} className={`p-3.5 rounded-2xl bg-gradient-to-br border flex flex-col items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer group ${option.bgColor} ${option.borderColor} ${option.glowColor} text-white shadow-lg`}>
-    <Icon className="w-7 h-7 drop-shadow-md transition-transform group-hover:scale-110 group-active:scale-90" />
-    <div className="text-center"><p className="text-xs font-black tracking-tight leading-tight">{option.label}</p><p className="text-[9px] font-bold text-white/70 leading-tight mt-0.5">{option.sublabel}</p></div>
-  </button>;
-};
+const colorClasses: Record<string, string> = { rose: 'border-rose-400 bg-rose-500/15 text-rose-800 dark:text-rose-100', red: 'border-red-400 bg-red-500/15 text-red-800 dark:text-red-100', amber: 'border-amber-400 bg-amber-500/15 text-amber-800 dark:text-amber-100', orange: 'border-orange-400 bg-orange-500/15 text-orange-800 dark:text-orange-100', sky: 'border-sky-400 bg-sky-500/15 text-sky-800 dark:text-sky-100', emerald: 'border-emerald-400 bg-emerald-500/15 text-emerald-800 dark:text-emerald-100', violet: 'border-violet-400 bg-violet-500/15 text-violet-800 dark:text-violet-100', indigo: 'border-indigo-400 bg-indigo-500/15 text-indigo-800 dark:text-indigo-100' };
+const lightTextColors: Record<string, string> = { rose: '#9f1239', red: '#991b1b', amber: '#92400e', orange: '#9a3412', sky: '#075985', emerald: '#065f46', violet: '#5b21b6', indigo: '#3730a3' };
+const iconForType = (type: IncidentType): Icon => CATEGORIES.find(category => category.type === type)?.icon || AlertTriangle;
 
 const IncidentReporter: React.FC<IncidentReporterProps> = ({ onReport, onClose, theme = 'dark', activeIncidents = [], onRemoveIncident }) => {
-  const [submittedType, setSubmittedType] = useState<IncidentType | null>(null);
-  const handleSelect = (type: IncidentType) => { hapticSuccess(); setSubmittedType(type); onReport(type); window.setTimeout(onClose, 1200); };
+  const [category, setCategory] = useState<ReportCategory | null>(null);
+  const [choice, setChoice] = useState<ReportChoice | null>(null);
+  const [selectingCategoryId, setSelectingCategoryId] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
   const isDark = theme === 'dark';
-
-  return <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 pointer-events-auto">
-    <div className={`w-full max-w-lg rounded-3xl p-6 shadow-2xl border relative overflow-hidden transition-all max-h-[85vh] flex flex-col ${isDark ? 'bg-slate-900/95 border-white/15 text-white' : 'bg-white/95 border-slate-200 text-slate-900'}`}>
-      <div className="flex items-center justify-between mb-4 shrink-0">
-        <div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center shadow-lg"><Radio className="w-5 h-5 text-white" /></div><div><h3 className="text-base font-black tracking-tight">Report road condition</h3><p className="text-[11px] font-bold text-slate-400">Instantly alerts circle and convoy members ahead</p></div></div>
-        <button onClick={onClose} aria-label="Close report menu" className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer"><X className="w-4 h-4" /></button>
+  const selectableChoices = useMemo(() => category?.choices || [], [category]);
+  const selectCategory = (next: ReportCategory) => {
+    if (selectingCategoryId) return;
+    hapticTick();
+    setSelectingCategoryId(next.id);
+    window.setTimeout(() => {
+      setCategory(next);
+      setChoice(null);
+      setSelectingCategoryId(null);
+    }, 140);
+  };
+  const submit = () => { if (!category || !choice) return; hapticSuccess(); onReport(choice.type || category.type, choice.details); setSubmitted(true); window.setTimeout(onClose, 1100); };
+  const back = () => choice ? setChoice(null) : setCategory(null);
+  const title = submitted ? 'Report shared' : choice ? `Report ${category?.label.toLowerCase()}` : category ? `Report ${category.label.toLowerCase()}` : 'Report road condition';
+  return <div className="fixed inset-0 z-[150] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 pointer-events-auto">
+    <div className={`w-full max-w-lg rounded-t-[2rem] sm:rounded-3xl p-5 sm:p-6 shadow-2xl border relative overflow-hidden max-h-[88vh] flex flex-col ${isDark ? 'bg-slate-900/98 border-white/15 text-white' : 'bg-white/98 border-slate-200 text-slate-900'}`}>
+      <div className="flex items-center justify-between mb-4 shrink-0"><div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center shadow-lg"><Radio className="w-5 h-5 text-white" /></div><div><h3 className="text-base font-black tracking-tight">{title}</h3><p className="text-[11px] font-bold text-slate-400">{choice ? 'Review, then share this report.' : category ? 'Choose the most accurate option.' : 'Choose a category, then confirm it.'}</p></div></div><button onClick={onClose} aria-label="Close report menu" className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"><X className="w-5 h-5" /></button></div>
+      <div className="flex-1 overflow-y-auto no-scrollbar">
+        {submitted ? <div className="py-10 flex flex-col items-center justify-center gap-3"><div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center"><Check className="w-8 h-8 text-emerald-300" /></div><h4 className="text-lg font-black">Report shared</h4><p className="text-xs text-emerald-400 font-bold">Drivers nearby can confirm or clear it.</p></div> : !category ? <div className="grid grid-cols-2 gap-3">{CATEGORIES.map(item => { const Icon = item.icon; const isSelecting = selectingCategoryId === item.id; return <button key={item.id} type="button" onClick={() => selectCategory(item)} aria-pressed={isSelecting} style={{ color: isDark ? '#f8fafc' : lightTextColors[item.color] }} className={`min-h-28 rounded-2xl border p-3 flex flex-col items-center justify-center gap-2 transition-all cursor-pointer ${isSelecting ? 'scale-[.97] ring-4 ring-cyan-400/60 shadow-lg' : 'active:scale-[.98]'} ${colorClasses[item.color]}`}><div className={`relative ${isSelecting ? 'scale-90' : ''}`}><Icon className="w-7 h-7" />{isSelecting && <Check className="absolute -right-4 -top-3 w-4 h-4 rounded-full bg-cyan-400 text-slate-950 p-0.5" />}</div><div className="text-center"><p className="text-xs font-black leading-tight">{item.label}</p><p className="text-[9px] font-bold opacity-70 mt-0.5">{item.sublabel}</p></div></button>; })}</div> : !choice ? <div className="space-y-3">{selectableChoices.map(item => { const Icon = item.icon; return <button key={item.details} type="button" onClick={() => { hapticTick(); setChoice(item); }} className="w-full min-h-16 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 p-3.5 flex items-center gap-3 text-left active:scale-[.99] cursor-pointer"><div style={{ color: isDark ? '#f8fafc' : lightTextColors[category.color] }} className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorClasses[category.color]}`}><Icon className="w-5 h-5" /></div><span className="font-black text-sm flex-1">{item.label}</span><span className="text-slate-400 text-lg">›</span></button>; })}</div> : <div className="space-y-4"><div style={{ color: isDark ? '#f8fafc' : lightTextColors[category.color] }} className={`rounded-2xl border-2 p-5 text-center ${colorClasses[category.color]}`}><div className="w-12 h-12 mx-auto rounded-2xl bg-black/15 flex items-center justify-center mb-3">{React.createElement(choice.icon, { className: 'w-7 h-7' })}</div><p className="text-lg font-black">{choice.label}</p><p className="text-xs font-bold opacity-80 mt-1">This will be shared with drivers near this location.</p></div><p className="px-2 text-center text-[11px] font-bold text-slate-400">{category.permanent ? 'This correction stays on the map until the community removes it.' : 'Reports expire automatically unless drivers keep confirming them.'}</p></div>}
+        {activeIncidents.length > 0 && onRemoveIncident && !category && <div className="pt-5 mt-5 border-t border-white/10 space-y-2"><p className="text-[10px] font-black uppercase tracking-wider text-amber-400">Active reports ({activeIncidents.length})</p><div className="space-y-1.5 max-h-32 overflow-y-auto no-scrollbar">{activeIncidents.map(inc => { const Icon = iconForType(inc.type); return <div key={inc.id} className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between gap-2"><div className="flex items-center gap-2 min-w-0"><Icon className="w-5 h-5 text-amber-300 shrink-0" /><p className="text-xs font-black capitalize truncate">{inc.details || inc.type.replace(/_/g, ' ')}</p></div><button type="button" onClick={() => onRemoveIncident(inc.id)} className="p-2 rounded-lg bg-rose-600/80 text-white active:scale-95 cursor-pointer" aria-label="Remove report"><Trash2 className="w-3.5 h-3.5" /></button></div>; })}</div></div>}
       </div>
-      <div className="flex-1 overflow-y-auto space-y-4 no-scrollbar">
-        {submittedType ? <div className="py-8 flex flex-col items-center justify-center gap-3 animate-in zoom-in-95 duration-200"><div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center shadow-[0_0_30px_rgba(16,185,129,0.6)]"><Radio className="w-7 h-7 text-emerald-300" /></div><h4 className="text-lg font-black">Report shared</h4><p className="text-xs text-emerald-400 font-bold">Drivers nearby can now confirm or clear it</p></div> : <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{INCIDENT_OPTIONS.map(option => <ReportTile key={option.type} option={option} onSelect={handleSelect} />)}</div>
-          <div className="pt-1"><div className="flex items-center gap-2 mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400"><Waves className="w-3.5 h-3.5" /><span>Road features</span><span className="font-semibold normal-case tracking-normal text-slate-500">Stays on map until removed</span></div><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{ROAD_FEATURE_OPTIONS.map(option => <ReportTile key={option.type} option={option} onSelect={handleSelect} />)}</div></div>
-        </>}
-        {activeIncidents.length > 0 && onRemoveIncident && <div className="pt-3 border-t border-white/10 space-y-2"><div className="flex items-center justify-between"><p className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Active reports ({activeIncidents.length})</p><span className="text-[9px] text-slate-400 font-bold">Tap to remove</span></div><div className="space-y-1.5 max-h-36 overflow-y-auto no-scrollbar">{activeIncidents.map(inc => { const Icon = iconForType(inc.type); return <div key={inc.id} className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between gap-2"><div className="flex items-center gap-2 min-w-0 flex-1"><Icon className="w-5 h-5 text-amber-300 shrink-0" /><div className="min-w-0"><p className="text-xs font-black capitalize truncate">{inc.type.replace(/_/g, ' ')}</p><p className="text-[9px] text-slate-400 truncate">Reported by {inc.reporterName || 'Driver'} · {inc.upvotes || 1} confirmations</p></div></div><button type="button" onClick={() => onRemoveIncident(inc.id)} className="px-2.5 py-1 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 transition-all shrink-0 cursor-pointer shadow-sm"><Trash2 className="w-3.5 h-3.5" /> Remove</button></div>; })}</div></div>}
-      </div>
-      <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-slate-400 font-bold shrink-0"><span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Uses current GPS coordinates</span><span className="flex items-center gap-1"><Radio className="w-3 h-3" /> Temporary reports auto-expire</span></div>
+      {!submitted && <div className="mt-4 pt-3 border-t border-white/10 flex gap-3 shrink-0">{category ? <button type="button" onClick={back} className="flex-1 min-h-12 rounded-xl border border-white/15 font-black text-sm text-slate-300 hover:bg-white/5 cursor-pointer">Back</button> : <button type="button" onClick={onClose} className="flex-1 min-h-12 rounded-xl border border-white/15 font-black text-sm text-slate-300 hover:bg-white/5 cursor-pointer">Cancel</button>}{choice && <button type="button" onClick={submit} className="flex-[1.4] min-h-12 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-black text-sm cursor-pointer shadow-lg">Report</button>}</div>}
+      {!category && <div className="mt-3 flex items-center justify-center gap-1 text-[10px] text-slate-400 font-bold shrink-0"><MapPin className="w-3 h-3" /> Uses current GPS coordinates</div>}
     </div>
   </div>;
 };
 export default IncidentReporter;
-

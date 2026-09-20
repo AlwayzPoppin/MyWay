@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Place, Location, EntranceType, EntranceBox, EntrancePrecision } from '../types';
-import { compressImageFile, placeCorrectionService } from '../services/placeCorrectionService';
 import { getRotatedBoxCoords, DEFAULT_ENTRANCE_BOX } from '../services/geofenceService';
 import { getDistanceMeters, getBearing } from '../utils/geo';
-import { hapticTick } from '../utils/haptics';
+import { getPlacePhotoKey, placePhotoService } from '../services/placePhotoService';
+import { contributionService } from '../services/contributionService';
+import { hapticError, hapticSuccess, hapticTick } from '../utils/haptics';
 import BrandIcon from './BrandIcon';
 import {
     Home,
@@ -20,14 +21,13 @@ import {
     X,
     Car,
     SquareParking,
-    Crosshair,
     LocateFixed,
     RotateCcw,
     RotateCw,
-    Camera,
-    Loader2,
     Save,
-    Trash2
+    Trash2,
+    Camera,
+    Loader2
 } from 'lucide-react';
 
 export type ActiveZoneType = 'none' | 'driveway' | 'parking';
@@ -54,12 +54,16 @@ interface EditPlaceModalProps {
     place: Place | null;
     isOpen: boolean;
     onClose: () => void;
-    onSave: (placeId: string, updates: Partial<Place>) => void;
+    onSave: (placeId: string, updates: Partial<Place>) => void | Promise<void>;
     onUpdatePlace?: (placeId: string, updates: Partial<Place>) => void;
     onDelete?: (placeId: string) => void;
     onCorrectLocation?: (place: Place) => void;
     userLocation?: Location | null;
     theme?: 'light' | 'dark';
+    currentUserId?: string;
+    currentUserName?: string;
+    currentUserAvatar?: string;
+    onPhotoUploaded?: (placeId: string, photoUrl: string) => void;
 }
 
 const PLACE_CATEGORIES = [
@@ -109,19 +113,26 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
     onDelete,
     onCorrectLocation,
     userLocation,
-    theme = 'dark'
+    theme = 'dark',
+    currentUserId,
+    currentUserName,
+    currentUserAvatar,
+    onPhotoUploaded
 }) => {
-    const fileInputRef = useRef<HTMLInputElement>(null);
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<maplibregl.Map | null>(null);
+    const mapAnchorDotRef = useRef<HTMLDivElement>(null);
 
     const [name, setName] = useState('');
     const [icon, setIcon] = useState('📍');
     const [type, setType] = useState<string>('other');
     const [radius, setRadius] = useState<number>(0.05);
-    const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
+    // Map move events run outside React's render cycle. Keep the current value
+    // available so their geometry update stays in lockstep with the reticle.
+    const radiusRef = useRef(radius);
+    radiusRef.current = radius;
     const [savedPresetNotice, setSavedPresetNotice] = useState<string | null>(null);
-    const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+    const [step, setStep] = useState<1 | 2 | 3>(1);
 
     // Entrance approach and zone footprint state
     const [currentCoords, setCurrentCoords] = useState<Location>({ lat: 0, lng: 0 });
@@ -146,6 +157,10 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
 
     const [pixelsPerMeter, setPixelsPerMeter] = useState(2.2);
     const [isMapLoaded, setIsMapLoaded] = useState(false);
+    const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+    const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
+    const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+    const photoInputRef = useRef<HTMLInputElement | null>(null);
 
     const isDark = theme === 'dark';
     const textColor = isDark ? 'text-white' : 'text-slate-900';
@@ -272,6 +287,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
     // Initialize from place props
     useEffect(() => {
         if (place) {
+            setStep(1);
             setName(place.name || '');
             setIcon(place.icon || '📍');
             setType(place.type || 'other');
@@ -281,7 +297,6 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                     ? place.departureRadius
                     : 0.05;
             setRadius(rawRadius > 5 ? rawRadius / 1000 : rawRadius);
-            setImageUrl(place.imageUrl || undefined);
             setSavedPresetNotice(null);
 
             // Precision coordinates: entrancePrecision.location > entrancePin > entranceLocation > location
@@ -347,10 +362,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             if (primarySource) {
                 const center = mapInstanceRef.current.getCenter();
                 const centerLoc = { lat: center.lat, lng: center.lng };
-                const anchorPoint = (entranceType === 'none' && currentCoords.lat && currentCoords.lng)
-                    ? currentCoords
-                    : (originalPlaceCoords.lat && originalPlaceCoords.lng ? originalPlaceCoords : centerLoc);
-                const circleCoords = createCirclePolygonCoords(anchorPoint, radiusMeters);
+                const circleCoords = createCirclePolygonCoords(centerLoc, radiusMeters);
                 primarySource.setData({
                     type: 'Feature',
                     properties: {},
@@ -395,14 +407,11 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
         const centerLoc = { lat: center.lat, lng: center.lng };
         const activeBox: EntranceBox = { ...entranceBox, rotationDeg };
 
-        // 1. Primary Circular Geofence Layer (Main property radius centered on original place location)
+        // 1. The editable geofence always follows the one center reticle.
         const primarySource = mapInstanceRef.current.getSource('primary-geofence-source') as maplibregl.GeoJSONSource;
         if (primarySource) {
             const geofenceRadiusMeters = (radius && radius > 5 ? radius : (radius || 0.05) * 1000);
-            const anchorPoint = (entranceType === 'none' && currentCoords.lat && currentCoords.lng)
-                ? currentCoords
-                : (originalPlaceCoords.lat && originalPlaceCoords.lng ? originalPlaceCoords : centerLoc);
-            const circleCoords = createCirclePolygonCoords(anchorPoint, geofenceRadiusMeters);
+            const circleCoords = createCirclePolygonCoords(centerLoc, geofenceRadiusMeters);
             primarySource.setData({
                 type: 'Feature',
                 properties: {},
@@ -413,22 +422,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             });
         }
 
-        // 2. Primary property pin
-        const pinSource = mapInstanceRef.current.getSource('primary-property-pin-source') as maplibregl.GeoJSONSource;
-        if (pinSource && (currentCoords.lat || originalPlaceCoords.lat)) {
-            const pinLng = (entranceType === 'none' && currentCoords.lng) ? currentCoords.lng : originalPlaceCoords.lng;
-            const pinLat = (entranceType === 'none' && currentCoords.lat) ? currentCoords.lat : originalPlaceCoords.lat;
-            pinSource.setData({
-                type: 'Feature',
-                properties: {},
-                geometry: {
-                    type: 'Point',
-                    coordinates: [pinLng, pinLat]
-                }
-            });
-        }
-
-        // 3. Entrance Bounding Box Layer (Active driveway/parking zone)
+        // 2. Entrance Bounding Box Layer (Active driveway/parking zone)
         const innerSource = mapInstanceRef.current.getSource('reticle-geofence-source') as maplibregl.GeoJSONSource;
         if (innerSource) {
             if (entranceType !== 'none') {
@@ -447,7 +441,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             }
         }
 
-        // 4. Entrance Hysteresis Layer
+        // 3. Entrance Hysteresis Layer
         const hystSource = mapInstanceRef.current.getSource('reticle-hysteresis-source') as maplibregl.GeoJSONSource;
         if (hystSource) {
             if (entranceType !== 'none') {
@@ -469,7 +463,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
 
     // Initialize MapLibre Interactive Map Viewport
     useEffect(() => {
-        if (!isOpen || !place || !mapContainerRef.current) return;
+        if (!isOpen || !place || step !== 2 || !mapContainerRef.current) return;
 
         const initialLat = currentCoords.lat || place.entrancePrecision?.location?.lat || place.entrancePin?.lat || place.entranceLocation?.lat || place.location?.lat || 35.105;
         const initialLng = currentCoords.lng || place.entrancePrecision?.location?.lng || place.entrancePin?.lng || place.entranceLocation?.lng || place.location?.lng || -78.966;
@@ -494,9 +488,11 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             map.resize();
             updatePixelsPerMeter(map);
 
-            // 1. Primary Circular Geofence Boundary (Main property radius centered on original place location)
+            // 1. One editable geofence boundary centered on the reticle location.
             const geofenceRadiusMeters = (radius && radius > 5 ? radius : (radius || 0.05) * 1000);
-            const circleCoords = createCirclePolygonCoords(originalPlaceCoords, geofenceRadiusMeters);
+            const mapCenter = map.getCenter();
+            const editCenter = { lat: mapCenter.lat, lng: mapCenter.lng };
+            const circleCoords = createCirclePolygonCoords(editCenter, geofenceRadiusMeters);
 
             if (!map.getSource('primary-geofence-source')) {
                 map.addSource('primary-geofence-source', {
@@ -529,44 +525,6 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                         'line-color': '#8b5cf6',
                         'line-width': 1.5,
                         'line-opacity': 0.6
-                    }
-                });
-            }
-
-            // Primary property center pin (shows main house / building origin)
-            if (originalPlaceCoords.lat && originalPlaceCoords.lng && !map.getSource('primary-property-pin-source')) {
-                map.addSource('primary-property-pin-source', {
-                    type: 'geojson',
-                    data: {
-                        type: 'Feature',
-                        properties: {},
-                        geometry: {
-                            type: 'Point',
-                            coordinates: [originalPlaceCoords.lng, originalPlaceCoords.lat]
-                        }
-                    }
-                });
-
-                map.addLayer({
-                    id: 'primary-property-pin-halo',
-                    type: 'circle',
-                    source: 'primary-property-pin-source',
-                    paint: {
-                        'circle-radius': 9,
-                        'circle-color': '#8b5cf6',
-                        'circle-opacity': 0.25
-                    }
-                });
-
-                map.addLayer({
-                    id: 'primary-property-pin',
-                    type: 'circle',
-                    source: 'primary-property-pin-source',
-                    paint: {
-                        'circle-radius': 4.5,
-                        'circle-color': isDark ? '#a78bfa' : '#7c3aed',
-                        'circle-stroke-width': 1.5,
-                        'circle-stroke-color': '#ffffff'
                     }
                 });
             }
@@ -703,14 +661,35 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
 
         const updateCoordsFromCenter = () => {
             if (!mapContainerRef.current || !mapInstanceRef.current) return null;
-            const rect = mapContainerRef.current.getBoundingClientRect();
-            // Reticle is visually centered at [rect.width / 2, rect.height / 2] of container
-            const unprojected = mapInstanceRef.current.unproject([rect.width / 2, rect.height / 2]);
+            // Use the MapLibre viewport's own center pixel. Its canvas can be a
+            // different size from the surrounding DOM during a modal resize.
+            // This keeps the stored coordinate, radius, and visible anchor at
+            // exactly the same point.
+            const centerPoint = mapInstanceRef.current.project(mapInstanceRef.current.getCenter());
+            const unprojected = mapInstanceRef.current.unproject(centerPoint);
+            if (mapAnchorDotRef.current) {
+                mapAnchorDotRef.current.style.left = `${centerPoint.x}px`;
+                mapAnchorDotRef.current.style.top = `${centerPoint.y}px`;
+            }
             const nextCoords = {
                 lat: parseFloat(unprojected.lat.toFixed(6)),
                 lng: parseFloat(unprojected.lng.toFixed(6))
             };
             setCurrentCoords(nextCoords);
+
+            // The circular safe zone has one source of truth: the coordinate
+            // beneath the fixed reticle. Updating it here prevents a render
+            // delay from leaving the radius behind after a pan or fly-to.
+            const primarySource = mapInstanceRef.current.getSource('primary-geofence-source') as maplibregl.GeoJSONSource;
+            if (primarySource) {
+                const radiusMeters = Math.round(Math.max(0.015, Math.min(2, radiusRef.current)) * 1000);
+                const circleCoords = createCirclePolygonCoords(nextCoords, radiusMeters);
+                primarySource.setData({
+                    type: 'Feature',
+                    properties: {},
+                    geometry: { type: 'Polygon', coordinates: [circleCoords] }
+                });
+            }
 
             // Moving the preview map must not recreate a legacy driveway box
             // while the user has Standard (circle-only) selected.
@@ -737,6 +716,10 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             return nextCoords;
         };
 
+        // Position the blue anchor correctly on the first render as well as
+        // after the user begins panning.
+        updateCoordsFromCenter();
+        map.once('idle', updateCoordsFromCenter);
         map.on('move', updateCoordsFromCenter);
 
         map.on('dragend', () => {
@@ -776,25 +759,9 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             }
             setIsMapLoaded(false);
         };
-    }, [isOpen, place, isDark, updatePixelsPerMeter]);
+    }, [isOpen, place, step, isDark, updatePixelsPerMeter]);
 
     if (!isOpen || !place) return null;
-
-    const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        setIsUploadingPhoto(true);
-        try {
-            const compressed = await compressImageFile(file);
-            setImageUrl(compressed);
-        } catch (err) {
-            console.error('Failed to process photo:', err);
-        } finally {
-            setIsUploadingPhoto(false);
-            e.target.value = '';
-        }
-    };
 
     const handleSnapToGps = () => {
         if (!userLocation || !mapInstanceRef.current) return;
@@ -829,28 +796,19 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
     const handleSave = async () => {
         if (!name.trim()) return;
 
-        let finalPhotoUrl = imageUrl;
-        if (imageUrl && imageUrl.startsWith('data:')) {
-            try {
-                finalPhotoUrl = await placeCorrectionService.uploadPlacePhoto(place.id, imageUrl);
-            } catch (err) {
-                console.warn('Failed to upload photo to storage, keeping local:', err);
-            }
-        }
-
         const activeBox: EntranceBox = {
             ...entranceBox,
             rotationDeg
         };
 
-        // Recalculate exact unprojected coordinates right at save time to eliminate stale state
+        // The saved location must match the same MapLibre viewport center that
+        // drives the blue placement dot and preview radius.
         let finalCoords = currentCoords;
-        if (mapInstanceRef.current && mapContainerRef.current) {
-            const rect = mapContainerRef.current.getBoundingClientRect();
-            const unprojected = mapInstanceRef.current.unproject([rect.width / 2, rect.height / 2]);
+        if (mapInstanceRef.current) {
+            const mapCenter = mapInstanceRef.current.getCenter();
             finalCoords = {
-                lat: parseFloat(unprojected.lat.toFixed(6)),
-                lng: parseFloat(unprojected.lng.toFixed(6))
+                lat: parseFloat(mapCenter.lat.toFixed(6)),
+                lng: parseFloat(mapCenter.lng.toFixed(6))
             };
         }
 
@@ -875,7 +833,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             : (place.originalLocation || place.location);
 
         // Save nested metadata directly onto existing place record
-        onSave(place.id, {
+        await onSave(place.id, {
             name: name.trim(),
             icon,
             type: type as any,
@@ -888,7 +846,6 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
             entranceLocation: hasBox ? finalCoords : (null as any),
             entrancePrecision: hasBox ? precisionData : (null as any),
             entranceBox: hasBox ? activeBox : (null as any),
-            imageUrl: finalPhotoUrl,
             // Saving a geofence/pin edit makes this record authoritative if a
             // legacy duplicate exists in another synced store.
             isCorrected: true,
@@ -901,6 +858,58 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
         if (window.confirm(`Delete "${place.name}" from your circle places?`)) {
             onDelete?.(place.id);
             onClose();
+        }
+    };
+
+    const handleBuildingPhoto = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file || !place) return;
+        if (!file.type.startsWith('image/')) {
+            setPhotoFeedback('Choose a photo of the building or storefront.');
+            return;
+        }
+        setIsUploadingPhoto(true);
+        const localPreviewUrl = URL.createObjectURL(file);
+        setPhotoPreviewUrl(localPreviewUrl);
+        setPhotoFeedback('Submitting building photo for review…');
+        try {
+            const photo = await placePhotoService.uploadPhotoContribution({
+                placeId: getPlacePhotoKey({ ...place, isSaved: true }),
+                placeName: name.trim() || place.name,
+                reportedAddress: place.address || place.description || name.trim() || place.name,
+                placeLocation: place.location,
+                file,
+                userId: currentUserId || 'anonymous',
+                userName: currentUserName || 'You',
+                userAvatar: currentUserAvatar
+            });
+            await contributionService.recordTripContribution({
+                tripId: `photo_${photo.id}`,
+                destinationAddress: name.trim() || place.name,
+                destinationName: name.trim() || place.name,
+                placeId: place.id,
+                rating: 0,
+                tags: ['building_photo'],
+                placeType: type === 'residential' || type === 'home' ? 'residential' : 'business',
+                isAccurate: true,
+                type: 'building_photo',
+                timestamp: photo.createdAt,
+                userId: currentUserId,
+                userName: currentUserName,
+                userAvatar: currentUserAvatar,
+                imageUrl: photo.url,
+                reviewStatus: photo.reviewStatus || 'pending'
+            });
+            setPhotoPreviewUrl(photo.url);
+            setPhotoFeedback(photo.isSynced === false ? 'Saved on this device. It will be submitted when storage is available.' : 'Submitted to My Way Operations for review.');
+            hapticSuccess();
+        } catch (error) {
+            console.error('[EditPlaceModal] Community photo upload failed:', error);
+            setPhotoFeedback('We could not save that photo. Check your connection and try again.');
+            hapticError();
+        } finally {
+            setIsUploadingPhoto(false);
+            event.target.value = '';
         }
     };
 
@@ -959,8 +968,22 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                     </button>
                 </div>
 
+                {/* Small drill-down flow: separate the place facts, arrival pin, and geofence decisions. */}
+                <div className="px-6 py-3 border-b border-white/10 shrink-0 relative z-10">
+                    <div className="flex items-center justify-between mb-2">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${subTextColor}`}>Step {step} of 3</span>
+                        <span className={`text-[10px] font-bold ${subTextColor}`}>{step === 1 ? 'Place details' : step === 2 ? 'Pin location' : 'Safe zone'}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5" aria-label={`Step ${step} of 3`}>
+                        {[1, 2, 3].map(item => (
+                            <div key={item} className={`h-1.5 rounded-full transition-colors ${item <= step ? 'bg-indigo-600' : isDark ? 'bg-white/10' : 'bg-slate-200'}`} />
+                        ))}
+                    </div>
+                </div>
+
                 {/* Form Fields - Scrollable */}
                 <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 space-y-4 relative z-10 no-scrollbar">
+                    {step === 1 && <>
                     {/* Place Name */}
                     <div>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
@@ -1010,6 +1033,9 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                         </div>
                     </div>
 
+                    </>}
+
+                    {step === 3 && <>
                     {/* Geofence Detection Radius Slider */}
                     <div className={`p-3 rounded-2xl border ${
                         isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
@@ -1089,6 +1115,32 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                         </div>
                     </div>
 
+                    {/* Saved-place building photos are held for Operations review before community publication. */}
+                    <div className={`p-3 rounded-2xl border ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
+                        {photoPreviewUrl && (
+                            <div className="relative mb-3 overflow-hidden rounded-xl border border-amber-300/50 bg-slate-950">
+                                <img src={photoPreviewUrl} alt="Building photo awaiting review" className="h-28 w-full object-cover opacity-90" />
+                                <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-amber-400 px-2 py-1 text-[10px] font-black text-amber-950 shadow-sm">◷ In review</span>
+                            </div>
+                        )}
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <p className={`text-[10px] font-black uppercase tracking-wider ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>Community building photo</p>
+                                <p className={`mt-1 text-[10px] leading-snug ${subTextColor}`}>Share a clear storefront or building facade to help drivers recognize this place.</p>
+                            </div>
+                            <button type="button" onClick={() => photoInputRef.current?.click()} disabled={isUploadingPhoto} className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-white shadow-sm transition-all active:scale-95 disabled:opacity-50">
+                                {isUploadingPhoto ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                                {isUploadingPhoto ? 'Uploading' : photoPreviewUrl ? 'Replace photo' : 'Add building photo'}
+                            </button>
+                            <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={handleBuildingPhoto} />
+                        </div>
+                        {photoFeedback && <p role="status" className={`mt-2 text-[10px] font-semibold ${photoFeedback.startsWith('We could not') || photoFeedback.startsWith('Choose') ? 'text-rose-500' : 'text-emerald-500'}`}>{photoFeedback}</p>}
+                    </div>
+
+                    </>}
+
+                    {step === 2 && <>
+
                     {/* Entrance Category Selector */}
                     <div className="space-y-1.5">
                         <label className={`text-[10px] font-black uppercase tracking-wider block ${subTextColor}`}>
@@ -1150,6 +1202,9 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                         </div>
                     </div>
 
+                    </>}
+
+                    {step === 2 && <>
                     {/* Precision Map Viewport Preview with Direct Manipulation Handles */}
                     <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
@@ -1338,19 +1393,13 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                                 </div>
                                 )}
 
-                                {/* Entrance Pin Reticle Anchor Centered at crosshair */}
-                                <div className="relative pointer-events-none z-10 flex flex-col items-center">
-                                    <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full border-2 border-indigo-400/60 bg-indigo-500/15 animate-ping" />
-                                    <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-indigo-400 border-2 border-white shadow-[0_0_10px_rgba(99,102,241,1)] z-20" />
-
-                                    <div className="relative flex flex-col items-center -translate-y-[calc(100%+3px)]">
-                                        <div className="relative z-10 w-11 h-11 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 border-[3px] border-white shadow-2xl flex items-center justify-center text-white">
-                                            <Crosshair className="w-5 h-5 shrink-0" />
-                                        </div>
-                                        <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-purple-600 -mt-0.5 filter drop-shadow(0 2px 4px rgba(0,0,0,0.5))" />
-                                        <div className="w-5 h-2 rounded-full bg-black/50 blur-[2px] mt-1" />
-                                    </div>
-                                </div>
+                                {/* One canonical placement point: it follows the map's actual viewport center. */}
+                                <div
+                                    ref={mapAnchorDotRef}
+                                    className="absolute z-20 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.9)]"
+                                    style={{ left: '50%', top: '50%' }}
+                                    aria-hidden="true"
+                                />
                             </div>
 
                             {/* Dual-Layer Legend Indicator */}
@@ -1425,75 +1474,43 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                         </div>
                     </div>
 
-                    {/* Building & Access Photo */}
-                    <div>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                            Building & Access Photo
-                        </label>
-                        {imageUrl ? (
-                            <div className="relative rounded-2xl overflow-hidden border border-white/10 group">
-                                <img src={imageUrl} alt="Place photo" className="w-full h-28 object-cover" />
-                                <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
-                                    <button
-                                        type="button"
-                                        onClick={() => fileInputRef.current?.click()}
-                                        className="px-2.5 py-1 rounded-lg bg-black/70 text-white text-[10px] font-bold backdrop-blur-md hover:bg-black/90 cursor-pointer"
-                                    >
-                                        Change
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setImageUrl(undefined)}
-                                        className="w-6 h-6 rounded-lg bg-red-500/80 text-white text-xs font-bold flex items-center justify-center hover:bg-red-500 cursor-pointer"
-                                        aria-label="Remove photo"
-                                    >
-                                        <X className="w-3.5 h-3.5" />
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={isUploadingPhoto}
-                                className={`w-full py-3 border border-dashed rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                                    isDark ? 'border-white/20 hover:border-indigo-400 bg-white/5' : 'border-slate-300 hover:border-indigo-500 bg-slate-50'
-                                }`}
-                            >
-                                {isUploadingPhoto ? (
-                                    <Loader2 className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
-                                ) : (
-                                    <Camera className="w-4 h-4 text-indigo-400 shrink-0" />
-                                )}
-                                <span className={`text-xs font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                                    {isUploadingPhoto ? 'Compressing...' : 'Take or Upload Place Photo'}
-                                </span>
-                            </button>
-                        )}
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            onChange={handlePhotoChange}
-                            className="hidden"
-                        />
-                    </div>
+                    </>}
+
                 </div>
 
                 {/* Footer Buttons - Sticky at Bottom */}
                 <div className="flex items-center gap-2 px-6 py-4 border-t border-white/10 shrink-0 relative z-10 bg-inherit pb-[max(env(safe-area-inset-bottom,16px),16px)] sm:pb-4">
-                    <button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={!name.trim()}
-                        className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                        <Save className="w-4 h-4 shrink-0" />
-                        <span>Save Changes</span>
-                    </button>
+                    {step > 1 && (
+                        <button
+                            type="button"
+                            onClick={() => setStep(current => (current - 1) as 1 | 2)}
+                            className={`px-5 py-3.5 border font-bold rounded-xl text-sm transition-all active:scale-95 cursor-pointer ${isDark ? 'border-white/15 text-slate-200 hover:bg-white/10' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                        >
+                            Back
+                        </button>
+                    )}
+                    {step < 3 ? (
+                        <button
+                            type="button"
+                            onClick={() => setStep(current => (current + 1) as 2 | 3)}
+                            disabled={step === 1 && !name.trim()}
+                            className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+                        >
+                            Continue
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={handleSave}
+                            disabled={!name.trim()}
+                            className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                            <Save className="w-4 h-4 shrink-0" />
+                            <span>Save Changes</span>
+                        </button>
+                    )}
 
-                    {onDelete && (
+                    {onDelete && step === 1 && (
                         <button
                             type="button"
                             onClick={handleDelete}

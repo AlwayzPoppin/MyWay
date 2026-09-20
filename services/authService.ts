@@ -1,3 +1,4 @@
+import { withDeadline } from '../utils/withDeadline';
 // Authentication Service
 import {
     signInWithPopup,
@@ -13,9 +14,10 @@ import {
     ActionCodeSettings
 } from 'firebase/auth';
 import { ref, set, get, onValue, off, push, update } from 'firebase/database';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, googleProvider, database, storage, db } from './firebase';
+import { auth, googleProvider, database, storage, db, functions } from './firebase';
 import { Geofence } from './geofenceService';
 import { batteryService } from './batteryService';
 import { bufferSosAlert, setupSosAutoFlush, BufferedSosAlert } from './offlineSosBuffer';
@@ -49,10 +51,12 @@ export interface UserProfile {
         theme: 'light' | 'dark' | 'auto';
         notifications: boolean;
         locationSharing: boolean;
+        batteryAlerts?: boolean;
+        arrivalAlerts?: boolean;
+        speedAlerts?: boolean;
     };
     ecdhPublicKey?: string;
     hasCompletedSetup?: boolean;
-    dateOfBirth?: string;
     gender?: 'male' | 'female' | 'non_binary' | 'prefer_not_to_say' | string;
     preciseHomeLocation?: {
         lat: number;
@@ -107,6 +111,12 @@ export interface FamilyCircle {
     inviteCode: string;
     createdAt: number;
     color?: string;
+    sponsorship?: {
+        sponsorId: string;
+        tier: 'gold' | 'platinum';
+        memberLimit: number | null;
+        activatedAt: number;
+    };
 }
 
 const GOOGLE_WEB_CLIENT_ID = (import.meta as any).env.VITE_GOOGLE_WEB_CLIENT_ID || '740093147434-mdtorbehce0b5c1ia8cbhadapn4fna54.apps.googleusercontent.com';
@@ -247,7 +257,7 @@ export const onAuthChange = (callback: (user: User | null) => void): (() => void
 // User Profile Functions
 export const createUserProfileIfNotExists = async (user: User): Promise<void> => {
     const userRef = ref(database, `users/${user.uid}`);
-    const snapshot = await get(userRef);
+    const snapshot = await withDeadline(get(userRef));
 
     if (!snapshot.exists()) {
         const profile: UserProfile = {
@@ -262,8 +272,14 @@ export const createUserProfileIfNotExists = async (user: User): Promise<void> =>
             settings: {
                 theme: 'dark',
                 notifications: true,
-                locationSharing: true
-            }
+                locationSharing: true,
+                batteryAlerts: true,
+                arrivalAlerts: true,
+                speedAlerts: false
+            },
+            // New accounts intentionally enter the streamlined setup flow.
+            // Older profiles did not have this field and are migrated in App.
+            hasCompletedSetup: false
         };
         await set(userRef, profile);
     }
@@ -279,10 +295,32 @@ export const getUserProfile = async (uid: string, retries = 2): Promise<UserProf
             );
 
             const snapshot = await Promise.race([snapshotPromise, timeoutPromise]) as any;
-            return snapshot.exists() ? snapshot.val() as UserProfile : null;
+            if (snapshot.exists()) {
+                return snapshot.val() as UserProfile;
+            }
+            // Fallback to Firestore if RTDB record missing
+            if (db) {
+                try {
+                    const fsSnap = await withDeadline(getDoc(doc(db, 'users', uid)), 3000);
+                    if (fsSnap.exists()) {
+                        return fsSnap.data() as UserProfile;
+                    }
+                } catch {}
+            }
+            return null;
         } catch (error) {
             console.error(`Error fetching user profile (Attempt ${i + 1}/${retries + 1}):`, error);
-            if (i === retries) return null;
+            if (i === retries) {
+                if (db) {
+                    try {
+                        const fsSnap = await withDeadline(getDoc(doc(db, 'users', uid)), 3000);
+                        if (fsSnap.exists()) {
+                            return fsSnap.data() as UserProfile;
+                        }
+                    } catch {}
+                }
+                return null;
+            }
             // Wait a bit before retrying
             await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
         }
@@ -324,7 +362,7 @@ export const updateUserProfile = async (uid: string, updates: Partial<UserProfil
     const userRef = ref(database, `users/${uid}`);
     let existing = {};
     try {
-        const snapshot = await get(userRef);
+        const snapshot = await withDeadline(get(userRef));
         if (snapshot.exists()) {
             existing = snapshot.val();
         }
@@ -344,16 +382,47 @@ export const updateUserProfile = async (uid: string, updates: Partial<UserProfil
     const cleaned = sanitizeForFirebase(mergedProfile);
     
     // 1. Write to Realtime Database
-    await set(userRef, cleaned);
+    await withDeadline(set(userRef, cleaned));
 
     // 2. Mirror to Firestore users document
     if (db) {
         try {
-            await setDoc(doc(db, 'users', uid), cleaned, { merge: true });
+            await withDeadline(setDoc(doc(db, 'users', uid), cleaned, { merge: true }), 5000);
             console.log(`👤 [AuthService] Updated Firestore user profile: users/${uid}`);
         } catch (fsErr: any) {
             console.debug('[AuthService] Firestore user profile sync skipped (RTDB is primary):', fsErr?.message || fsErr);
         }
+    }
+};
+
+/**
+ * Update user settings in Realtime Database and Firestore
+ */
+export const updateUserSettings = async (
+    uid: string,
+    settingsUpdates: Partial<UserProfile['settings']>
+): Promise<void> => {
+    // 1. Mirror directly to Firestore users document
+    if (db) {
+        try {
+            await withDeadline(setDoc(doc(db, 'users', uid), {
+                settings: settingsUpdates
+            }, { merge: true }), 5000);
+            console.log(`👤 [AuthService] Updated Firestore user settings: users/${uid}`);
+        } catch (fsErr: any) {
+            console.debug('[AuthService] Firestore user settings sync skipped:', fsErr?.message || fsErr);
+        }
+    }
+
+    // 2. Write to Realtime Database
+    const settingsRef = ref(database, `users/${uid}/settings`);
+    try {
+        const snapshot = await withDeadline(get(settingsRef));
+        const current = snapshot.exists() ? snapshot.val() : {};
+        const merged = sanitizeForFirebase({ ...current, ...settingsUpdates });
+        await withDeadline(set(settingsRef, merged));
+    } catch (rtdbErr) {
+        console.warn('[AuthService] RTDB updateUserSettings error:', rtdbErr);
     }
 };
  
@@ -361,22 +430,16 @@ export const updateUserProfile = async (uid: string, updates: Partial<UserProfil
  * Upload a profile image to Firebase Storage and return the public URL (with Data URI fallback for CORS).
  */
 export const uploadProfileImage = async (uid: string, file: File): Promise<string> => {
+    const { compressImageFile } = await import('./placeCorrectionService');
+    const dataUrl = await withDeadline(compressImageFile(file, 512, 0.8));
     try {
-        const fileRef = storageRef(storage, `avatars/${uid}/${Date.now()}_${file.name}`);
-        const result = await uploadBytes(fileRef, file);
+        const blob = await (await fetch(dataUrl)).blob();
+        const fileRef = storageRef(storage, `avatars/${uid}/${Date.now()}.jpg`);
+        const result = await uploadBytes(fileRef, blob, { contentType: 'image/jpeg' });
         return await getDownloadURL(result.ref);
     } catch (storageErr) {
-        console.warn('[uploadProfileImage] Cloud Storage unavailable or CORS-blocked, using compressed Data URI fallback:', storageErr);
-        return new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const dataUrl = e.target?.result as string;
-                if (dataUrl) resolve(dataUrl);
-                else reject(new Error('Failed to read image file'));
-            };
-            reader.onerror = () => reject(new Error('FileReader error'));
-            reader.readAsDataURL(file);
-        });
+        console.warn('[uploadProfileImage] Storage unavailable; saving compressed profile photo:', storageErr);
+        return dataUrl;
     }
 };
 
@@ -412,25 +475,36 @@ export const updateCircleColor = async (circleId: string, color: string): Promis
     }
 };
 
-export const joinFamilyCircle = async (inviteCode: string, userId: string): Promise<FamilyCircle | null> => {
-    const circlesRef = ref(database, 'circles');
-    const snapshot = await get(circlesRef);
+export const joinFamilyCircle = async (inviteCode: string, _userId: string): Promise<FamilyCircle | null> => {
+    const result = await httpsCallable<
+        { inviteCode: string },
+        FamilyCircle
+    >(functions, 'joinCircleSafely')({ inviteCode });
+    return result.data || null;
+};
 
-    if (!snapshot.exists()) return null;
+export type CircleSubscriptionEntitlement = {
+    active: boolean;
+    tier: 'free' | 'gold' | 'platinum';
+    sponsorId: string | null;
+    memberLimit: number | null;
+    personalTier: 'free' | 'gold' | 'platinum';
+    isSponsor: boolean;
+    memberCount: number;
+};
 
-    const circles = snapshot.val();
-    for (const circleId in circles) {
-        if (circles[circleId].inviteCode === inviteCode) {
-            const circle = circles[circleId];
-            if (!circle.members.includes(userId)) {
-                circle.members.push(userId);
-                await set(ref(database, `circles/${circleId}`), circle);
-                await updateUserProfile(userId, { familyCircleId: circleId });
-            }
-            return circle;
-        }
-    }
-    return null;
+export const getCircleSubscriptionEntitlement = async (circleId: string): Promise<CircleSubscriptionEntitlement> => {
+    const result = await httpsCallable<{ circleId: string }, CircleSubscriptionEntitlement>(functions, 'getCircleSubscriptionEntitlement')({ circleId });
+    return result.data;
+};
+
+export const sponsorCircleSubscription = async (circleId: string): Promise<CircleSubscriptionEntitlement> => {
+    const result = await httpsCallable<{ circleId: string }, CircleSubscriptionEntitlement>(functions, 'sponsorCircleSubscription')({ circleId });
+    return result.data;
+};
+
+export const removeCircleSponsorship = async (circleId: string): Promise<void> => {
+    await httpsCallable<{ circleId: string }, { removed: boolean }>(functions, 'removeCircleSponsorship')({ circleId });
 };
 
 export const getFamilyCircle = async (circleId: string): Promise<FamilyCircle | null> => {
@@ -445,33 +519,16 @@ export const getFamilyCircle = async (circleId: string): Promise<FamilyCircle | 
  * Leave a family circle. If the user is the owner and there are other members,
  * ownership transfers to the next member automatically.
  */
-export const leaveCircle = async (circleId: string, userId: string, nextCircleId?: string | null): Promise<void> => {
-    const circle = await getFamilyCircle(circleId);
-    if (!circle) throw new Error('Circle not found');
-
-    const updatedMembers = circle.members.filter(m => m !== userId);
-
-    if (updatedMembers.length === 0) {
-        // Last member — delete the circle entirely
-        await set(ref(database, `circles/${circleId}`), null);
-        await set(ref(database, `locations/${circleId}/${userId}`), null);
-        await set(ref(database, `keys/${circleId}`), null);
-        await set(ref(database, `geofences/${circleId}`), null);
-    } else {
-        // Transfer ownership if leaving user is the owner
-        const newOwnerId = circle.ownerId === userId ? updatedMembers[0] : circle.ownerId;
-        await set(ref(database, `circles/${circleId}`), {
-            ...circle,
-            members: updatedMembers,
-            ownerId: newOwnerId,
-        });
-        // Clean up user's location data and key from this circle
-        await set(ref(database, `locations/${circleId}/${userId}`), null);
-        await set(ref(database, `keys/${circleId}/${userId}`), null);
-    }
-
-    // Clear the user's circle reference
-    await updateUserProfile(userId, { familyCircleId: nextCircleId !== undefined ? nextCircleId : null });
+export const leaveCircle = async (
+    circleId: string,
+    _userId: string,
+    nextCircleId?: string | null,
+    successorId?: string
+): Promise<void> => {
+    await httpsCallable<
+        { circleId: string; nextCircleId?: string | null; successorId?: string },
+        { deleted: boolean; ownerId: string | null }
+    >(functions, 'leaveCircleSafely')({ circleId, ...(nextCircleId !== undefined ? { nextCircleId } : {}), ...(successorId ? { successorId } : {}) });
 };
 
 /**
@@ -549,11 +606,7 @@ export const renameFamilyCircle = async (circleId: string, name: string): Promis
  * Deletes a family circle completely (owner-only).
  */
 export const deleteFamilyCircle = async (circleId: string): Promise<void> => {
-    await set(ref(database, `circles/${circleId}`), null);
-    await set(ref(database, `locations/${circleId}`), null);
-    await set(ref(database, `keys/${circleId}`), null);
-    await set(ref(database, `geofences/${circleId}`), null);
-    await set(ref(database, `places/${circleId}`), null);
+    await httpsCallable<{ circleId: string }, { deleted: boolean; memberCount: number }>(functions, 'deleteCircleSafely')({ circleId });
 };
 
 /**

@@ -13,18 +13,12 @@ import {
     GraduationCap,
     Fuel,
     Star,
-    Zap,
-    ShoppingCart,
-    SquareParking,
-    Pill,
-    Landmark,
-    Hospital,
     X,
     Navigation2
 } from 'lucide-react';
 
 interface QuickStopGridProps {
-    onSearch: (query: string) => void;
+    onSearch?: (query: string) => void;
     onClose: () => void;
     theme: 'light' | 'dark';
     userPlaces?: Place[];
@@ -36,7 +30,6 @@ interface QuickStopGridProps {
 }
 
 const QuickStopGrid: React.FC<QuickStopGridProps> = ({
-    onSearch,
     onClose,
     theme,
     userPlaces = [],
@@ -46,7 +39,6 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
     userLocation,
     members = []
 }) => {
-    const [activeTab, setActiveTab] = useState<'saved' | 'quick'>('saved');
     const [showAddForm, setShowAddForm] = useState(false);
     const [placeName, setPlaceName] = useState('');
     const [selectedIcon, setSelectedIcon] = useState('📍');
@@ -70,22 +62,6 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
         { label: '500m (Area)', value: 0.5 },
         { label: '800m (Wide)', value: 0.8 },
     ];
-
-    const categories = [
-        { id: 'gas', iconComp: Fuel, label: 'Gas', query: 'Gas Station', color: '#f97316' },
-        { id: 'coffee', iconComp: Coffee, label: 'Coffee', query: 'Coffee Shop', color: '#22c55e' },
-        { id: 'food', iconComp: Utensils, label: 'Food', query: 'Restaurant', color: '#ef4444' },
-        { id: 'grocery', iconComp: ShoppingCart, label: 'Grocery', query: 'Grocery Store', color: '#3b82f6' },
-        { id: 'parking', iconComp: SquareParking, label: 'Parking', query: 'Parking', color: '#8b5cf6' },
-        { id: 'pharmacy', iconComp: Pill, label: 'Pharmacy', query: 'Pharmacy', color: '#ec4899' },
-        { id: 'atm', iconComp: Landmark, label: 'ATM', query: 'ATM', color: '#14b8a6' },
-        { id: 'hospital', iconComp: Hospital, label: 'Hospital', query: 'Hospital', color: '#dc2626' },
-    ];
-
-    const handleSelectCategory = (query: string) => {
-        onSearch(query);
-        onClose();
-    };
 
     const handleSaveCurrentLocation = () => {
         if (!userLocation) return;
@@ -129,9 +105,9 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                 {/* Header */}
                 <div className="flex items-center justify-between mb-4 shrink-0">
                     <div className="flex items-center gap-2">
-                        <Star className="w-5 h-5 text-yellow-400 fill-current" />
+                        <Star className="w-5 h-5 text-amber-400 fill-amber-400 drop-shadow-sm" />
                         <h3 className={`text-base font-black tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                            Saved Places & Quick Stops
+                            Saved Places
                         </h3>
                     </div>
                     <button
@@ -144,41 +120,8 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                     </button>
                 </div>
 
-                {/* Segmented Control Tabs */}
-                <div className={`flex p-1 rounded-xl border gap-1 mb-3 shrink-0
-                    ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}
-                >
-                    <button
-                        onClick={() => setActiveTab('saved')}
-                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                            activeTab === 'saved'
-                                ? 'bg-indigo-600 text-white shadow-md'
-                                : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                    >
-                        <Star className="w-3.5 h-3.5 fill-current text-yellow-400" />
-                        <span>Saved Places ({userPlaces.length})</span>
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('quick')}
-                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                            activeTab === 'quick'
-                                ? 'bg-indigo-600 text-white shadow-md'
-                                : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                    >
-                        <Zap className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Quick Stops</span>
-                    </button>
-                </div>
-
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto no-scrollbar space-y-3">
-                    {activeTab === 'saved' ? (
-                        /* ──────────────────────────────────────────
-                           SAVED PLACES TAB
-                           ────────────────────────────────────────── */
-                        <>
                             {/* Pin Current Location Banner / Quick Creator */}
                             {userLocation && onAddPlace && (
                                 <div className={`rounded-2xl border p-3 transition-all ${
@@ -414,41 +357,6 @@ const QuickStopGrid: React.FC<QuickStopGridProps> = ({
                                     })}
                                 </div>
                             )}
-                        </>
-                    ) : (
-                        /* ──────────────────────────────────────────
-                           QUICK STOPS TAB
-                           ────────────────────────────────────────── */
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 sm:gap-3 py-2">
-                            {categories.map((cat, index) => {
-                                const IconComp = cat.iconComp;
-                                return (
-                                    <button
-                                        key={cat.id}
-                                        onClick={() => handleSelectCategory(cat.query)}
-                                        className={`group flex flex-col items-center gap-2 p-2.5 sm:p-3 rounded-2xl transition-all duration-200
-                                            hover:scale-105 active:scale-95
-                                            ${theme === 'dark' ? 'bg-white/5 hover:bg-white/10 border border-white/5' : 'bg-slate-50 hover:bg-slate-100 border border-slate-100'}`}
-                                        style={{ animationDelay: `${index * 30}ms` }}
-                                    >
-                                        <div
-                                            className="w-12 h-12 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
-                                            style={{
-                                                backgroundColor: `${cat.color}20`,
-                                                boxShadow: `0 4px 12px ${cat.color}30`
-                                            }}
-                                        >
-                                            <IconComp className="w-6 h-6" style={{ color: cat.color }} />
-                                        </div>
-                                        <span className={`text-[10px] font-semibold uppercase tracking-wide
-                                            ${theme === 'dark' ? 'text-slate-400 group-hover:text-white' : 'text-slate-500 group-hover:text-slate-900'}`}>
-                                            {cat.label}
-                                        </span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    )}
                 </div>
             </div>
         </div>

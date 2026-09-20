@@ -36,6 +36,7 @@ export interface TrafficControlPoint {
 export interface RouteStep {
   instruction: string;
   distance: string;
+  startLocation?: Location; // Coordinates for the start of this step
   endLocation?: Location; // Coordinates for the end of this step
   speedLimit?: number; // Speed limit in MPH
   hasCamera?: boolean; // Safety or speed camera nearby
@@ -45,6 +46,10 @@ export interface RouteStep {
   estimatedToll?: number; // e.g. 19.50
   congestion?: CongestionLevel;
   trafficControl?: TrafficControlType; // Stop sign, traffic light, railroad crossing, etc.
+  roadName?: string; // Street or highway name of this segment (e.g. "McArthur Road")
+  maneuverType?: string; // e.g. "turn", "depart", "arrive", "continue", "merge"
+  maneuverModifier?: string; // e.g. "left", "right", "straight", "slight left", "uturn"
+  distanceMeters?: number; // Exact step distance in meters
 }
 
 /** Temporary traffic alerts plus verified long-lived road features. */
@@ -57,7 +62,14 @@ export type IncidentType =
   | 'safety_alert'
   | 'road_closed'
   | 'signal_out'
-  | 'speed_bump';
+  | 'crash'
+  | 'blocked_lane'
+  | 'bad_weather'
+  | 'animal'
+  | 'speed_bump' | 'stop_sign'
+  | 'missing_vehicle_access'
+  | 'wrong_traffic_direction'
+  | 'restricted_access';
 
 export interface IncidentReport {
   id: string;
@@ -84,6 +96,8 @@ export interface RouteWaypoint {
   location: Location;
   order: number;
   isStop?: boolean;
+  /** A stop deliberately selected from Find Gas. Used to show the refill prompt on arrival. */
+  isFuelStop?: boolean;
 }
 
 export interface RouteLeg {
@@ -109,7 +123,8 @@ export interface NavigationRoute {
   staticDurationSec?: number;
   distanceMeters?: number;
   routeType?: 'fastest' | 'shortest' | 'eco' | 'toll_free' | 'scenic';
-  routeLabel?: string; // e.g. "Fastest Route", "Toll-Free (Save $50.60)", "Shortest Distance", "Eco Fuel Saver"
+  routeLabel?: string; // e.g. "Fastest Route ⚡", "via All American Fwy", "via NC-210"
+  badges?: string[]; // Dynamic attribute badges: ["Fastest"], ["+3 min", "Eco 🌿", "Avoids Freeways"]
   summary?: string; // e.g. "via I-95 N & NJ Turnpike", "via I-295 & US-1"
   fuelEstimateGal?: number; // e.g. 0.28 gallons
   fuelCostEstimate?: string; // e.g. "$68.66"
@@ -118,13 +133,15 @@ export interface NavigationRoute {
   tollCostEstimate?: string; // e.g. "$50.60 tolls" or "No Tolls"
   tollSummary?: string; // e.g. "NJ Turnpike, DE Memorial Bridge, Verrazzano Bridge"
   totalEstimatedTripCost?: string; // e.g. "$119.26 (Gas + Tolls)"
-  savingsLabel?: string; // e.g. "Save $50.60 in tolls", "Save 12.1 mi"
+  savingsLabel?: string; // e.g. "Save $50.60 in tolls", "Save 12.1 mi", "+3 min"
   safetyAdvisory?: string;
   routeGeometry?: [number, number][]; // Full road-following polyline [[lng,lat], ...] from OSRM
   trafficSegments?: TrafficSegment[]; // Visual live traffic congestion polyline segments
   congestionLevel?: CongestionLevel; // Predominant route congestion
   trafficControls?: TrafficControlPoint[]; // Stop signs, traffic lights, railroad crossings along route
   destinationImageUrl?: string; // Storefront / entrance photo URL or Data URI
+  destinationPlaceId?: string;
+  destinationNeedsBuildingPhoto?: boolean;
   destinationEntranceNotes?: string; // Entrance / parking guidance notes
   destinationEntranceType?: EntranceType; // Drive-thru, parking, main door, curbside
   waypoints?: RouteWaypoint[]; // Ordered intermediate waypoints/stops
@@ -149,7 +166,7 @@ export interface CurrentTrip {
   destinationCoords?: Location;
 }
 
-export type PrivacyMode = 'exact' | 'blurred' | 'status_only' | 'frozen';
+export type PrivacyMode = 'exact' | 'blurred' | 'invisible';
 
 export interface CrashImpactMetadata {
   speed: number; // Speed in MPH at impact
@@ -170,6 +187,7 @@ export interface FamilyMember {
   battery: number;
   batteryLevel?: number;
   isCharging?: boolean;
+  batteryCharging?: boolean;
   speed: number;
   lastUpdated: string;
   status: 'Moving' | 'Stationary' | 'Driving' | 'Walking' | 'Offline' | 'Arrived';
@@ -239,8 +257,11 @@ export interface Place {
   rating?: number;
   detourMinutes?: number;
   detourMiles?: number;
+  distanceAheadMiles?: number;
+  streetName?: string;
   maintenanceCategory?: string; // e.g. "Oil Change", "Tire Rotation", "Brake Inspection"
   imageUrl?: string; // Storefront / entrance photo URL or Data URI
+  needsBuildingPhoto?: boolean; // A personal place created without an on-site photo
   isCorrected?: boolean; // User-verified / corrected entrance location
   entranceLocation?: Location; // Driveway curb-cut or entrance coordinate for micro-geofencing
   entrancePin?: Location; // Precision entrance pin coordinates
@@ -330,20 +351,6 @@ export interface HomeState {
   securityMode: 'armed' | 'disarmed' | 'stay';
 }
 
-export interface GroundingLink {
-  title: string;
-  uri: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  senderId: string;
-  text: string;
-  timestamp: string;
-  isAI?: boolean;
-  groundingLinks?: GroundingLink[];
-}
-
 export interface DailyInsight {
   title: string;
   description: string;
@@ -387,6 +394,7 @@ export interface Trip {
   startLocation: Location;
   endLocation?: Location;
   destinationName?: string;
+  destinationLocation?: Location;
   path: TripPoint[];
   totalDistanceMiles: number;
   maxSpeedMph: number;

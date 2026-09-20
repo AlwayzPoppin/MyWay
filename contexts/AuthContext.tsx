@@ -51,7 +51,7 @@ interface AuthContextType {
     createCircle: (name: string, color?: string) => Promise<FamilyCircle>;
     joinCircle: (code: string) => Promise<FamilyCircle | null>;
     switchCircle: (circleId: string) => Promise<void>;
-    leaveCurrentCircle: (circleId: string) => Promise<void>;
+    leaveCurrentCircle: (circleId: string, successorId?: string) => Promise<void>;
     renameCircle: (circleId: string, name: string) => Promise<void>;
     updateCircleColor: (circleId: string, color: string) => Promise<void>;
     deleteCircle: (circleId: string) => Promise<void>;
@@ -139,6 +139,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }, []);
 
     useEffect(() => {
+        // Firebase normally emits an initial auth state immediately. On a cold
+        // mobile launch it can occasionally stall behind a WebView/network
+        // initialization issue, which used to leave the entire app on the
+        // loading screen forever. Let the user reach sign-in after a bounded
+        // wait; a delayed auth callback still restores their session normally.
+        let authStateResolved = false;
+        const authStartupTimeout = window.setTimeout(() => {
+            if (authStateResolved) return;
+            console.warn('[Auth] Timed out waiting for the initial auth state.');
+            setError('Still connecting to MyWay. You can sign in or try again.');
+            setLoading(false);
+        }, 10_000);
+
         // Check if returning from email link sign-in
         if (isEmailLinkSignIn()) {
             setLoading(true);
@@ -154,6 +167,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         let deviceRevocationUnsubscribe: (() => void) | null = null;
         
         const unsubscribe = onAuthChange((firebaseUser) => {
+            authStateResolved = true;
+            window.clearTimeout(authStartupTimeout);
             setUser(firebaseUser);
             if (profileUnsubscribe) {
                 profileUnsubscribe();
@@ -174,9 +189,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 // This is presence metadata only. It gives Circle members a
                 // truthful status for a browser companion without publishing
                 // that browser's coordinates as live account GPS.
+                // A phone app must not overwrite an active desktop companion
+                // label. The circle uses this field to identify that a member is
+                // currently viewing from desktop while their phone remains the
+                // GPS publisher.
                 void updateUserProfile(firebaseUser.uid, {
-                    activeViewerDeviceLabel: currentDevice.label,
-                    activeViewerDevicePlatform: currentDevice.platform,
+                    ...(currentDevice.platform === 'web' ? {
+                        activeViewerDeviceLabel: currentDevice.label,
+                        activeViewerDevicePlatform: currentDevice.platform
+                    } : {}),
                     appVersion: APP_VERSION,
                     syncProtocolVersion: CIRCLE_SYNC_PROTOCOL_VERSION
                 }).catch(error => console.warn('[Devices] Companion presence update pending:', error));
@@ -195,6 +216,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         });
  
         return () => {
+            window.clearTimeout(authStartupTimeout);
             unsubscribe();
             if (profileUnsubscribe) profileUnsubscribe();
             if (deviceRevocationUnsubscribe) deviceRevocationUnsubscribe();
@@ -378,7 +400,7 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
         await refreshCircles();
     };
 
-    const handleLeaveCurrentCircle = async (circleId: string) => {
+    const handleLeaveCurrentCircle = async (circleId: string, successorId?: string) => {
         if (!user) return;
         const remainingCircles = userCircles.filter(circle => circle.id !== circleId);
         const wasActiveCircle = profile?.familyCircleId === circleId;
@@ -386,9 +408,10 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
             ? (remainingCircles[0]?.id || null)
             : (profile?.familyCircleId || remainingCircles[0]?.id || null);
 
-        // Remove the departed circle immediately. The backend refresh below is
-        // still authoritative, but this prevents the UI showing a phantom
-        // membership while RTDB subscriptions settle.
+        // The server validates ownership transfer before any local state is
+        // changed. A failed leave must never make the app look as though the
+        // user has departed when they still retain Circle access.
+        await leaveCircle(circleId, user.uid, nextActiveCircleId, successorId);
         setUserCircles(remainingCircles);
         setCurrentCircle(previous => previous?.id === circleId
             ? (remainingCircles.find(circle => circle.id === nextActiveCircleId) || null)
@@ -396,7 +419,6 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
         );
         setProfile(previous => previous ? { ...previous, familyCircleId: nextActiveCircleId } : previous);
 
-        await leaveCircle(circleId, user.uid, nextActiveCircleId);
         const updatedProfile = await getUserProfile(user.uid);
         setProfile(updatedProfile);
         await refreshCircles();
@@ -414,8 +436,7 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
 
     const handleDeleteCircle = async (circleId: string) => {
         await deleteFamilyCircle(circleId);
-        if (profile?.familyCircleId === circleId && user) {
-            await updateUserProfile(user.uid, { familyCircleId: null });
+        if (user) {
             const updatedProfile = await getUserProfile(user.uid);
             setProfile(updatedProfile);
         }

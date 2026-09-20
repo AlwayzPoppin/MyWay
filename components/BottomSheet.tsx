@@ -7,8 +7,8 @@ import ActivityLog from './ActivityLog';
 import CircleManager from './CircleManager';
 import { getSafeAvatarUrl, getDefaultAvatarDataUri } from '../utils/avatar';
 import { FamilyCircle, getCircleColor } from '../services/authService';
-import { MemberStatusText } from '../utils/memberStatus';
-import { MemberAvatarWithRing, AddMemberButton } from './MemberCard';
+import { getMemberViewerLabel, MemberStatusText } from '../utils/memberStatus';
+import { MemberAvatarWithRing, AddMemberButton, CircleMembershipBadge } from './MemberCard';
 import { isAtHomePlace } from '../services/locationService';
 import { isOlderCircleSyncProtocol } from '../services/appVersionService';
 import {
@@ -75,10 +75,11 @@ interface BottomSheetProps {
     onOpenWeeklyReport?: () => void;
     onOpenInviteShare?: () => void;
     onOpenMaintenance?: () => void;
-    onOpenMessages?: (recipientId?: string) => void;
-    unreadMessagesCount?: number;
+    onOpenContacts?: (recipientId?: string) => void;
     onSOS?: () => void;
     activities?: any[];
+    unreadActivityCount?: number;
+    onLogViewed?: () => void;
     onResolveSOS?: (id: string, memberId?: string) => void;
     userPlaces?: Place[];
     selectedPlaceId?: string | null;
@@ -116,10 +117,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     onOpenWeeklyReport,
     onOpenInviteShare,
     onOpenMaintenance,
-    onOpenMessages,
-    unreadMessagesCount,
+    onOpenContacts,
     onSOS,
     activities = [],
+    unreadActivityCount = 0,
+    onLogViewed,
     onResolveSOS = () => {},
     userPlaces = [],
     selectedPlaceId,
@@ -219,17 +221,6 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         return '#22c55e';
     };
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'Driving': return '#818cf8';
-            case 'Walking': return '#38bdf8';
-            case 'Moving': return '#38bdf8';
-            case 'Stationary': return '#34d399';
-            case 'Offline': return '#64748b';
-            default: return '#6b7280';
-        }
-    };
-
     const renderStatusIcon = (status: string, currentPlace?: string, location?: Location) => {
         // A Home glyph is reserved for the actual Home geofence. currentPlace
         // may be from a previous fix and must never make a moving member appear home.
@@ -275,18 +266,25 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         const updatedAt = Date.parse(member.lastUpdated || '');
         return !Number.isFinite(updatedAt) || Date.now() - updatedAt > 90_000;
     };
-    const activeCount = members.filter(member => member.status !== 'Offline' && !isLocationStale(member)).length;
-    const homeCount = members.filter(member =>
+    const summaryCircle = activeFilterCircleId !== 'all'
+        ? userCircles.find(circle => circle.id === activeFilterCircleId)
+        : undefined;
+    const summaryMembers = summaryCircle
+        ? members.filter(member => member.circleId === summaryCircle.id)
+        : members;
+    const summaryCircleName = summaryCircle?.name || (userCircles.length > 1 && activeFilterCircleId === 'all' ? 'All circles' : circleName || 'Family Circle');
+    const activeCount = summaryMembers.filter(member => member.status !== 'Offline' && !isLocationStale(member)).length;
+    const homeCount = summaryMembers.filter(member =>
         member.status === 'Stationary' &&
         !isLocationStale(member) &&
         Boolean(member.location) &&
         isAtHomePlace(member.location, userPlaces)
     ).length;
-    const drivingCount = members.filter(member => member.status === 'Driving' && !isLocationStale(member)).length;
-    const movingCount = members.filter(member =>
+    const drivingCount = summaryMembers.filter(member => member.status === 'Driving' && !isLocationStale(member)).length;
+    const movingCount = summaryMembers.filter(member =>
         (member.status === 'Moving' || member.status === 'Walking') && !isLocationStale(member)
     ).length;
-    const staleLocationCount = members.filter(isLocationStale).length;
+    const staleLocationCount = summaryMembers.filter(isLocationStale).length;
 
     return (
         <>
@@ -300,6 +298,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 
             <div
                 ref={sheetRef}
+                data-map-bottom-obstruction
                 className={`fixed bottom-0 left-0 right-0 z-[100] bottom-sheet safe-bottom transition-all duration-300 ease-out
                     ${isDark
                         ? 'bg-gradient-to-t from-[#090d16] via-[#0f172a]/98 to-[#0f172a]/95 text-white'
@@ -347,44 +346,14 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 style={{ animationDelay: `${index * 50}ms` }}
                                 title={isUnresolved ? `${member.name} (Locating…)` : `${member.name} (${member.status})`}
                             >
-                                {/* Status Ring */}
-                                <div
-                                    className="absolute inset-0 rounded-full pointer-events-none"
-                                    style={{
-                                        border: isUnresolved ? '2px dashed #f59e0b' : `2.5px solid ${getStatusColor(member.status)}`,
-                                        opacity: selectedId === member.id ? 1 : 0.75
-                                    }}
+                                <MemberAvatarWithRing
+                                    member={member}
+                                    size="md"
+                                    theme={isDark ? 'dark' : 'light'}
+                                    isSelected={selectedId === member.id}
+                                    isUnresolved={isUnresolved}
+                                    renderBatteryBadge={false}
                                 />
-
-                                <img
-                                    src={getSafeAvatarUrl(member.avatar, member.name || member.id)}
-                                    onError={(e) => {
-                                        (e.target as HTMLImageElement).src = getDefaultAvatarDataUri(member.name || member.id);
-                                    }}
-                                    alt={member.name}
-                                    className={`w-11 h-11 rounded-full object-cover border-2 ${
-                                        isDark ? 'border-slate-800 bg-slate-800' : 'border-white bg-slate-100'
-                                    } shadow-md ${member.isGhostMode ? 'blur-[1.5px] grayscale opacity-75' : ''} ${isUnresolved ? 'saturate-75' : ''}`}
-                                />
-
-                                {/* Status Icon Badge */}
-                                <div
-                                    className={`absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full border flex items-center justify-center text-[8px] ${
-                                        isUnresolved ? 'animate-pulse' : ''
-                                    }`}
-                                    style={{
-                                        backgroundColor: isUnresolved ? '#f59e0b' : getStatusColor(member.status),
-                                        borderColor: isDark ? '#0f172a' : 'white'
-                                    }}
-                                >
-                                    {isUnresolved ? (
-                                        <Radio className="w-2.5 h-2.5 text-slate-950" />
-                                    ) : member.currentTrip ? (
-                                        <Car className="w-2.5 h-2.5 text-white" />
-                                    ) : (
-                                        renderStatusIcon(member.status, member.currentPlace, member.location)
-                                    )}
-                                </div>
                             </button>
                         );})}
                     </div>
@@ -434,12 +403,6 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                             <h2 className={`text-base font-black tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
                                 My Way
                             </h2>
-                            {hasCircle && (
-                                <span className="text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shrink-0">
-                                    <Shield className="w-3 h-3 text-emerald-400 shrink-0" />
-                                    <span>{members.length} Protected</span>
-                                </span>
-                            )}
                         </div>
 
                         {/* Quick Header Actions */}
@@ -501,11 +464,14 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 }`}
                             >
                                 <MapPin className="w-3.5 h-3.5 shrink-0" />
-                                <span>PLACES ({userPlaces.length})</span>
+                                <span>{`PLACES (${userPlaces.length})`}</span>
                             </button>
 
                             <button
-                                onClick={() => setActiveTab('activity')}
+                                onClick={() => {
+                                    setActiveTab('activity');
+                                    onLogViewed?.();
+                                }}
                                 className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
                                     activeTab === 'activity'
                                         ? 'bg-indigo-600 text-white shadow-md'
@@ -513,7 +479,12 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 }`}
                             >
                                 <FileText className="w-3.5 h-3.5 shrink-0" />
-                                <span>LOG ({activities.length})</span>
+                                <span>LOG</span>
+                                {unreadActivityCount > 0 && (
+                                    <span className="min-w-4 rounded-full bg-violet-500 px-1.5 py-0.5 text-[9px] leading-none text-white">
+                                        {unreadActivityCount > 99 ? '99+' : unreadActivityCount}
+                                    </span>
+                                )}
                             </button>
                         </div>
                     </div>
@@ -545,7 +516,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                     >
                                         <div className="flex items-center gap-1.5 text-[9px] text-indigo-400 font-bold uppercase tracking-wider group-hover:text-indigo-300 transition-colors">
                                             <Users className="w-3.5 h-3.5 shrink-0" />
-                                            <span>{circleName || 'Family Circle'}</span>
+                                            <span>{summaryCircleName}</span>
                                             {onOpenCircleSettings && <span className="text-[8px]">▾</span>}
                                         </div>
                                         <h3 className={`text-sm font-black truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
@@ -587,7 +558,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                             </button>
                                         )}
                                         <div className="flex -space-x-2">
-                                            {members.slice(0, 3).map(m => (
+                                            {summaryMembers.slice(0, 3).map(m => (
                                                 <img
                                                     key={m.id}
                                                     src={getSafeAvatarUrl(m.avatar, m.name || m.id)}
@@ -649,9 +620,17 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 {/* Members List */}
                                 <div className="space-y-2">
                                     {members.map(member => {
-                                        const memberCircleHex = member.circleColor || '#6366f1';
+                                        const memberCircle = userCircles.find(circle => circle.id === member.circleId);
+                                        const memberCircleHex = memberCircle?.color || member.circleColor || (member.circleId ? getCircleColor(member.circleId).hex : '#6366f1');
                                         const isUnresolved = !member.companionDeviceLabel && (!member.location || (member.location.lat === 0 && member.location.lng === 0));
                                         const needsSyncUpdate = isOlderCircleSyncProtocol(member.syncProtocolVersion);
+                                        const isSelf = Boolean(
+                                            (currentUserId && member.id === currentUserId) ||
+                                            member.id === 'demo-you' ||
+                                            (member as any).isSelf
+                                        );
+                                        const viewerLabel = getMemberViewerLabel(member);
+                                        const isDesktopViewer = viewerLabel === 'Desktop';
                                         return (
                                         <div
                                             key={member.id}
@@ -665,34 +644,43 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                         ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border-indigo-500/50'
                                                         : isDark
                                                             ? 'bg-white/5 border-white/5 hover:bg-white/10'
-                                                            : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
+                                                    : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
                                             }`}
+                                            style={{
+                                                borderColor: selectedId === member.id ? memberCircleHex : `${memberCircleHex}55`,
+                                                boxShadow: `inset 4px 0 0 ${memberCircleHex}`
+                                            }}
                                         >
                                             <div className="flex items-center gap-3">
                                                 {/* Avatar with Status Ring */}
-                                                <MemberAvatarWithRing
-                                                    member={member}
-                                                    size="md"
-                                                    theme={isDark ? 'dark' : 'light'}
-                                                    isSelected={selectedId === member.id}
-                                                    isUnresolved={isUnresolved}
-                                                    circleColor={memberCircleHex}
-                                                    renderStatusBadge={true}
-                                                />
+                                                <div className="shrink-0 w-12 flex items-center justify-center relative">
+                                                    <MemberAvatarWithRing
+                                                        member={member}
+                                                        size="md"
+                                                        theme={isDark ? 'dark' : 'light'}
+                                                        isSelected={selectedId === member.id}
+                                                        isUnresolved={isUnresolved}
+                                                        renderStatusBadge={true}
+                                                    />
+                                                </div>
 
                                                 {/* Info */}
                                                 <div className="flex-1 text-left min-w-0">
-                                                    <div className="flex items-center justify-between gap-1">
-                                                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                                    <div className="flex items-center justify-between gap-1.5">
+                                                        <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap">
                                                             {(() => {
-                                                                const isSelf = Boolean(
-                                                                    (currentUserId && member.id === currentUserId) ||
-                                                                    member.id === 'demo-you' ||
-                                                                    (member as any).isSelf
-                                                                );
+                                                                const circleBadgesList = (member.circleBadges && member.circleBadges.length > 0)
+                                                                    ? member.circleBadges
+                                                                    : (member.circleName || (hasCircle && circleName))
+                                                                        ? [{
+                                                                            id: member.circleId || 'primary',
+                                                                            name: member.circleName || (circleName ? (circleName.toUpperCase().includes('FAMILY') ? 'FAM' : circleName.slice(0, 8)) : 'FAM'),
+                                                                            color: memberCircleHex
+                                                                        }]
+                                                                        : [];
                                                                 return (
                                                                     <>
-                                                                        <h4 className={`font-black text-sm truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                                                                        <h4 className={`font-black text-sm truncate max-w-[110px] shrink-0 ${isDark ? 'text-white' : 'text-slate-900'}`}>
                                                                             {member.name}
                                                                         </h4>
                                                                         {isSelf && (
@@ -702,45 +690,33 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                                                 You
                                                                             </span>
                                                                         )}
+                                                                        {circleBadgesList.map(b => (
+                                                                            <CircleMembershipBadge key={b.id} name={b.name} color={b.color || memberCircleHex} />
+                                                                        ))}
+                                                                        {viewerLabel && (
+                                                                            <span className={`text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border shrink-0 flex items-center gap-1 ${
+                                                                                isDark ? 'bg-sky-500/20 border-sky-400/35 text-sky-300' : 'bg-sky-50 border-sky-200 text-sky-600'
+                                                                            }`}>
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                                                                                <span>{viewerLabel}</span>
+                                                                            </span>
+                                                                        )}
                                                                     </>
                                                                 );
                                                             })()}
-                                                            {isUnresolved ? (
-                                                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 bg-amber-500/15 border-amber-500/40 text-amber-400 animate-pulse">
-                                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                                            {isUnresolved && (
+                                                                <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border flex items-center gap-1 shrink-0 ${
+                                                                    isDark
+                                                                        ? 'bg-amber-500/25 border-amber-400/50 text-amber-300 font-extrabold shadow-sm'
+                                                                        : 'bg-amber-100 border-amber-400 text-amber-900 font-extrabold shadow-sm'
+                                                                }`}>
+                                                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isDark ? 'bg-amber-300' : 'bg-amber-700'} animate-pulse`} />
                                                                     <span>Locating…</span>
                                                                 </span>
-                                                            ) : member.circleBadges && member.circleBadges.length > 0 ? (
-                                                                member.circleBadges.map(b => (
-                                                                    <span
-                                                                        key={b.id}
-                                                                        style={{
-                                                                            backgroundColor: `${b.color}22`,
-                                                                            borderColor: `${b.color}44`,
-                                                                            color: b.color
-                                                                        }}
-                                                                        className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
-                                                                    >
-                                                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: b.color }} />
-                                                                        <span className="truncate max-w-[70px]">{b.name}</span>
-                                                                    </span>
-                                                                ))
-                                                            ) : member.circleName ? (
-                                                                <span
-                                                                    style={{
-                                                                        backgroundColor: `${memberCircleHex}22`,
-                                                                        borderColor: `${memberCircleHex}44`,
-                                                                        color: memberCircleHex
-                                                                    }}
-                                                                    className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex items-center gap-1 shrink-0"
-                                                                >
-                                                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: memberCircleHex }} />
-                                                                    <span className="truncate max-w-[70px]">{member.circleName}</span>
-                                                                </span>
-                                                            ) : null}
+                                                            )}
                                                         </div>
                                                         <div className="flex items-center gap-1.5 shrink-0">
-                                                            {onOpenMessages && !(
+                                                            {onOpenContacts && !(
                                                                 (currentUserId && member.id === currentUserId) ||
                                                                 member.id === 'demo-you' ||
                                                                 (member as any).isSelf
@@ -749,32 +725,38 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                                                     type="button"
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
-                                                                        onOpenMessages(member.id);
+                                                                        onOpenContacts(member.id);
                                                                     }}
-                                                                    className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all hover:scale-110 active:scale-95 shrink-0 ${
-                                                                        isDark ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-sm'
+                                                                    className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all hover:scale-105 active:scale-95 shrink-0 cursor-pointer ${
+                                                                        isDark
+                                                                            ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/25 hover:border-indigo-400/50'
+                                                                            : 'bg-indigo-50 border-indigo-200/80 text-indigo-600 hover:bg-indigo-100 hover:border-indigo-300 shadow-xs'
                                                                     }`}
-                                                                    title={`Direct message with ${member.name}`}
+                                                                    title={`Text or call ${member.name}`}
                                                                 >
-                                                                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                                                                    <MessageSquare className="w-4 h-4 shrink-0" />
                                                                 </button>
                                                             )}
                                                         </div>
                                                     </div>
-                                                    {member.companionDeviceLabel ? (
+                                                    {(member.companionDeviceLabel && !member.companionDeviceLabel.toLowerCase().includes('desktop')) ? (
                                                         <div className="text-[11px] font-medium text-sky-400/90 flex items-center gap-1.5 truncate mt-0.5">
                                                             <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block shrink-0" />
                                                             <span className="truncate">{member.companionDeviceLabel}</span>
                                                         </div>
                                                     ) : isUnresolved ? (
-                                                        <div className="text-[11px] font-medium text-amber-400/90 flex items-center gap-1.5 truncate mt-0.5">
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block shrink-0" />
-                                                            <span className="truncate">Waiting for device signal…</span>
+                                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                                            <div className={`text-[11px] font-semibold flex items-center gap-1.5 truncate ${isDark ? 'text-amber-300/90' : 'text-amber-800'}`}>
+                                                                <span className={`w-1.5 h-1.5 rounded-full animate-ping inline-block shrink-0 ${isDark ? 'bg-amber-400' : 'bg-amber-600'}`} />
+                                                                <span className="truncate">Waiting for device signal…</span>
+                                                            </div>
                                                         </div>
                                                     ) : (
                                                         <div className="min-w-0 flex items-center gap-1.5 mt-0.5">
                                                             <MemberStatusText
                                                                 member={member}
+                                                                places={userPlaces}
+                                                                hasDesktopBadge={isDesktopViewer}
                                                                 className={`text-[11px] font-medium truncate ${
                                                                     isDark ? 'text-slate-400' : 'text-slate-500'
                                                                 }`}
@@ -854,60 +836,73 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                         {onOpenTripHistory && (
                                             <button
                                                 onClick={onOpenTripHistory}
-                                                className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all active:scale-95 ${
-                                                    isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
+                                                className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all active:scale-95 cursor-pointer min-h-[52px] ${
+                                                    isDark ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
+                                                title="My Trips"
                                             >
-                                                <Navigation className="w-5 h-5 text-indigo-400 shrink-0" />
-                                                <div>
-                                                    <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Trips</p>
-                                                    <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Journeys</p>
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                    isDark ? 'bg-indigo-500/15 text-indigo-400' : 'bg-indigo-50 text-indigo-600'
+                                                }`}>
+                                                    <Navigation className="w-4 h-4" />
                                                 </div>
+                                                <span className={`text-xs font-bold leading-snug truncate ${isDark ? 'text-white' : 'text-slate-800'}`}>
+                                                    My Trips
+                                                </span>
                                             </button>
                                         )}
                                         {onOpenWeeklyReport && (
                                             <button
                                                 onClick={onOpenWeeklyReport}
-                                                className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all active:scale-95 ${
-                                                    isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
+                                                className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all active:scale-95 cursor-pointer min-h-[52px] ${
+                                                    isDark ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
+                                                title="Scorecard"
                                             >
-                                                <Trophy className="w-5 h-5 text-amber-400 shrink-0" />
-                                                <div>
-                                                    <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>Scorecard</p>
-                                                    <span className="flex items-center gap-1 text-[9px] text-amber-400 font-bold mt-1 uppercase tracking-tighter">
-                                                        <Trophy className="w-2.5 h-2.5 shrink-0" />
-                                                        <span>Badges</span>
-                                                    </span>
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                    isDark ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-50 text-amber-600'
+                                                }`}>
+                                                    <Trophy className="w-4 h-4" />
                                                 </div>
+                                                <span className={`text-xs font-bold leading-snug truncate ${isDark ? 'text-white' : 'text-slate-800'}`}>
+                                                    Scorecard
+                                                </span>
                                             </button>
                                         )}
                                         {onOpenNotifications && (
                                             <button
                                                 onClick={onOpenNotifications}
-                                                className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all active:scale-95 ${
-                                                    isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
+                                                className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all active:scale-95 cursor-pointer min-h-[52px] ${
+                                                    isDark ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
+                                                title="My Alerts"
                                             >
-                                                <Bell className="w-5 h-5 text-sky-400 shrink-0" />
-                                                <div>
-                                                    <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Alerts</p>
-                                                    <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Alerts</p>
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                    isDark ? 'bg-sky-500/15 text-sky-400' : 'bg-sky-50 text-sky-600'
+                                                }`}>
+                                                    <Bell className="w-4 h-4" />
                                                 </div>
+                                                <span className={`text-xs font-bold leading-snug truncate ${isDark ? 'text-white' : 'text-slate-800'}`}>
+                                                    My Alerts
+                                                </span>
                                             </button>
                                         )}
                                         {onOpenMaintenance && (
                                             <button
                                                 onClick={onOpenMaintenance}
-                                                className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all active:scale-95 ${
-                                                    isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
+                                                className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all active:scale-95 cursor-pointer min-h-[52px] ${
+                                                    isDark ? 'bg-white/5 border-white/5 hover:bg-white/10' : 'bg-slate-50 border-slate-100 hover:bg-slate-100 shadow-sm'
                                                 }`}
+                                                title="My Garage & Maintenance"
                                             >
-                                                <Wrench className="w-5 h-5 text-rose-400 shrink-0" />
-                                                <div>
-                                                    <p className={`text-xs font-bold leading-none ${isDark ? 'text-white' : 'text-slate-800'}`}>My Garage & Maintenance</p>
-                                                    <p className="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Garage & Logs</p>
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                    isDark ? 'bg-rose-500/15 text-rose-400' : 'bg-rose-50 text-rose-600'
+                                                }`}>
+                                                    <Wrench className="w-4 h-4" />
                                                 </div>
+                                                <span className={`text-[11px] font-bold leading-tight line-clamp-2 ${isDark ? 'text-white' : 'text-slate-800'}`}>
+                                                    My Garage & Maintenance
+                                                </span>
                                             </button>
                                         )}
                                     </div>

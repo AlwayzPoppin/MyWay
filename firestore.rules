@@ -5,29 +5,8 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Written only by the trusted syncCircleMembership function after it
-    // verifies the authoritative RTDB Circle membership with Admin SDK.
-    function isCircleMember(circleId) {
-      return signedIn() &&
-        exists(/databases/$(database)/documents/circleMemberships/$(circleId)/members/$(request.auth.uid));
-    }
-
     match /circleMemberships/{circleId}/members/{userId} {
       allow read, write: if false;
-    }
-
-    match /familyCircles/{circleId}/messages/{messageId} {
-      allow read: if isCircleMember(circleId);
-      allow create: if isCircleMember(circleId)
-        && request.resource.data.senderId == request.auth.uid
-        && request.resource.data.circleId == circleId
-        && request.resource.data.timestamp is timestamp;
-      // Members may only append delivery/read receipts. Core message fields
-      // remain immutable after the sender creates the message.
-      allow update: if isCircleMember(circleId)
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['deliveryReceipts', 'readReceipts']);
-      allow delete: if isCircleMember(circleId) && resource.data.senderId == request.auth.uid;
     }
 
     match /users/{userId} {
@@ -47,10 +26,6 @@ service cloud.firestore {
       allow read, update, delete: if signedIn() && resource.data.createdBy == request.auth.uid;
     }
 
-    // These are deliberately community-visible to signed-in My Way users.
-    match /community_buildings/{buildingId} {
-      allow read, create, update, delete: if signedIn();
-    }
     match /community_pins/{pinId} {
       allow read, create, update, delete: if signedIn();
     }
@@ -61,11 +36,36 @@ service cloud.firestore {
       allow read, create, update, delete: if signedIn();
     }
 
+    // Anonymous, append-only community regular-fuel reports. Contributors do
+    // not publish profile identifiers, and clients cannot rewrite history.
+    match /community_fuel_price_reports/{reportId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['id', 'stationId', 'stationName', 'latitude', 'longitude', 'price', 'grade', 'reportedAt'])
+        && request.resource.data.keys().hasAll(['id', 'stationId', 'stationName', 'latitude', 'longitude', 'price', 'grade', 'reportedAt'])
+        && request.resource.data.stationId is string
+        && request.resource.data.stationName is string
+        && request.resource.data.stationName.size() <= 120
+        && request.resource.data.latitude is number
+        && request.resource.data.latitude >= -90 && request.resource.data.latitude <= 90
+        && request.resource.data.longitude is number
+        && request.resource.data.longitude >= -180 && request.resource.data.longitude <= 180
+        && request.resource.data.price is number
+        && request.resource.data.price >= 1 && request.resource.data.price <= 15
+        && request.resource.data.grade == 'regular'
+        && request.resource.data.reportedAt is number;
+      allow update, delete: if false;
+    }
+
     // Building photos are community contributions. Only the author may alter one.
     match /photos/{photoId} {
       allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.reviewStatus == 'pending';
+      allow update: if signedIn() && resource.data.userId == request.auth.uid
+        && request.resource.data.reviewStatus == resource.data.reviewStatus;
+      allow delete: if signedIn() && resource.data.userId == request.auth.uid;
     }
 
     match /sharedTrips/{driverId} {

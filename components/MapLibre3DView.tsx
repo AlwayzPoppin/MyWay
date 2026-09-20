@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { AlertTriangle, Compass } from 'lucide-react';
@@ -15,13 +15,14 @@ import { maintenanceAlertService } from '../services/maintenanceAlertService';
 import { searchMaintenanceAlongRoute, reverseGeocode } from '../services/placesService';
 import { osmTrafficService } from '../services/osmTrafficService';
 import { publicMapReportService, PublicMapReport } from '../services/publicMapReportService';
-import { communityBuildingService, CommunityBuilding } from '../services/communityBuildingService';
-import { getNationalAddressPoints, nationalAddressPointsToGeoJSON } from '../services/nationalAddressService';
+import { getNationalAddressPoints, nationalAddressPointsToGeoJSON, NationalAddressPoint } from '../services/nationalAddressService';
 import { UserProfile } from '../services/authService';
-import { extractHouseNumber } from '../utils/addressUtils';
 import { hapticTick, hapticMilestone, hapticSuccess, hapticError } from '../utils/haptics';
 import { getRotatedBoxCoords, isPointInEntranceBox, isPointInEntranceZone, isPointInPolygon, DEFAULT_ENTRANCE_BOX } from '../services/geofenceService';
-import { isHomePlace, getPlaceColor, getPlaceIconSvg } from './PlacePin';
+import { isHomePlace, getPlaceColor, getPlaceIconSvg, resolvePlaceAddressSnippet, formatPlaceMarkerLabel } from './PlacePin';
+import { classifyMovementMode, getMovementVisuals, getMapMarkerBadgeHtml } from '../utils/movementUtils';
+import { getLocationFreshness } from '../utils/safetyAlerts';
+import { mapViewportStore } from '../services/mapViewportStore';
 
 // Memoized Circle Polygon Generator for Geofences, Privacy Zones & Accuracy Circles
 const circleCoordsCache = new Map<string, [number, number][]>();
@@ -266,18 +267,18 @@ interface MapLibre3DViewProps {
     onBoundsChange?: (bounds: { north: number; south: number; east: number; west: number }) => void;
     mapStyle?: 'standard' | 'satellite' | 'terrain';
     isMobile?: boolean;
-    buildingScale?: 'none' | 'flat' | 'realistic' | 'enhanced' | 'monumental';
-    landmarkGlow?: boolean;
+    buildingScale?: 'none' | 'flat' | 'realistic';
     isCameraFree?: boolean;
     onCameraFreeChange?: (isFree: boolean) => void;
-    isLowDataMode?: boolean;
     showTrafficControls?: boolean;
     onToggle3DMode?: () => void;
     onSelectMapStyle?: (style: 'standard' | 'satellite' | 'terrain') => void;
     onOpenAlerts?: () => void;
     selectedPlaceId?: string | null;
+    selectedPlace?: Place | null;
     remainingDistanceMeters?: number;
     hasArrived?: boolean;
+    onMapRecoveryStateChange?: (isRecovering: boolean) => void;
 }
 
 const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
@@ -289,6 +290,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     mapSkin = 'default',
     selectedMemberId,
     selectedPlaceId,
+    selectedPlace,
     center,
     zoom = 16,
     onZoomChange,
@@ -314,17 +316,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     onBoundsChange,
     mapStyle = 'standard',
     isMobile = false,
-    buildingScale = 'enhanced',
-    landmarkGlow = true,
+    buildingScale = 'realistic',
     isCameraFree = false,
     onCameraFreeChange,
-    isLowDataMode = false,
     showTrafficControls = true,
     onToggle3DMode,
     onSelectMapStyle,
     onOpenAlerts,
     remainingDistanceMeters,
-    hasArrived = false
+    hasArrived = false,
+    onMapRecoveryStateChange
 }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<maplibregl.Map | null>(null);
@@ -333,17 +334,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const [mapEpoch, setMapEpoch] = React.useState(0); // Incremented to trigger WebGL context loss recovery reboot
     const [markerClusterZoom, setMarkerClusterZoom] = React.useState(0);
     const [publicReports, setPublicReports] = React.useState<PublicMapReport[]>(() => publicMapReportService.getCachedReports());
-    const [communityBuildings, setCommunityBuildings] = React.useState<CommunityBuilding[]>(() => communityBuildingService.getAllBuildings());
+    // Current authoritative address labels used for map display and taps.
+    const [nationalAddressPoints, setNationalAddressPoints] = React.useState<NationalAddressPoint[]>([]);
 
     useEffect(() => {
         const unsub = publicMapReportService.subscribe(reports => {
             setPublicReports(reports);
-        });
-        return unsub;
-    }, []);
-    useEffect(() => {
-        const unsub = communityBuildingService.subscribe(buildings => {
-            setCommunityBuildings(buildings);
         });
         return unsub;
     }, []);
@@ -372,6 +368,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const puckRafIdRef = useRef<number | null>(null);
     const isPuckAnimatingRef = useRef<boolean>(false);
     const placesMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+    const resolvedPlaceAddressesRef = useRef<Map<string, string>>(new Map());
+    const pendingReverseGeocodesRef = useRef<Set<string>>(new Set());
     const membersRef = useRef<FamilyMember[]>(members);
     membersRef.current = members;
     const userLocationRef = useRef(userLocation);
@@ -389,15 +387,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     onCameraFreeChangeRef.current = onCameraFreeChange;
     const activeRouteRef = useRef(activeRoute);
     activeRouteRef.current = activeRoute;
+    const lastAnimatedCenterRef = useRef<{ lng: number; lat: number } | null>(null);
 
-    // Re-evaluate marker groups after a zoom gesture. Clustering is based on
+    // Re-evaluate marker groups after a zoom gesture or pan. Clustering is based on
     // visible screen distance, so locations remain readable at city scale.
     useEffect(() => {
         if (!map.current || !isMapReady) return;
-        const onZoomEnd = () => setMarkerClusterZoom(Math.round(map.current!.getZoom() * 10) / 10);
-        onZoomEnd();
-        map.current.on('zoomend', onZoomEnd);
-        return () => map.current?.off('zoomend', onZoomEnd);
+        const updateClusters = () => {
+            if (!map.current) return;
+            setMarkerClusterZoom(Math.round(map.current.getZoom() * 10) / 10);
+        };
+        updateClusters();
+        map.current.on('zoomend', updateClusters);
+        map.current.on('moveend', updateClusters);
+        return () => {
+            map.current?.off('zoomend', updateClusters);
+            map.current?.off('moveend', updateClusters);
+        };
     }, [isMapReady, styleVersion]);
     const isMobileRef = useRef(isMobile);
     isMobileRef.current = isMobile;
@@ -468,6 +474,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // Debounced recovery reboot handler with 1000ms delay + rAF chaining to ensure DOM readiness
     const rebootTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const scheduleMapReboot = useCallback(() => {
+        onMapRecoveryStateChange?.(true);
         if (rebootTimeoutRef.current) return;
         rebootTimeoutRef.current = setTimeout(() => {
             rebootTimeoutRef.current = null;
@@ -541,15 +548,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         return resolveMapSkinId(mapSkin as MapSkinId, solarInfo.isDaylight);
     }, [mapSkin, solarInfo.isDaylight]);
 
-    // Respects Low Data Mode vs Default (Day) vs Carbon Amber (Night) vs Auto Solar Transition
+    // Resolves the selected map style and skin.
     const styleUrl = useMemo(() => {
-        if (isLowDataMode) {
-            // Low Data Mode: Minimal vector 2D basemap
-            return (effectiveSkin === 'default' || effectiveSkin === 'warm_cream')
-                ? 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'
-                : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
-        }
-
         if (mapStyle === 'satellite') {
             return SATELLITE_STYLE;
         }
@@ -559,7 +559,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         const skin = getMapSkin(effectiveSkin);
         return skin.styleUrl;
-    }, [effectiveSkin, mapStyle, isLowDataMode]);
+    }, [effectiveSkin, mapStyle]);
 
     // Prepare route polyline coordinates for map rendering
     const routeCoords = useMemo<Location[]>(() => {
@@ -602,7 +602,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         if (!map.current || !map.current.isStyleLoaded()) return;
 
         // Apply skin-specific color overrides
-        if (mapStyle === 'standard' && !isLowDataMode) {
+        if (mapStyle === 'standard') {
             applySkinOverrides(map.current, effectiveSkin, theme);
         }
 
@@ -629,8 +629,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             try {
                 map.current.setLight({ intensity: 0 });
             } catch {}
-        } else if (buildingScale === 'flat' || isLowDataMode) {
-            // Flat Mode or Low Data Mode: Suppress 3D building extrusions and restore 2D flat building footprints
+        } else if (buildingScale === 'flat') {
+            // Flat Mode: Suppress 3D building extrusions and restore 2D flat building footprints
             if (map.current.getLayer('buildings-3d')) {
                 map.current.setLayoutProperty('buildings-3d', 'visibility', 'none');
             }
@@ -674,7 +674,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     (layer: any) => layer.type === 'symbol' && layer.layout?.['text-field']
                 )?.id;
 
-                const heightMultiplier = buildingScale === 'monumental' ? 2.6 : buildingScale === 'realistic' ? 1.0 : 1.8;
+                const heightMultiplier = 1.0;
                 const baseHeight = Math.round(14 * heightMultiplier);
                 const levelHeight = Number((4.0 * heightMultiplier).toFixed(1));
 
@@ -754,13 +754,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         }
 
-        // Move building numbers layers to the absolute top of the rendering stack above 3D extrusions
-        if (map.current.getLayer('community-buildings-layer')) {
-            try { map.current.moveLayer('community-buildings-layer'); } catch {}
-        }
-        if (map.current.getLayer('community-building-numbers')) {
-            try { map.current.moveLayer('community-building-numbers'); } catch {}
-        }
         if (map.current.getLayer('circle-homes-layer')) {
             try { map.current.moveLayer('circle-homes-layer'); } catch {}
         }
@@ -1225,7 +1218,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         try {
             map.current.triggerRepaint();
         } catch (e) {}
-    }, [mapStyle, isLowDataMode, mapSkin, theme, buildingScale]);
+    }, [mapStyle, mapSkin, theme, buildingScale]);
 
 
 
@@ -1257,6 +1250,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         // ONLY after the CSS layout / orientation animation has completely stabilized.
         let resizeObserver: ResizeObserver | null = null;
         let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+        let viewportAnimationFrame: number | null = null;
 
         const performDebouncedResize = () => {
             if (resizeTimeout) clearTimeout(resizeTimeout);
@@ -1399,98 +1393,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }
         };
-        const ensureCommunityBuildingLayer = () => {
-            if (!mapInstance || !mapInstance.isStyleLoaded()) return;
-
-            // 1. Primary GeoJSON Source
-            if (!mapInstance.getSource('community-buildings')) {
-                try {
-                    const cached = communityBuildingService.getAllBuildings();
-                    const initialFeatures: GeoJSON.Feature[] = [];
-                    cached.forEach(b => {
-                        if (!b) return;
-                        const bId = b.id || `${b.coordinates?.lat}_${b.coordinates?.lng}`;
-                        const lat = b.coordinates?.lat ?? (b as any).lat;
-                        const lng = b.coordinates?.lng ?? (b as any).lng;
-                        const houseNumber = b.houseNumber || extractHouseNumber(b.address || '');
-                        if (houseNumber && typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
-                            initialFeatures.push({
-                                type: 'Feature',
-                                id: bId,
-                                properties: {
-                                    id: bId,
-                                    houseNumber: String(houseNumber),
-                                    house_number: String(houseNumber),
-                                    housenumber: String(houseNumber),
-                                    'addr:housenumber': String(houseNumber),
-                                    label: b.address || `Building ${houseNumber}`
-                                },
-                                geometry: {
-                                    type: 'Point',
-                                    coordinates: [lng, lat]
-                                }
-                            });
-                        }
-                    });
-                    mapInstance.addSource('community-buildings', {
-                        type: 'geojson',
-                        data: { type: 'FeatureCollection', features: initialFeatures }
-                    });
-                } catch (err) {
-                    console.warn('[MapLibre3DView] Error adding community-buildings source:', err);
-                }
-            }
-
-            // 2. Pure WebGL Symbol Layer for House / Building Numbers
-            if (!mapInstance.getLayer('community-buildings-layer')) {
-                try {
-                    mapInstance.addLayer({
-                        id: 'community-buildings-layer',
-                        type: 'symbol',
-                        source: 'community-buildings',
-                        minzoom: 16,
-                        layout: {
-                            'text-field': ['coalesce', ['get', 'houseNumber'], ['get', 'house_number'], ['get', 'housenumber'], ['get', 'addr:housenumber'], ''],
-                            'text-size': [
-                                'interpolate',
-                                ['linear'],
-                                ['zoom'],
-                                15, 11,
-                                18, 13,
-                                20, 15
-                            ],
-                            'text-font': ['Open Sans Bold', 'Open Sans Regular', 'Arial Unicode MS Bold'],
-                            'text-anchor': 'center',
-                            'text-justify': 'center',
-                            'text-pitch-alignment': 'viewport',
-                            'text-rotation-alignment': 'viewport',
-                            'text-allow-overlap': true,
-                            'text-ignore-placement': true,
-                            'text-optional': false
-                        },
-                    paint: {
-                        'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                        'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)',
-                        'text-halo-width': 2.0,
-                        'text-halo-blur': 0.5,
-                        'text-opacity': ['interpolate', ['linear'], ['zoom'], 14.8, 0, 15.4, 1]
-                        }
-                    });
-                } catch (layerErr) {
-                    console.warn('[MapLibre3DView] Failed to add community-buildings-layer:', layerErr);
-                }
-            }
-
-            // Move to absolute top of rendering stack above 3D building extrusions
-            try {
-                mapInstance.moveLayer('community-buildings-layer');
-            } catch {}
-        };
 
         const handleStyleLoaded = () => {
             if (mapInstance.isStyleLoaded()) {
                 apply3DBuildingLayer();
-                ensureCommunityBuildingLayer();
                 setStyleVersion(v => v + 1);
             }
         };
@@ -1498,18 +1404,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         mapInstance.on('load', () => {
             currentStyleUrlRef.current = styleUrl;
             apply3DBuildingLayer();
-            ensureCommunityBuildingLayer();
 
             setStyleVersion(v => v + 1);
             setIsMapReady(true);
             onMapReady?.();
+            onMapRecoveryStateChange?.(false);
         });
 
         // Only listen to style.load for full style switches to avoid recursive styledata loops
         mapInstance.on('style.load', handleStyleLoaded);
         mapInstance.once('idle', () => {
             apply3DBuildingLayer();
-            ensureCommunityBuildingLayer();
         });
 
         // Track user interaction â€” suppress auto-camera for 5s after manual pan/zoom
@@ -1533,7 +1438,29 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         });
 
-        // Report bounds changes for unified API (matching MapView)
+        const publishViewportBounds = () => {
+            if (!map.current) return;
+            const bounds = map.current.getBounds();
+            mapViewportStore.setBounds({
+                north: bounds.getNorth(),
+                south: bounds.getSouth(),
+                east: bounds.getEast(),
+                west: bounds.getWest()
+            });
+        };
+
+        // Edge-awareness pins subscribe to this rAF-limited stream directly,
+        // avoiding a full App rerender during every map-pan frame.
+        mapInstance.on('move', () => {
+            if (viewportAnimationFrame !== null) return;
+            viewportAnimationFrame = requestAnimationFrame(() => {
+                viewportAnimationFrame = null;
+                publishViewportBounds();
+            });
+        });
+        publishViewportBounds();
+
+        // Settled bounds still drive POI fetching and other non-visual work.
         mapInstance.on('moveend', () => {
             if (map.current) {
                 const bounds = map.current.getBounds();
@@ -1556,6 +1483,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         return () => {
             window.removeEventListener('orientationchange', handleOrientationChange);
             if (resizeTimeout) clearTimeout(resizeTimeout);
+            if (viewportAnimationFrame !== null) cancelAnimationFrame(viewportAnimationFrame);
             if (resizeObserver) {
                 resizeObserver.disconnect();
                 resizeObserver = null;
@@ -2103,8 +2031,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             if (map.current.getSource('destination-pin-webgl-source')) map.current.removeSource('destination-pin-webgl-source');
         } catch {}
 
-        // Resolve destination coordinate: prefer activeRoute.destinationLoc,
-        // fallback to the last coordinate of the route polyline or steps
+        // Resolve destination coordinate from the route when available. While
+        // the route is being calculated, use the selected place's corrected
+        // arrival point so the destination flag replaces the stale provider pin
+        // immediately instead of flashing it for a second or two.
         let destLoc: { lat: number; lng: number } | null = null;
         if (
             activeRoute?.destinationLoc &&
@@ -2140,8 +2070,22 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }
         }
 
-        // If no active route or destination, remove existing marker
-        if (!destLoc || !activeRoute) {
+        if (!destLoc && selectedPlace?.location) {
+            const pendingLocation = selectedPlace.entrancePrecision?.location
+                || selectedPlace.entrancePin
+                || selectedPlace.entranceLocation
+                || selectedPlace.location;
+            if (
+                typeof pendingLocation.lat === 'number' &&
+                typeof pendingLocation.lng === 'number' &&
+                !(pendingLocation.lat === 0 && pendingLocation.lng === 0)
+            ) {
+                destLoc = { lat: Number(pendingLocation.lat), lng: Number(pendingLocation.lng) };
+            }
+        }
+
+        // If there is no route preview or selected destination, remove marker.
+        if (!destLoc || (!activeRoute && !selectedPlace)) {
             if (destinationMarkerRef.current) {
                 destinationMarkerRef.current.remove();
                 destinationMarkerRef.current = null;
@@ -2149,7 +2093,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             return;
         }
 
-        const destName = activeRoute.destinationName || 'Destination';
+        const destName = activeRoute?.destinationName || selectedPlace?.name || 'Destination';
+        const destinationOrder = (activeRoute?.waypoints?.filter((waypoint: any) => waypoint.isStop !== false).length || 0) + 1;
+        const hasPlannedStops = destinationOrder > 1;
         const isGTA = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
 
         // Recreate marker on skin/theme changes to ensure correct visuals
@@ -2197,11 +2143,35 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        font-size: 20px;
                         z-index: 2;
                         transition: transform 0.15s ease;
                     ">
-                        ðŸ
+                        ${hasPlannedStops ? `<span style="position:absolute; right:-7px; top:-7px; width:18px; height:18px; border-radius:9999px; display:flex; align-items:center; justify-content:center; background:#0f172a; border:2px solid #ffffff; color:#ffffff; font-size:10px; font-weight:900; font-family:ui-monospace,monospace; box-shadow:0 2px 6px rgba(0,0,0,0.4);">${destinationOrder}</span>` : ''}
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));">
+                            <!-- Flagpole -->
+                            <path d="M4 22V2" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" />
+                            <circle cx="4" cy="2" r="1.2" fill="#ffffff" />
+                            <!-- Checkered Racing Finish Flag -->
+                            <g transform="translate(4, 3)">
+                                <rect x="0" y="0" width="4" height="3" fill="#ffffff" />
+                                <rect x="4" y="0" width="4" height="3" fill="#0f172a" />
+                                <rect x="8" y="0" width="4" height="3" fill="#ffffff" />
+                                <rect x="12" y="0" width="4" height="3" fill="#0f172a" />
+                                <rect x="0" y="3" width="4" height="3" fill="#0f172a" />
+                                <rect x="4" y="3" width="4" height="3" fill="#ffffff" />
+                                <rect x="8" y="3" width="4" height="3" fill="#0f172a" />
+                                <rect x="12" y="3" width="4" height="3" fill="#ffffff" />
+                                <rect x="0" y="6" width="4" height="3" fill="#ffffff" />
+                                <rect x="4" y="6" width="4" height="3" fill="#0f172a" />
+                                <rect x="8" y="6" width="4" height="3" fill="#ffffff" />
+                                <rect x="12" y="6" width="4" height="3" fill="#0f172a" />
+                                <rect x="0" y="9" width="4" height="3" fill="#0f172a" />
+                                <rect x="4" y="9" width="4" height="3" fill="#ffffff" />
+                                <rect x="8" y="9" width="4" height="3" fill="#0f172a" />
+                                <rect x="12" y="9" width="4" height="3" fill="#ffffff" />
+                                <rect x="0" y="0" width="16" height="12" fill="none" stroke="#ffffff" stroke-width="0.8" rx="0.5" />
+                            </g>
+                        </svg>
                     </div>
                     
                     <!-- Pin Needle Pointer (Seamlessly anchored to pill with matching border & placeColor) -->
@@ -2261,7 +2231,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 destinationMarkerRef.current = null;
             }
         };
-    }, [activeRoute?.destinationLoc, activeRoute?.destinationName, routeCoords, isMapReady, effectiveSkin, theme]);
+    }, [activeRoute?.destinationLoc, activeRoute?.destinationName, activeRoute?.waypoints, routeCoords, selectedPlace?.id, selectedPlace?.name, selectedPlace?.location?.lat, selectedPlace?.location?.lng, selectedPlace?.entrancePin?.lat, selectedPlace?.entrancePin?.lng, selectedPlace?.entranceLocation?.lat, selectedPlace?.entranceLocation?.lng, selectedPlace?.entrancePrecision?.location?.lat, selectedPlace?.entrancePrecision?.location?.lng, isMapReady, effectiveSkin, theme]);
 
     // Intermediate Waypoint Numbered Amber Diamond Chips on 3D Map
     useEffect(() => {
@@ -2654,7 +2624,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 // Older generic alerts are the predecessor of Flooded Road.
                 // Keep their map presentation useful after the terminology update.
                 const isFloodedRoad = inc.type === 'safety_alert' || ![
-                    'police', 'hazard', 'shoulder', 'construction', 'traffic', 'road_closed', 'signal_out', 'speed_bump'
+                    'police', 'hazard', 'shoulder', 'construction', 'traffic', 'road_closed', 'signal_out', 'speed_bump', 'stop_sign', 'crash', 'blocked_lane', 'bad_weather', 'animal'
                 ].includes(inc.type);
 
                 const markerIcon = (() => {
@@ -2673,7 +2643,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Road closed" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round"><circle cx="14" cy="14" r="9.25"/><path d="M7.45 20.55 20.55 7.45"/></svg>`;
                         case 'signal_out':
                             return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Traffic signal out" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="4" width="10" height="16" rx="2" fill="rgba(255,255,255,.16)"/><circle cx="14" cy="8" r="1.2"/><circle cx="14" cy="12" r="1.2"/><circle cx="14" cy="16" r="1.2"/><path d="M6 23 22 5M14 20v3" stroke-width="2.8"/></svg>`;
-                        case 'speed_bump':
+                        case 'crash':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Crash" fill="none" stroke="#ffffff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h20M6 19v-5l3-3h5l3 3v5M10 11l2-4 2 4M9 19h.01M19 19h.01"/></svg>`;
+                        case 'blocked_lane':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Blocked lane" fill="none" stroke="#ffffff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22 10 5h8l3 17M8 14h12M9 9h10"/><path d="m11 18 3-4 3 4"/></svg>`;
+                        case 'bad_weather':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Bad weather" fill="none" stroke="#ffffff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M7 15a5 5 0 1 1 9.5 2.2H19a3 3 0 0 1 0 6H8a4 4 0 0 1-1-7.8"/><path d="m10 25 1-3m4 3 1-3"/></svg>`;
+                        case 'animal':
+                            return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Animal near road" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="1.5"/><circle cx="19" cy="9" r="1.5"/><circle cx="7" cy="15" r="1.5"/><circle cx="21" cy="15" r="1.5"/><path d="M10 21c0-3 2-5 4-5s4 2 4 5c0 2-2 3-4 3s-4-1-4-3Z"/></svg>`;
+                        case 'stop_sign':
+ return '<svg viewBox="0 0 24 24" width="24" height="24" aria-label="Stop sign"><path d="M7 1h10l6 6v10l-6 6H7l-6-6V7Z" fill="#dc2626" stroke="white"/><text x="12" y="15" text-anchor="middle" fill="white" font-size="7" font-weight="900">STOP</text></svg>';
+case 'speed_bump':
                             return `<svg viewBox="0 0 24 24" width="24" height="24" aria-label="Speed bump"><rect x="4.2" y="4.2" width="15.6" height="15.6" rx="1.3" transform="rotate(45 12 12)" fill="#facc15" stroke="#ffffff" stroke-width="1.2"/><path d="M6.8 15.2h2.2c.55-2.7 1.5-4.05 3-4.05s2.45 1.35 3 4.05h2.2" fill="none" stroke="#111827" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
                         default:
                             return `<svg viewBox="0 0 28 28" width="24" height="24" aria-label="Flooded road" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"><path d="M4 9c1.7-1.6 3.4-1.6 5.1 0 1.7 1.6 3.4 1.6 5.1 0 1.7-1.6 3.4-1.6 5.1 0"/><path d="M4 15c1.7-1.6 3.4-1.6 5.1 0 1.7 1.6 3.4 1.6 5.1 0 1.7-1.6 3.4-1.6 5.1 0"/><path d="M4 21c1.7-1.6 3.4-1.6 5.1 0 1.7 1.6 3.4 1.6 5.1 0 1.7-1.6 3.4-1.6 5.1 0"/></svg>`;
@@ -2686,10 +2666,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     inc.type === 'shoulder' ? 'Shoulder' :
                     inc.type === 'construction' ? 'Work Zone' :
                     inc.type === 'traffic' ? 'Traffic' :
+                    inc.type === 'crash' ? 'Crash' :
+                    inc.type === 'blocked_lane' ? 'Blocked Lane' :
+                    inc.type === 'bad_weather' ? 'Bad Weather' :
+                    inc.type === 'animal' ? 'Animal' :
                     isFloodedRoad ? 'Flooded Road' :
                     inc.type === 'road_closed' ? 'Road Closed' :
                     inc.type === 'signal_out' ? 'Signal Out' :
-                    inc.type === 'speed_bump' ? (inc.verified ? 'Verified Speed Bump' : 'Speed Bump') : 'Alert';
+                    inc.type === 'stop_sign' ? 'Stop Sign' : inc.type === 'speed_bump' ? (inc.verified ? 'Verified Speed Bump' : 'Speed Bump') : 'Alert';
 
                 const color = 
                     inc.type === 'police' ? '#3b82f6' :
@@ -2697,10 +2681,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     inc.type === 'shoulder' ? '#a855f7' :
                     inc.type === 'construction' ? '#f97316' :
                     inc.type === 'traffic' ? '#ef4444' :
+                    inc.type === 'crash' ? '#e11d48' :
+                    inc.type === 'blocked_lane' ? '#ea580c' :
+                    inc.type === 'bad_weather' ? '#0284c7' :
+                    inc.type === 'animal' ? '#059669' :
                     isFloodedRoad ? '#0ea5e9' :
                     inc.type === 'road_closed' ? '#e11d48' :
                     inc.type === 'signal_out' ? '#ca8a04' :
-                    inc.type === 'speed_bump' ? (inc.verified ? '#059669' : '#64748b') : '#10b981';
+                    inc.type === 'stop_sign' ? '#dc2626' : inc.type === 'speed_bump' ? (inc.verified ? '#059669' : '#64748b') : '#10b981';
 
                 el.innerHTML = `
                     <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
@@ -2744,28 +2732,128 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     useEffect(() => {
         if (!map.current || !isMapReady) return;
 
-        const candidatePlaces = [...(places || [])];
+        const candidatePlaces: Place[] = [];
+        const seenCandidateIds = new Set<string>();
+        const activeDestination = activeRoute?.destinationLoc || selectedPlace?.entrancePrecision?.location || selectedPlace?.entrancePin || selectedPlace?.entranceLocation || selectedPlace?.location;
+        const activeDestinationName = (activeRoute?.destinationName || selectedPlace?.name || '').trim().toLowerCase();
+        const normalisePlaceName = (value?: string) => (value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        const isActiveDestinationPlace = (place: Place): boolean => {
+            if (!activeDestination || typeof activeDestination.lat !== 'number' || typeof activeDestination.lng !== 'number') return false;
+            if (selectedPlaceId && place.id === selectedPlaceId) return true;
+            const placeName = normalisePlaceName(place.name || (place as any).title);
+            const destinationName = normalisePlaceName(activeDestinationName);
+            if (!placeName || !destinationName || placeName !== destinationName) return false;
+            const candidateLocations = [
+                place.entrancePrecision?.location,
+                place.entrancePin,
+                place.entranceLocation,
+                place.location,
+                place.originalLocation
+            ].filter((location): location is Location => Boolean(location && typeof location.lat === 'number' && typeof location.lng === 'number'));
+            return candidateLocations.some(location =>
+                getDistanceFromCoords(location.lat, location.lng, activeDestination.lat, activeDestination.lng) < 35
+            );
+        };
+
+        // 1. Prioritize savedPlaces first so every saved place is guaranteed to exist with isSaved: true
         if (savedPlaces && savedPlaces.length > 0) {
             savedPlaces.forEach(sp => {
-                if (sp && sp.id && !candidatePlaces.some(cp => cp.id === sp.id)) {
-                    candidatePlaces.push({ ...sp, isSaved: true });
-                }
+                if (!sp) return;
+                const spId = sp.id || (sp as any).placeId || (sp as any)._id || (sp as any).key;
+                if (!spId || seenCandidateIds.has(spId)) return;
+                seenCandidateIds.add(spId);
+                candidatePlaces.push({
+                    ...sp,
+                    id: spId,
+                    isSaved: true
+                });
             });
         }
 
-        const validPlaces = candidatePlaces.filter(p => 
-            p && 
-            p.id &&
-            p.location && 
-            typeof p.location.lat === 'number' && 
-            typeof p.location.lng === 'number' && 
-            !(p.location.lat === 0 && p.location.lng === 0) &&
-            !p.id?.startsWith('building_') &&
-            !p.id?.startsWith('comm_bld_') &&
-            !p.id?.startsWith('place_bld_') &&
-            !p.id?.startsWith('community_') &&
-            !p.id?.startsWith('rooftop_')
-        );
+        // 2. Add places from places prop (allDisplayPlaces, ambient POIs, search results)
+        if (places && places.length > 0) {
+            places.forEach(p => {
+                if (!p) return;
+                const pId = p.id || (p as any).placeId || (p as any)._id || (p as any).key;
+                if (!pId || seenCandidateIds.has(pId)) return;
+                seenCandidateIds.add(pId);
+                candidatePlaces.push({
+                    ...p,
+                    id: pId
+                });
+            });
+        }
+
+        // Normalize candidate places: safely extract coordinates and support alternative property names (name vs title vs address)
+        const rawValidPlaces: Place[] = [];
+        for (const p of candidatePlaces) {
+            if (!p) continue;
+            const id = p.id || (p as any).placeId || (p as any)._id || (p as any).key;
+            if (!id) continue;
+            if (
+                typeof id === 'string' && (
+                    id.startsWith('building_') ||
+                    id.startsWith('comm_bld_') ||
+                    id.startsWith('place_bld_') ||
+                    id.startsWith('community_') ||
+                    id.startsWith('rooftop_')
+                )
+            ) {
+                continue;
+            }
+
+            const lat = p.location?.lat ?? (p as any).lat ?? (p as any).latitude;
+            const lng = p.location?.lng ?? (p as any).lng ?? (p as any).longitude;
+            if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) {
+                continue;
+            }
+
+            const name = p.name || (p as any).title || (p as any).address || (p as any).formattedAddress || (p as any).street || (isHomePlace(p) ? 'Home' : 'Saved Place');
+
+            // During preview/navigation the destination flag is the sole marker
+            // for the target place. Leaving its normal place pin visible created
+            // two competing pins at the same arrival point.
+            if (isActiveDestinationPlace({ ...p, id, name, location: { lat, lng } })) continue;
+
+            rawValidPlaces.push({
+                ...p,
+                id,
+                name,
+                location: { lat, lng },
+                isSaved: p.isSaved ?? (savedPlaces ? savedPlaces.some(sp => (sp.id || (sp as any).placeId) === id) : false)
+            });
+        }
+
+        // Deduplicate places sharing exact identity or physical location (< 25 meters)
+        // Never drop places located at distinct coordinates (e.g. Carson Dr vs Santa Fe Dr)
+        const validPlaces: Place[] = [];
+        for (const place of rawValidPlaces) {
+            const isDup = validPlaces.some(existing => {
+                if (existing.id === place.id) return true;
+                if (existing.location && place.location) {
+                    const dist = getDistanceFromCoords(
+                        existing.location.lat, existing.location.lng,
+                        place.location.lat, place.location.lng
+                    );
+                    if (dist < 25) {
+                        // Prevent duplicate saved places at the exact same physical coordinates (e.g. Carson Dr saved twice)
+                        if (existing.isSaved && place.isSaved) return true;
+                        if (isHomePlace(existing) && isHomePlace(place)) return true;
+                        const existingName = (existing.name || (existing as any).title || '').trim().toLowerCase();
+                        const placeName = (place.name || (place as any).title || '').trim().toLowerCase();
+                        if (existingName && placeName && existingName === placeName) return true;
+                        const existingAddr = (existing.address || (existing as any).formattedAddress || '').trim().toLowerCase();
+                        const placeAddr = (place.address || (place as any).formattedAddress || '').trim().toLowerCase();
+                        if (existingAddr && placeAddr && existingAddr === placeAddr) return true;
+                        if (existing.isSaved && !place.isSaved) return true;
+                    }
+                }
+                return false;
+            });
+            if (!isDup) {
+                validPlaces.push(place);
+            }
+        }
         const currentPlaceIds = new Set(validPlaces.map(p => p.id));
 
         // Evaluate place occupants across circle members and local user
@@ -2804,9 +2892,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     place.type === 'work' ||
                     place.type === 'school' ||
                     place.type === 'gym' ||
-                    place.type === 'saved' ||
-                    place.type === 'favorite' ||
-                    place.type === 'custom'
+                    (place.type as any) === 'saved' ||
+                    (place.type as any) === 'favorite' ||
+                    (place.type as any) === 'custom'
                 )) ||
                 (savedPlaces && savedPlaces.some(sp => sp && (
                     sp.id === place.id ||
@@ -2816,6 +2904,46 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 )))
             );
             const iconSvg = getPlaceIconSvg(place, isSelected, 'w-4 h-4 text-white');
+
+            // Format place name and resolve street address snippet
+            const displayName = place.name || (place as any).title || (place as any).label || (isHome ? 'Home' : 'Saved Place');
+            const directAddress = place.address || (place as any).formattedAddress || (place as any).street || '';
+            const resolvedAddress = resolvePlaceAddressSnippet(
+                place,
+                userProfile,
+                savedPlaces,
+                resolvedPlaceAddressesRef.current
+            );
+            const addressSnippet = resolvedAddress || directAddress;
+
+            // Asynchronous reverse-geocoding fallback if street address is still missing
+            if ((isHome || isSavedPlace) && !addressSnippet && place.location && typeof place.location.lat === 'number' && typeof place.location.lng === 'number' && !(place.location.lat === 0 && place.location.lng === 0)) {
+                const placeId = place.id;
+                if (placeId && !pendingReverseGeocodesRef.current.has(placeId)) {
+                    pendingReverseGeocodesRef.current.add(placeId);
+                    reverseGeocode({ lat: place.location.lat, lng: place.location.lng })
+                        .then(result => {
+                            if (!result) return;
+                            const rawAddr = result.address || (result as any).street || (result as any).road || result.name || '';
+                            if (!rawAddr) return;
+                            const snippet = rawAddr.replace(/^(?:home|work|office|school)\s*[-:–—·]\s*/i, '').split(',')[0]?.trim();
+                            if (snippet) {
+                                resolvedPlaceAddressesRef.current.set(placeId, snippet);
+                                const currentMarker = placesMarkersRef.current.get(placeId);
+                                if (currentMarker) {
+                                    const markerEl = currentMarker.getElement();
+                                    const labelSpan = markerEl.querySelector('.myway-place-label-text');
+                                    if (labelSpan) {
+                                        labelSpan.textContent = formatPlaceMarkerLabel(displayName, snippet);
+                                    }
+                                }
+                            }
+                        })
+                        .catch(() => {});
+                }
+            }
+
+            const fullDisplayLabel = formatPlaceMarkerLabel(displayName, addressSnippet);
 
             const isAmbient = !!place.isAmbient;
             const isDark = theme === 'dark';
@@ -2964,25 +3092,39 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             // - Custom saved circle places (!isAmbient -> minzoom 0)
             // - Hazards (incidents/reports -> minzoom 0)
             const isEmergency = place.type === 'hospital' || place.type === 'emergency' || place.type === 'police' || place.type === 'fire_station';
-            const isGasOrStore = place.type === 'gas' || place.type === 'grocery' || place.type === 'convenience' || place.type === 'coffee' || place.type === 'food';
+            const isGasOrStore = place.type === 'gas' || place.type === 'grocery' || (place.type as any) === 'convenience' || place.type === 'coffee' || place.type === 'food';
             
             let markerMinZoom = 0;
             if (isAmbient && !isHome && !isSelected && !isSearchResult && occupants.length === 0) {
                 markerMinZoom = isEmergency ? 12.5 : 13.5;
             }
 
-            const homePinCoords: Location = (isHome && userProfile?.preciseHomeLocation && typeof userProfile.preciseHomeLocation.lat === 'number' && typeof userProfile.preciseHomeLocation.lng === 'number' && !(userProfile.preciseHomeLocation.lat === 0 && userProfile.preciseHomeLocation.lng === 0))
-                ? { lat: userProfile.preciseHomeLocation.lat, lng: userProfile.preciseHomeLocation.lng }
-                : (place.originalLocation && typeof place.originalLocation.lat === 'number' && typeof place.originalLocation.lng === 'number' && !(place.originalLocation.lat === 0 && place.originalLocation.lng === 0))
-                    ? place.originalLocation
-                    : place.location;
-
             // Strict point coordinate anchoring:
-            const markerLoc = isHome
-                ? homePinCoords
-                : (place.originalLocation && typeof place.originalLocation.lat === 'number' && typeof place.originalLocation.lng === 'number' && !(place.originalLocation.lat === 0 && place.originalLocation.lng === 0))
-                    ? place.originalLocation
-                    : place.location;
+            // Only anchor to userProfile.preciseHomeLocation if place is specifically the user's primary personal home
+            const isUserPrimaryHome = isHome && userProfile?.preciseHomeLocation &&
+                typeof userProfile.preciseHomeLocation.lat === 'number' &&
+                typeof userProfile.preciseHomeLocation.lng === 'number' &&
+                !(userProfile.preciseHomeLocation.lat === 0 && userProfile.preciseHomeLocation.lng === 0) &&
+                place.location && (
+                    getDistanceFromCoords(place.location.lat, place.location.lng, userProfile.preciseHomeLocation.lat, userProfile.preciseHomeLocation.lng) < 80 ||
+                    place.id === 'home' ||
+                    (place.name || '').trim().toLowerCase() === 'home'
+                );
+
+            // A community correction changes the public map pin. Keep the
+            // original coordinate for matching/history only; rendering it after
+            // a correction made the place marker disagree with the route's
+            // destination pin.
+            const correctedMarkerLoc = place.isCorrected
+                ? (place.entrancePrecision?.location || place.entrancePin || place.entranceLocation || place.location)
+                : null;
+            const markerLoc = isUserPrimaryHome
+                ? { lat: userProfile.preciseHomeLocation.lat, lng: userProfile.preciseHomeLocation.lng }
+                : (correctedMarkerLoc && typeof correctedMarkerLoc.lat === 'number' && typeof correctedMarkerLoc.lng === 'number' && !(correctedMarkerLoc.lat === 0 && correctedMarkerLoc.lng === 0))
+                    ? correctedMarkerLoc
+                    : (place.originalLocation && typeof place.originalLocation.lat === 'number' && typeof place.originalLocation.lng === 'number' && !(place.originalLocation.lat === 0 && place.originalLocation.lng === 0))
+                        ? place.originalLocation
+                        : place.location;
 
             // Visual Offset for Identical Coordinates:
             // If a reactive search pin's coordinate is an exact match to a savedPlace (like Home),
@@ -3008,7 +3150,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
             const offsetTransform = isOverlappingSaved ? 'transform: translate(10px, -10px);' : '';
 
-            const markerHtml = isAmbient ? `
+            const isEmergencyAmbient = isAmbient && isEmergency;
+            const markerHtml = isAmbient ? (isEmergencyAmbient ? `
+                <div class="marker-content myway-ambient-emergency-poi" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; background: ${isDark ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.94)'}; border: 1px solid ${place.brandColor || '#ef4444'}66; border-radius: 9999px; box-shadow: 0 2px 8px rgba(0,0,0,0.18); pointer-events: auto; user-select: none;">
+                    <span aria-hidden="true" style="font-size: 12px; line-height: 1;">${place.icon || '🚨'}</span>
+                    <span style="font-family: inherit; font-size: 10.5px; font-weight: 750; letter-spacing: 0.01em; color: ${textColor}; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis;">${place.name}</span>
+                </div>
+            ` : `
                 <div class="marker-content myway-ambient-poi-text" style="display: flex; align-items: center; justify-content: center; padding: 2px 4px; pointer-events: auto; user-select: none; transition: transform 0.15s ease, opacity 0.15s ease; transform-origin: center center;">
                     <span style="
                         font-family: inherit;
@@ -3025,7 +3173,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         transition: color 0.15s ease, transform 0.15s ease;
                     ">${place.name}</span>
                 </div>
-            ` : `
+            `) : `
                 <div class="marker-content" style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer; pointer-events: auto; touch-action: manipulation; transition: transform 0.15s ease, opacity 0.15s ease; transform-origin: bottom center; ${offsetTransform}">
                     ${isSelected && isSavedPlace ? `
                         <div class="myway-place-geofence-radius" style="
@@ -3069,15 +3217,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         transition: transform 0.15s ease;
                     ">
                         <span style="display: inline-flex; align-items: center; justify-content: center; line-height: 1;" class="shrink-0">${iconSvg}</span>
-                        ${isHome ? `
-                            <span style="font-size: 13px; font-weight: 700; color: #ffffff; white-space: nowrap; text-align: center; letter-spacing: -0.2px;">Home</span>
+                        ${(isHome || isSavedPlace) ? `
+                            <span class="myway-place-label-text" style="font-size: 13px; font-weight: 700; color: #ffffff; white-space: nowrap; text-align: center; letter-spacing: -0.2px;">${fullDisplayLabel}</span>
                         ` : place.type === 'parked_vehicle' ? `
                             <span style="font-size: 12px; font-weight: 700; color: #ffffff; white-space: nowrap; text-align: center; letter-spacing: -0.2px;">Parked</span>
-                        ` : ''}
-                        ${place.isCorrected ? `
-                            <div style="position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; background: #f59e0b; border: 1.5px solid #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 5px rgba(0,0,0,0.4);" title="Verified Entrance Pin">
-                                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="#ffffff"><path d="m12 3.4 2.7 5.4 6 .9-4.35 4.23 1.03 5.97L12 17.1l-5.38 2.83 1.03-5.97L3.3 9.7l6-.9L12 3.4Z"/></svg>
-                            </div>
                         ` : ''}
                     </div>
                     <!-- Pin Needle Pointer (Seamlessly anchored to pill with matching border & placeColor) -->
@@ -3092,7 +3235,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         <polyline points="1,0 7,8 13,0" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                     <!-- Label Pill for Occupants, Search Results, or Selected Places -->
-                    ${occupantsLabelHtml ? occupantsLabelHtml : ((isSelected || place.type === 'parked_vehicle' || (isSearchResult && place.isRooftop !== false)) && !isHome ? `
+                    ${occupantsLabelHtml ? occupantsLabelHtml : ((isSelected || place.type === 'parked_vehicle' || (isSearchResult && place.isRooftop !== false)) && !isHome && !isSavedPlace ? `
                         <div style="
                             margin-top: 3px;
                             padding: 2px 10px;
@@ -3124,6 +3267,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
                 const el = document.createElement('div');
                 el.className = `myway-place-marker select-none ${isAmbient ? 'myway-ambient-poi' : ''}`;
+                // Set marker visibility to hidden until full styles and classes are applied to prevent transient unstyled text glitches
+                el.style.visibility = 'hidden';
                 el.style.display = 'flex';
                 el.style.flexDirection = 'column';
                 el.style.alignItems = 'center';
@@ -3135,6 +3280,13 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 el.innerHTML = markerHtml;
                 (el as any)._lastHtml = markerHtml;
                 (el as any)._place = place;
+
+                // Reveal cleanly once DOM node, classes, and styles are computed
+                requestAnimationFrame(() => {
+                    if (el && !el.dataset.clusterHidden) {
+                        el.style.visibility = 'visible';
+                    }
+                });
 
                 let touchStartX = 0;
                 let touchStartY = 0;
@@ -3163,6 +3315,20 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     }
                     const targetPlace = (el as any)._place || place;
                     console.log('Place clicked:', targetPlace);
+                    if (map.current && targetPlace.location && typeof targetPlace.location.lat === 'number' && typeof targetPlace.location.lng === 'number') {
+                        const bottomSheetHeight = isMobile ? Math.min(Math.round(window.innerHeight * 0.46), 360) : 0;
+                        const curZoom = map.current.getZoom();
+                        const targetZoom = Math.max(16.5, curZoom);
+                        lastAnimatedCenterRef.current = { lng: targetPlace.location.lng, lat: targetPlace.location.lat };
+                        map.current.easeTo({
+                            center: [targetPlace.location.lng, targetPlace.location.lat],
+                            zoom: targetZoom,
+                            pitch: is3DMode ? 60 : 0,
+                            offset: [0, -bottomSheetHeight / 2],
+                            duration: 550,
+                            essential: true
+                        });
+                    }
                     onSelectPlaceRef.current?.(targetPlace);
                 };
 
@@ -3256,12 +3422,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
                 const minZStr = el.dataset.minzoom;
                 if (!minZStr) continue;
+                const isSavedPlaceMarker = Boolean(
+                    (el as any)._place?.isSaved ||
+                    (el as any)._place?.type === 'home' ||
+                    (el as any)._place?.type === 'residential' ||
+                    (savedPlaces && savedPlaces.some(sp => sp.id === id))
+                );
                 if (el.dataset.clusterHidden === 'true') {
                     el.style.display = 'none';
                     continue;
                 }
                 const minZ = parseFloat(minZStr);
-                if (minZ === 0) {
+                if (minZ === 0 || isSavedPlaceMarker) {
                     el.style.display = 'flex';
                     innerContent.style.opacity = '1';
                     innerContent.style.transform = 'scale(1)';
@@ -3311,71 +3483,86 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     (place.isSaved === true || ['home', 'work', 'school', 'gym', 'saved', 'favorite', 'custom'].includes(place.type || ''));
             });
 
-        entries.forEach(({ marker }) => {
-            const el = marker.getElement();
-            if (el) delete el.dataset.clusterHidden;
-        });
-
-        if (clusterAtZoom) {
-            const grouped = new Set<string>();
-            for (const entry of entries) {
-                if (grouped.has(entry.id)) continue;
-                const point = mapInstance.project([entry.place.location.lng, entry.place.location.lat]);
-                const group = entries.filter(candidate => {
-                    if (grouped.has(candidate.id)) return false;
-                    const candidatePoint = mapInstance.project([candidate.place.location.lng, candidate.place.location.lat]);
-                    return Math.hypot(point.x - candidatePoint.x, point.y - candidatePoint.y) < 70;
-                });
-                if (group.length < 2) continue;
-
-                group.forEach(item => {
-                    grouped.add(item.id);
-                    const element = item.marker.getElement();
-                    if (element) {
-                        element.dataset.clusterHidden = 'true';
-                        element.style.display = 'none';
-                    }
-                });
-                const key = `place_cluster_${group.map(item => item.id).sort().join('_')}`;
-                activeKeys.add(key);
-                const compactAddress = (place: Place) => {
-                    const address = place.address || place.description || place.location?.label || '';
-                    return address.split(',')[0]?.trim() || place.name;
-                };
-                const addressSummary = group.map(item => compactAddress(item.place));
-                const clusterLabel = group.length === 2
-                    ? addressSummary.join(' / ')
-                    : `${group.length} saved places`;
-                const centroid = group.reduce((sum, item) => ({ lat: sum.lat + item.place.location.lat, lng: sum.lng + item.place.location.lng }), { lat: 0, lng: 0 });
-                centroid.lat /= group.length;
-                centroid.lng /= group.length;
-                let marker = placeClusterMarkersRef.current.get(key);
-                if (!marker) {
-                    const el = document.createElement('button');
-                    el.type = 'button';
-                    el.className = 'myway-place-cluster select-none';
-                    el.setAttribute('aria-label', `${clusterLabel}. Zoom in to view.`);
-                    el.style.cssText = 'display:flex;align-items:center;gap:5px;border:2px solid #ffffff;border-radius:999px;background:#6d3df5;color:#ffffff;padding:7px 10px;font:800 12px system-ui;box-shadow:0 4px 14px rgba(54,28,130,.42);cursor:pointer;white-space:nowrap;';
-                    el.innerHTML = `<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z"/></svg><span>${clusterLabel}</span>`;
-                    el.addEventListener('click', event => {
-                        event.stopPropagation();
-                        mapInstance.flyTo({ center: [centroid.lng, centroid.lat], zoom: Math.max(15.5, mapInstance.getZoom() + 2), duration: 450 });
+        // When not clustering at street scale, clear all place cluster markers and un-hide all pins
+        if (!clusterAtZoom) {
+            entries.forEach(({ marker }) => {
+                const el = marker.getElement();
+                if (el && el.dataset.clusterHidden === 'true') {
+                    delete el.dataset.clusterHidden;
+                    el.style.visibility = 'hidden';
+                    el.style.display = 'flex';
+                    requestAnimationFrame(() => {
+                        if (el && !el.dataset.clusterHidden) {
+                            el.style.visibility = 'visible';
+                        }
                     });
-                    marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([centroid.lng, centroid.lat]).addTo(mapInstance);
-                    placeClusterMarkersRef.current.set(key, marker);
-                } else {
-                    marker.setLngLat([centroid.lng, centroid.lat]);
                 }
+            });
+            for (const [key, marker] of placeClusterMarkersRef.current.entries()) {
+                marker.remove();
+                placeClusterMarkersRef.current.delete(key);
+            }
+            return;
+        }
+
+        const isDark = theme === 'dark';
+        const grouped = new Set<string>();
+        for (const entry of entries) {
+            if (grouped.has(entry.id)) continue;
+            const point = mapInstance.project([entry.place.location.lng, entry.place.location.lat]);
+            const group = entries.filter(candidate => {
+                if (grouped.has(candidate.id)) return false;
+                const candidatePoint = mapInstance.project([candidate.place.location.lng, candidate.place.location.lat]);
+                return Math.hypot(point.x - candidatePoint.x, point.y - candidatePoint.y) < 70;
+            });
+            if (group.length < 2) continue;
+
+            group.forEach(item => {
+                if (item.place.id === selectedPlaceId) return;
+                grouped.add(item.id);
+                const element = item.marker.getElement();
+                if (element) {
+                    element.dataset.clusterHidden = 'true';
+                    element.style.display = 'none';
+                }
+            });
+
+            const key = `place_cluster_${group.map(item => item.id).sort().join('_')}`;
+            activeKeys.add(key);
+            const clusterLabel = `${group.length} Places`;
+            const centroid = group.reduce((sum, item) => ({ lat: sum.lat + item.place.location.lat, lng: sum.lng + item.place.location.lng }), { lat: 0, lng: 0 });
+            centroid.lat /= group.length;
+            centroid.lng /= group.length;
+            let marker = placeClusterMarkersRef.current.get(key);
+            if (!marker) {
+                const el = document.createElement('button');
+                el.type = 'button';
+                el.className = 'myway-place-cluster select-none cursor-pointer';
+                el.setAttribute('aria-label', `${clusterLabel}. Zoom in to view.`);
+                el.style.cssText = `display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:${isDark ? 'rgba(15, 23, 42, 0.94)' : 'rgba(255, 255, 255, 0.96)'};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:2px solid ${isDark ? 'rgba(148, 163, 184, 0.25)' : 'rgba(255, 255, 255, 0.95)'};border-radius:9999px;color:${isDark ? '#f8fafc' : '#0f172a'};box-shadow:0 4px 16px rgba(0,0,0,0.22);cursor:pointer;white-space:nowrap;font-size:11px;font-weight:800;visibility:hidden;`;
+                el.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z"/></svg><span>${clusterLabel}</span>`;
+                requestAnimationFrame(() => {
+                    el.style.visibility = 'visible';
+                });
+                el.addEventListener('click', event => {
+                    event.stopPropagation();
+                    mapInstance.easeTo({ center: [centroid.lng, centroid.lat], zoom: mapInstance.getZoom() + 2, duration: 400 });
+                });
+                marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([centroid.lng, centroid.lat]).addTo(mapInstance);
+                placeClusterMarkersRef.current.set(key, marker);
+            } else {
+                marker.setLngLat([centroid.lng, centroid.lat]);
             }
         }
 
+        // Clean up stale place cluster markers
         for (const [key, marker] of placeClusterMarkersRef.current.entries()) {
             if (!activeKeys.has(key)) {
                 marker.remove();
                 placeClusterMarkersRef.current.delete(key);
             }
         }
-    }, [places, savedPlaces, selectedPlaceId, isMapReady, markerClusterZoom, styleVersion]);
+    }, [places, savedPlaces, selectedPlaceId, selectedPlace?.id, selectedPlace?.name, selectedPlace?.location?.lat, selectedPlace?.location?.lng, selectedPlace?.entrancePin?.lat, selectedPlace?.entrancePin?.lng, selectedPlace?.entranceLocation?.lat, selectedPlace?.entranceLocation?.lng, selectedPlace?.entrancePrecision?.location?.lat, selectedPlace?.entrancePrecision?.location?.lng, isMapReady, markerClusterZoom, styleVersion, theme, activeRoute?.destinationLoc?.lat, activeRoute?.destinationLoc?.lng, activeRoute?.destinationName]);
 
     // ==========================================
     // PREDICTIVE AUTONOMOUS MAINTENANCE CORRIDOR LAYER
@@ -3587,9 +3774,23 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             // Strict point coordinate anchoring:
             // The circular radius must center strictly on the Home pin's exact point coordinates
             // and must NOT anchor to, inherit, or merge with the custom driveway polygon geometry.
+            const hasDedicatedEntranceZone = place.entranceType === 'driveway' || place.entranceType === 'parking' || Boolean(
+                place.entrancePrecision?.box || (place as any).entranceBox
+            );
+            // A Standard saved-place edit moves the place and its circular
+            // geofence together. Driveway and parking edits deliberately keep
+            // the larger place radius on the original property point while
+            // their approach zone remains separate.
+            const correctedCircularCenter = place.isCorrected && !hasDedicatedEntranceZone &&
+                place.location && typeof place.location.lat === 'number' && typeof place.location.lng === 'number' &&
+                !(place.location.lat === 0 && place.location.lng === 0)
+                ? place.location
+                : null;
             const homePinCoords: Location = (isHome && userProfile?.preciseHomeLocation && typeof userProfile.preciseHomeLocation.lat === 'number' && typeof userProfile.preciseHomeLocation.lng === 'number' && !(userProfile.preciseHomeLocation.lat === 0 && userProfile.preciseHomeLocation.lng === 0))
                 ? { lat: userProfile.preciseHomeLocation.lat, lng: userProfile.preciseHomeLocation.lng }
-                : (place.originalLocation && typeof place.originalLocation.lat === 'number' && typeof place.originalLocation.lng === 'number' && !(place.originalLocation.lat === 0 && place.originalLocation.lng === 0))
+                : correctedCircularCenter
+                    ? correctedCircularCenter
+                    : (place.originalLocation && typeof place.originalLocation.lat === 'number' && typeof place.originalLocation.lng === 'number' && !(place.originalLocation.lat === 0 && place.originalLocation.lng === 0))
                     ? place.originalLocation
                     : place.location;
 
@@ -4426,208 +4627,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }, [publicReports, isMapReady, styleVersion, theme, currentUserId]);
 
     // ==========================================
-    // COMMUNITY BUILDING NUMBERS (PURE WEBGL LAYER - ZERO DOM MARKERS)
-    // Decoupled from avatar clustering; purely updates WebGL source via .setData()
-    // ==========================================
-    useEffect(() => {
-        if (!map.current) return;
-
-        const injectData = () => {
-            // Check if map is fully ready first
-            if (!map.current || !map.current.isStyleLoaded()) return;
-
-            // Robust Layer Initialization: Check if source exists; if not, dynamically addSource and addLayer
-            if (!map.current.getSource('community-buildings')) {
-                try {
-                    map.current.addSource('community-buildings', {
-                        type: 'geojson',
-                        data: { type: 'FeatureCollection', features: [] }
-                    });
-                } catch (err) {
-                    console.warn('[MapLibre3DView] Error dynamically adding community-buildings source:', err);
-                }
-            }
-
-            if (!map.current.getLayer('community-buildings-layer')) {
-                try {
-                    map.current.addLayer({
-                        id: 'community-buildings-layer',
-                        type: 'symbol',
-                        source: 'community-buildings',
-                        minzoom: 15,
-                        layout: {
-                            'text-field': ['coalesce', ['get', 'houseNumber'], ['get', 'house_number'], ['get', 'housenumber'], ['get', 'addr:housenumber'], ''],
-                            'text-size': [
-                                'interpolate',
-                                ['linear'],
-                                ['zoom'],
-                                15, 11,
-                                18, 13,
-                                20, 15
-                            ],
-                            'text-font': ['Open Sans Bold', 'Open Sans Regular', 'Arial Unicode MS Bold'],
-                            'text-anchor': 'center',
-                            'text-justify': 'center',
-                            'text-pitch-alignment': 'viewport',
-                            'text-rotation-alignment': 'viewport',
-                            'text-allow-overlap': true,
-                            'text-ignore-placement': true,
-                            'text-optional': false
-                        },
-                        paint: {
-                            'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                            'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)',
-                            'text-halo-width': 2.0,
-                            'text-halo-blur': 0.5
-                        }
-                    });
-                } catch (layerErr) {
-                    console.warn('[MapLibre3DView] Failed to dynamically add community-buildings-layer:', layerErr);
-                }
-            }
-
-            const source = map.current.getSource('community-buildings') as maplibregl.GeoJSONSource | undefined;
-            if (!source) return;
-
-            // 1. Auto-register saved places with house numbers into community building cache ONLY if verified rooftop
-            if (savedPlaces && savedPlaces.length > 0) {
-                savedPlaces.forEach(p => {
-                    // NEVER register unverified or street/intersection places into persistent community building layer
-                    if (!p.isRooftop && !p.isCorrected) return;
-                    if (p.geocodePrecision === 'street' || p.geocodePrecision === 'intersection') return;
-                    const hn = p.houseNumber || extractHouseNumber(p.address || p.name || '');
-                    const lat = p.location?.lat;
-                    const lng = p.location?.lng;
-                    if (hn && typeof lat === 'number' && typeof lng === 'number') {
-                        communityBuildingService.registerBuilding({
-                            address: p.address || p.name || `${hn} Street`,
-                            houseNumber: hn,
-                            coordinates: { lat, lng },
-                            userId: currentUserId,
-                            source: 'place_correction',
-                            isRooftop: true,
-                            precision: 'rooftop'
-                        });
-                    }
-                });
-            }
-
-            // Purge unverified street/intersection artifacts from cache and map
-            communityBuildingService.purgeStrayBuildings(savedPlaces, userProfile?.preciseHomeLocation);
-
-            // 2. Auto-register user's verified precise home location if present
-            if (userProfile?.preciseHomeLocation && typeof userProfile.preciseHomeLocation.lat === 'number' && typeof userProfile.preciseHomeLocation.lng === 'number' && !(userProfile.preciseHomeLocation.lat === 0 && userProfile.preciseHomeLocation.lng === 0)) {
-                const hn = userProfile.houseNumber || extractHouseNumber(userProfile.homeAddress || '');
-                if (hn) {
-                    communityBuildingService.registerBuilding({
-                        address: userProfile.homeAddress || `Building ${hn}`,
-                        houseNumber: hn,
-                        coordinates: { lat: userProfile.preciseHomeLocation.lat, lng: userProfile.preciseHomeLocation.lng },
-                        userId: currentUserId,
-                        source: 'user_profile',
-                        isRooftop: true,
-                        precision: 'rooftop'
-                    });
-                }
-            }
-
-            // 3. Combine communityBuildings state with synchronous cache
-            const allBuildings = [
-                ...(communityBuildings || []),
-                ...communityBuildingService.getAllBuildings()
-            ];
-
-            const seen = new Set<string>();
-            const features: GeoJSON.Feature[] = [];
-
-            allBuildings.forEach(b => {
-                if (!b) return;
-                // Never inject unverified street or intersection numbers into WebGL layer
-                if (b.isRooftop === false || b.precision === 'street' || b.precision === 'intersection') return;
-                if (/(\s&|\sand\s|\s\/\s|\sat\s)/i.test(b.address || '')) return;
-                if (b.source !== 'user_profile' && b.source !== 'pinpoint_verification' && !b.isRooftop && /(drive|dr|court|ct|road|rd|street|st|avenue|ave|lane|ln|way|blvd)\b/i.test(b.address || '') && !/building/i.test(b.address || '')) return;
-
-                const bId = b.id || `${b.coordinates?.lat}_${b.coordinates?.lng}`;
-                if (seen.has(bId)) return;
-                seen.add(bId);
-
-                const lat = b.coordinates?.lat ?? (b as any).lat;
-                const lng = b.coordinates?.lng ?? (b as any).lng;
-                const houseNumber = b.houseNumber || extractHouseNumber(b.address || '');
-
-                if (houseNumber && typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
-                    features.push({
-                        type: 'Feature',
-                        id: bId,
-                        properties: {
-                            id: bId,
-                            houseNumber: String(houseNumber),
-                            house_number: String(houseNumber),
-                            housenumber: String(houseNumber),
-                            'addr:housenumber': String(houseNumber),
-                            label: b.address || `Building ${houseNumber}`
-                        },
-                        geometry: {
-                            type: 'Point',
-                            coordinates: [lng, lat]
-                        }
-                    });
-                }
-            });
-
-            const geojson: GeoJSON.FeatureCollection = {
-                type: 'FeatureCollection',
-                features
-            };
-
-            try {
-                source.setData(geojson);
-            } catch (e) {
-                console.warn('[MapLibre3DView] Error updating community-buildings source:', e);
-            }
-
-            // 4. Update dynamic layer paint properties if changed
-            if (map.current.getLayer('community-buildings-layer')) {
-                try {
-                    const targetTextColor = theme === 'dark' ? '#f8fafc' : '#0f172a';
-                    const currentTextColor = map.current.getPaintProperty('community-buildings-layer', 'text-color');
-                    if (currentTextColor !== targetTextColor) {
-                        map.current.setPaintProperty('community-buildings-layer', 'text-color', targetTextColor);
-                        map.current.setPaintProperty('community-buildings-layer', 'text-halo-color', theme === 'dark' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)');
-                    }
-                } catch {}
-            }
-        };
-
-        // Retry Mechanism: If data is ready but isStyleLoaded() is false, retry when map finishes rendering
-        if (!map.current.isStyleLoaded()) {
-            map.current.once('idle', injectData);
-            map.current.once('style.load', injectData);
-            map.current.once('load', injectData);
-        } else {
-            injectData();
-        }
-
-        // Listen for Style Changes: Only re-inject when style.load fires and layer is missing
-        const handleStyleChange = () => {
-            if (!map.current || !map.current.isStyleLoaded()) return;
-            if (!map.current.getLayer('community-buildings-layer')) {
-                injectData();
-            }
-        };
-
-        map.current.on('style.load', handleStyleChange);
-
-        return () => {
-            if (map.current) {
-                map.current.off('style.load', handleStyleChange);
-                map.current.off('idle', injectData);
-                map.current.off('load', injectData);
-            }
-        };
-    }, [communityBuildings, savedPlaces, userProfile, theme, isMapReady, styleVersion, currentUserId]);
-
-    // ==========================================
     // NATIONAL ADDRESS DATABASE BUILDING NUMBERS
     // Saved places only cover a handful of addresses. This viewport-backed
     // source supplies the actual nearby building-number labels.
@@ -4697,6 +4696,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             }, zoom);
             // A late request may not replace labels from the current viewport.
             if (disposed || version !== requestVersion) return;
+            setNationalAddressPoints(points);
             const source = currentMap.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
             source?.setData(nationalAddressPointsToGeoJSON(points));
         };
@@ -4723,103 +4723,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }, [isMapReady, styleVersion, theme]);
 
     // ==========================================
-    // VOLATILE ACTIVE SEARCH LAYER (active-search-source)
-    // Instantly wiped empty when search is cleared, detail panel closed, or navigation starts
-    // ==========================================
-    useEffect(() => {
-        if (!map.current || !isMapReady) return;
-
-        const sourceId = 'active-search-source';
-        const layerId = 'active-search-layer';
-
-        if (!map.current.getSource(sourceId)) {
-            try {
-                map.current.addSource(sourceId, {
-                    type: 'geojson',
-                    data: STATIC_EMPTY_FEATURE_COLLECTION
-                });
-                map.current.addLayer({
-                    id: layerId,
-                    type: 'symbol',
-                    source: sourceId,
-                    minzoom: 14,
-                    layout: {
-                        'text-field': ['coalesce', ['get', 'houseNumber'], ''],
-                        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                        'text-size': 12,
-                        'text-anchor': 'top',
-                        'text-offset': [0, 0.8],
-                        'text-allow-overlap': false
-                    },
-                    paint: {
-                        'text-color': theme === 'dark' ? '#f8fafc' : '#0f172a',
-                        'text-halo-color': theme === 'dark' ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)',
-                        'text-halo-width': 2.0
-                    }
-                });
-            } catch (e) {
-                console.warn('[MapLibre3DView] Error creating active-search-source:', e);
-            }
-        }
-
-        const source = map.current.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
-        if (!source) return;
-
-        // Instantly wipe empty if user is navigating, or no search places exist
-        if (isNavigating || !places || places.length === 0) {
-            try {
-                source.setData(STATIC_EMPTY_FEATURE_COLLECTION);
-            } catch {}
-            return;
-        }
-
-        const searchPlaces = places.filter(p => 
-            p && 
-            p.type === 'search_result' && 
-            p.location && 
-            typeof p.location.lat === 'number' && 
-            typeof p.location.lng === 'number' && 
-            !(p.location.lat === 0 && p.location.lng === 0)
-        );
-
-        if (searchPlaces.length === 0) {
-            try {
-                source.setData(STATIC_EMPTY_FEATURE_COLLECTION);
-            } catch {}
-            return;
-        }
-
-        // Only inject text building numbers if strictly verified rooftop; NEVER for intersections or streets!
-        const searchFeatures: GeoJSON.Feature[] = searchPlaces.map(sp => {
-            const isRooftopVerified = sp.isRooftop === true && sp.geocodePrecision === 'rooftop' && Boolean(sp.houseNumber);
-            return {
-                type: 'Feature',
-                id: sp.id,
-                properties: {
-                    id: sp.id,
-                    name: sp.name,
-                    houseNumber: isRooftopVerified ? String(sp.houseNumber) : '',
-                    label: isRooftopVerified ? String(sp.houseNumber) : '',
-                    isRooftop: isRooftopVerified
-                },
-                geometry: {
-                    type: 'Point',
-                    coordinates: [sp.location.lng, sp.location.lat]
-                }
-            };
-        });
-
-        try {
-            source.setData({
-                type: 'FeatureCollection',
-                features: searchFeatures
-            });
-        } catch (err) {
-            console.warn('[MapLibre3DView] Error updating active-search-source:', err);
-        }
-    }, [places, isNavigating, isMapReady, theme]);
-
-    // ==========================================
     // INTERACTIVE MAP BUILDINGS (TAP-TO-MOVE)
     // Tapping neighboring buildings / coordinates reverse-geocodes the location,
     // updates SearchBox, and shifts active search pin & Place Detail Panel
@@ -4841,46 +4744,57 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const lat = e.lngLat.lat;
             const lng = e.lngLat.lng;
 
-            // Prioritize user saved places if clicked directly on or adjacent to saved geofence
-            const currentSaved = savedPlacesRef.current || [];
-            if (currentSaved && currentSaved.length > 0) {
-                const nearbySaved = currentSaved.find(sp => {
-                    if (!sp.location || typeof sp.location.lat !== 'number' || typeof sp.location.lng !== 'number') return false;
-                    const distM = getDistanceMeters(sp.location, { lat, lng });
-                    const radiusM = Math.max((sp.radius || 0.15) * 1609.34, 45);
-                    return distM <= radiusM;
+            // Address labels are a more precise click target than a nearby
+            // place pin. Resolve them before applying any POI radius so a
+            // large place (for example, a gas station) cannot capture taps on
+            // neighbouring house numbers.
+            if (currentMap.getZoom() >= 14 && onSelectPlaceRef.current) {
+                const addressFeatures = currentMap.queryRenderedFeatures(e.point, {
+                    layers: ['national-address-numbers'].filter(id => currentMap.getLayer(id))
                 });
-                if (nearbySaved) {
-                    console.log('Place clicked:', nearbySaved);
-                    onSelectPlaceRef.current?.(nearbySaved);
+                const addressFeature = addressFeatures.find(feature => feature.layer?.id === 'national-address-numbers');
+                const houseNumber = String(addressFeature?.properties?.houseNumber || '').trim();
+                const street = String(addressFeature?.properties?.street || '').trim();
+                const address = [houseNumber, street].filter(Boolean).join(' ');
+
+                if (addressFeature && address) {
+                    let targetLat = lat;
+                    let targetLng = lng;
+                    if (addressFeature.geometry?.type === 'Point') {
+                        const [featureLng, featureLat] = (addressFeature.geometry as GeoJSON.Point).coordinates;
+                        targetLat = featureLat;
+                        targetLng = featureLng;
+                    }
+                    onSelectPlaceRef.current({
+                        id: `national-address-${addressFeature.id || `${targetLat}_${targetLng}`}`,
+                        name: address,
+                        address,
+                        description: address,
+                        location: { lat: targetLat, lng: targetLng },
+                        type: 'search_result',
+                        icon: '📍',
+                        radius: 0.02,
+                        isRooftop: true,
+                        geocodePrecision: 'rooftop',
+                        houseNumber
+                    } as Place);
                     return;
                 }
             }
 
-            // Also check other places (e.g. search results or custom pins)
-            const currentPlaces = placesRef.current || [];
-            if (currentPlaces && currentPlaces.length > 0) {
-                const nearbyPlace = currentPlaces.find(p => {
-                    if (!p.location || typeof p.location.lat !== 'number' || typeof p.location.lng !== 'number') return false;
-                    const distM = getDistanceMeters(p.location, { lat, lng });
-                    const radiusM = Math.max((p.radius || 0.15) * 1609.34, 45);
-                    return distM <= radiusM;
-                });
-                if (nearbyPlace) {
-                    console.log('Place clicked:', nearbyPlace);
-                    onSelectPlaceRef.current?.(nearbyPlace);
-                    return;
-                }
-            }
+            // Place markers provide their own click handlers. Do not treat a
+            // place's geofence radius as a map-click hit area: that made an
+            // unrelated blank-map tap select whichever POI happened to be
+            // nearby. Background taps should resolve the tapped address.
 
             // Check zoom level: only allow address/building inspection at street/neighborhood zoom (>= 14)
             if (currentMap.getZoom() < 14) return;
 
             try {
                 const point = e.point;
-                // Check if user tapped directly on a community building or 3D building footprint
+                // Check if the user tapped an authoritative address label or 3D building footprint
                 const commFeatures = currentMap.queryRenderedFeatures(point, {
-                    layers: ['community-buildings-layer', 'community-building-numbers', 'buildings-3d'].filter(id => currentMap.getLayer(id))
+                    layers: ['national-address-numbers', 'buildings-3d'].filter(id => currentMap.getLayer(id))
                 });
 
                 let targetLat = lat;
@@ -4893,6 +4807,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         targetLng = coords[0];
                         targetLat = coords[1];
                     }
+
                 }
 
                 const place = await reverseGeocode({ lat: targetLat, lng: targetLng });
@@ -4908,7 +4823,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         currentMap.on('click', handleMapClick);
 
         // Cursor pointer styling on hover over buildings at street zoom
-        const buildingLayers = ['buildings-3d', 'community-buildings-layer', 'community-building-numbers'];
+        const buildingLayers = ['buildings-3d'];
         const handleMouseEnter = () => {
             if (currentMap && !isNavigating && currentMap.getZoom() >= 14) {
                 currentMap.getCanvas().style.cursor = 'pointer';
@@ -5031,8 +4946,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         puckRafIdRef.current = requestAnimationFrame(animatePuck);
     }, []);
 
-    // Composite key to trigger member marker remounting when location or sharing status updates
-    const membersSharingKey = (members || []).map(m => `${m.id}:${m.isSharingLocation !== false && m.locationSharing !== false}:${m.location?.lat}:${m.location?.lng}:${m.status}`).join('|');
+    // Re-evaluate cached member fixes even when Firestore stops producing updates.
+    // A live marker ages into an offline marker after the same freshness window used by member cards.
+    const [memberPresenceTick, setMemberPresenceTick] = React.useState(0);
+    useEffect(() => {
+        const intervalId = window.setInterval(() => setMemberPresenceTick(tick => tick + 1), 15_000);
+        return () => window.clearInterval(intervalId);
+    }, []);
+
+    // Composite key to trigger member marker remounting when presence, sharing, or location updates.
+    const membersSharingKey = (members || []).map(m => `${m.id}:${m.isSharingLocation !== false && m.locationSharing !== false}:${m.location?.lat}:${m.location?.lng}:${m.status}:${m.lastUpdated}:${m.locationStale}:${m.privacyMode}`).join('|');
 
     // ==========================================
     // MEMBER AVATARS & LIVE LOCATION PUCK MARKERS
@@ -5165,6 +5088,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         // â”€â”€ RENDER CLUSTERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const isLightSkin = effectiveSkin === 'default' || effectiveSkin === 'warm_cream';
         const isCarbonAmber = effectiveSkin === 'carbon-amber' || effectiveSkin === 'los-santos';
+        const allClusteredPlaceIds = new Set<string>();
 
         clusters.forEach(cluster => {
             if (cluster.members.length === 1) {
@@ -5284,22 +5208,39 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 visualRotation = Math.round(visualRotation);
 
                 const circleColor = member.circleColor || '#6366f1';
-                const isDriving = (member.speed || 0) > 10 || !!(member as any).isDriving;
-                const isStale = !!(member as any).isStale;
+                const movementMode = classifyMovementMode(member.id, member.speed || 0);
+                const movementVisuals = getMovementVisuals(movementMode, member.speed || 0);
                 const isBlurred = (member as any).privacyMode === 'blurred' || (member as any).privacyMode === 'approximate';
-                const isFrozen = (member as any).privacyMode === 'frozen' || (member as any).privacyMode === 'ghost';
+                const isInvisible = (member as any).privacyMode === 'invisible' || (member as any).privacyMode === 'frozen' || (member as any).privacyMode === 'ghost';
+                const locationFreshness = getLocationFreshness(member.lastUpdated);
+                const isLocationLive = locationFreshness.isLive &&
+                    member.status !== 'Offline' &&
+                    member.locationStale !== true &&
+                    member.isSharingLocation !== false &&
+                    member.locationSharing !== false &&
+                    !isInvisible &&
+                    !member.isGhostMode;
+                const isStale = !isLocationLive;
+                const inactiveLabel = isInvisible || member.isGhostMode
+                    ? 'Location hidden'
+                    : member.status === 'Offline'
+                        ? 'Offline'
+                        : locationFreshness.label;
+                const markerVisuals = isLocationLive
+                    ? movementVisuals
+                    : { ...movementVisuals, label: inactiveLabel, ringColor: '#94a3b8', dotColor: '#94a3b8' };
+                const activityBadgeHtml = isLocationLive ? getMapMarkerBadgeHtml(movementMode, member.speed || 0) : '';
+                const isDriving = isLocationLive && movementMode === 'driving';
 
-                const borderColor = isCarbonAmber
-                    ? '#f59e0b'
-                    : isBlurred 
+                const borderColor = isStale
+                    ? '#9ca3af'
+                    : isCarbonAmber
+                        ? '#f59e0b'
+                        : isBlurred
                         ? '#a855f7' 
-                        : isFrozen 
+                        : isInvisible
                             ? '#38bdf8' 
-                            : isStale 
-                                ? '#9ca3af' 
-                                : isDriving 
-                                    ? '#6366f1' 
-                                    : circleColor;
+                            : markerVisuals.ringColor;
 
                 const initials = (member.name || 'M').charAt(0).toUpperCase();
                 const markerHtml = isSelfNavigating ? `
@@ -5326,17 +5267,17 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 ` : `
                     <div class="myway-member-avatar-container select-none" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;">
                         <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
-                            ${isStale ? '' : `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${circleColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`}
-                            <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3px solid ${circleColor}; background: #0f172a; box-shadow: 0 6px 18px rgba(0,0,0,0.5); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
+                            ${isLocationLive ? `<div style="position: absolute; inset: -4px; border-radius: 50%; background: ${markerVisuals.ringColor}; opacity: 0.35; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>` : ''}
+                            <div style="position: relative; width: 42px; height: 42px; border-radius: 50%; border: 3px solid ${borderColor}; background: #0f172a; box-shadow: 0 6px 18px rgba(0,0,0,0.5); overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #ffffff; font-size: 16px;">
                                 ${member.avatar && !member.avatar.includes('default') ? `<img src="${member.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
                                 <span style="${member.avatar && !member.avatar.includes('default') ? 'display: none;' : 'display: flex;'}">${initials}</span>
                             </div>
-                            ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${circleColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">â–²</div>` : ''}
-                            ${member.circleName ? `<div style="position: absolute; bottom: -1px; right: -1px; width: 13px; height: 13px; border-radius: 50%; background: ${circleColor}; border: 2px solid #0f172a; box-shadow: 0 2px 6px rgba(0,0,0,0.5);"></div>` : ''}
+                            ${isDriving ? `<div style="position: absolute; top: -12px; transform: rotate(${visualRotation}deg); font-size: 15px; color: ${movementVisuals.ringColor}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">▲</div>` : ''}
+                            ${activityBadgeHtml}
                         </div>
-                        <div style="margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); border: 1px solid ${circleColor}88; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
-                            <span style="width: 5px; height: 5px; border-radius: 50%; background: ${circleColor}; shrink: 0;"></span>
-                            <span>${member.name || 'Member'}</span>
+                        <div style="margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); border: 1px solid ${markerVisuals.ringColor}88; color: #ffffff; font-size: 9px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
+                            <span style="width: 5px; height: 5px; border-radius: 50%; background: ${markerVisuals.dotColor}; flex-shrink: 0;"></span>
+                            <span>${member.name || 'Member'} • ${markerVisuals.label}</span>
                         </div>
                     </div>
                 `;
@@ -5457,7 +5398,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
 
             } else {
-                // â”€â”€ GROUPED CLUSTER PILL MARKER â”€â”€
+                // ── GROUPED CLUSTER PILL MARKER ──
                 const clusterMembers = cluster.members;
                 const clusterKey = 'cluster_' + clusterMembers.map(m => m.id).sort().join('_');
 
@@ -5470,72 +5411,114 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     }
                 });
 
-                // The map label should identify the location, not repeat names
-                // already visible in the avatar stack. Names become available
-                // after tapping and expanding the cluster at street zoom.
-                let placeLabel = '';
-                let nearbyPlaceCount = 0;
+                // Aggregate all unique saved places falling within this cluster's radius
+                const clusterPlaceIds = new Set<string>();
                 const savedPlacePool = (savedPlaces && savedPlaces.length > 0) ? savedPlaces : places;
                 if (savedPlacePool && savedPlacePool.length > 0) {
-                    const nearbyPlaces = savedPlacePool.filter(p => p.location && getDistanceMeters(cluster.centroid, p.location) < 50);
-                    nearbyPlaceCount = new Set(nearbyPlaces.map(p => p.id)).size;
-                    const labels: string[] = Array.from(new Set(nearbyPlaces.map(p =>
-                        (p.address || p.description || p.location?.label || p.name || '').split(',')[0]?.trim()
-                    ).filter((label): label is string => Boolean(label))));
-                    // Two nearby saved places need both street identities; cap
-                    // the label so clusters remain compact at city zoom.
-                    placeLabel = labels.length > 1 ? labels.slice(0, 2).join(' / ') : (labels[0] || 'Nearby saved place');
+                    savedPlacePool.forEach(p => {
+                        if (!p || !p.location || clusterPlaceIds.has(p.id)) return;
+                        // 1. Is any cluster member at or near this place?
+                        const isMemberAtPlace = clusterMembers.some(m => getDistanceMeters(m.location, p.location) < (p.radius || 50));
+                        // 2. In screen distance, is this place within cluster radius?
+                        let inScreenCluster = false;
+                        if (map.current) {
+                            const pPt = map.current.project([p.location.lng, p.location.lat]);
+                            const cPt = map.current.project([cluster.centroid.lng, cluster.centroid.lat]);
+                            if (Math.hypot(pPt.x - cPt.x, pPt.y - cPt.y) < (clusterRadiusPx > 0 ? clusterRadiusPx : 75)) {
+                                inScreenCluster = true;
+                            }
+                        }
+                        const groundDist = getDistanceMeters(cluster.centroid, p.location);
+                        if (isMemberAtPlace || inScreenCluster || groundDist < 120) {
+                            clusterPlaceIds.add(p.id);
+                        }
+                    });
                 }
 
-                // Do not render a second saved-place cluster directly beneath
-                // this people cluster. The address and place count now live in
-                // this one unified card instead.
+                // Independent counting: unique member count and unique place count
+                const memberCount = new Set(clusterMembers.map(m => m.id)).size;
+                const placeCount = clusterPlaceIds.size;
+                clusterPlaceIds.forEach(id => allClusteredPlaceIds.add(id));
+
+                // HIDE individual street address pills ("417 Santa Fe Drive", "5610 Carson Dr")
+                // and individual presence tags ("Mary is here")
+                clusterPlaceIds.forEach(placeId => {
+                    const marker = placesMarkersRef.current.get(placeId);
+                    if (marker) {
+                        const el = marker.getElement();
+                        if (el) {
+                            el.dataset.clusterHidden = 'true';
+                            el.style.display = 'none';
+                        }
+                    }
+                });
+
+                // Suppress any place-only cluster marker within this people cluster area
                 placeClusterMarkersRef.current.forEach(placeClusterMarker => {
                     const position = placeClusterMarker.getLngLat();
-                    if (getDistanceMeters(cluster.centroid, { lat: position.lat, lng: position.lng }) < 80) {
+                    if (getDistanceMeters(cluster.centroid, { lat: position.lat, lng: position.lng }) < 120) {
                         placeClusterMarker.getElement().style.display = 'none';
                     }
                 });
 
-                // Determine a shared accent color from the first member
-                const accentColor = clusterMembers[0].circleColor || '#6366f1';
+                let clusterLabel = '';
+                if (memberCount > 0 && placeCount > 0) {
+                    clusterLabel = `${memberCount} ${memberCount === 1 ? 'Member' : 'Members'} · ${placeCount} ${placeCount === 1 ? 'Place' : 'Places'}`;
+                } else if (memberCount > 0) {
+                    clusterLabel = `${memberCount} ${memberCount === 1 ? 'Member' : 'Members'}`;
+                } else if (placeCount > 0) {
+                    clusterLabel = `${placeCount} ${placeCount === 1 ? 'Place' : 'Places'}`;
+                }
+
+                const isDark = theme === 'dark';
 
                 // Build stacked avatar HTML: horizontal flex with negative margins for overlap
                 const avatarStackHtml = clusterMembers.slice(0, 4).map((m, i) => {
                     const init = (m.name || 'M').charAt(0).toUpperCase();
-                    const marginLeft = i === 0 ? '0' : '-10px';
+                    const marginLeft = i === 0 ? '0' : '-8px';
                     const zIndex = 10 - i;
-                    const mColor = m.circleColor || '#6366f1';
+                    const mColor = m.circleColor || '#10b981';
                     const hasAvatar = m.avatar && !m.avatar.includes('default');
-                    return `<div style="position: relative; z-index: ${zIndex}; margin-left: ${marginLeft}; width: 34px; height: 34px; border-radius: 50%; border: 2.5px solid #0f172a; background: #1e293b; box-shadow: 0 3px 10px rgba(0,0,0,0.5); overflow: hidden; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                    return `<div style="position: relative; z-index: ${zIndex}; margin-left: ${marginLeft}; width: 28px; height: 28px; border-radius: 50%; border: 2px solid ${isDark ? '#0f172a' : '#ffffff'}; background: ${mColor}; box-shadow: 0 2px 6px rgba(0,0,0,0.25); overflow: hidden; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
                         ${hasAvatar ? `<img src="${m.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` : ''}
-                        <span style="${hasAvatar ? 'display: none;' : 'display: flex;'} font-weight: 900; color: #ffffff; font-size: 13px;">${init}</span>
-                        <div style="position: absolute; bottom: 0; right: 0; width: 10px; height: 10px; border-radius: 50%; background: ${mColor}; border: 1.5px solid #0f172a;"></div>
+                        <span style="${hasAvatar ? 'display: none;' : 'display: flex;'} font-weight: 800; color: #ffffff; font-size: 12px;">${init}</span>
                     </div>`;
                 }).join('');
 
                 // Overflow indicator if more than 4 members
                 const overflowBadge = clusterMembers.length > 4
-                    ? `<div style="margin-left: -8px; z-index: 1; width: 28px; height: 28px; border-radius: 50%; background: rgba(100, 116, 139, 0.8); border: 2px solid #0f172a; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 900; color: #ffffff; flex-shrink: 0;">+${clusterMembers.length - 4}</div>`
+                    ? `<div style="margin-left: -6px; z-index: 1; width: 24px; height: 24px; border-radius: 50%; background: rgba(100, 116, 139, 0.9); border: 1.5px solid ${isDark ? '#0f172a' : '#ffffff'}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #ffffff; flex-shrink: 0;">+${clusterMembers.length - 4}</div>`
                     : '';
 
                 const clusterMarkerHtml = `
-                    <div class="myway-cluster-pill select-none" style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer; animation: fadeIn 0.2s ease-out;">
-                        <!-- Shared pulse ring -->
-                        <div style="position: absolute; top: 50%; left: 50%; width: 60px; height: 60px; transform: translate(-50%, -55%); border-radius: 50%; background: ${accentColor}; opacity: 0.2; animation: ping 2.5s cubic-bezier(0, 0, 0.2, 1) infinite; pointer-events: none;"></div>
-                        <!-- Avatar stack row -->
-                        <div style="position: relative; display: flex; flex-direction: row; align-items: center;">
+                    <div class="myway-cluster-pill select-none cursor-pointer" style="
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 8px;
+                        padding: 4px 12px 4px 6px;
+                        background: ${isDark ? 'rgba(15, 23, 42, 0.94)' : 'rgba(255, 255, 255, 0.96)'};
+                        backdrop-filter: blur(12px);
+                        -webkit-backdrop-filter: blur(12px);
+                        border: 2px solid ${isDark ? 'rgba(148, 163, 184, 0.25)' : 'rgba(255, 255, 255, 0.95)'};
+                        border-radius: 9999px;
+                        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.1);
+                        cursor: pointer;
+                        animation: fadeIn 0.2s ease-out;
+                        transition: transform 0.15s ease, box-shadow 0.15s ease;
+                    ">
+                        <!-- Overlapping avatars -->
+                        <div style="display: flex; align-items: center;">
                             ${avatarStackHtml}
                             ${overflowBadge}
                         </div>
-                        <!-- Address-first context; member names stay in the avatar stack. -->
-                        <div style="margin-top: 4px; max-width: 218px; padding: 4px 10px; border-radius: 999px; background: linear-gradient(135deg, #6d3df5, #8b5cf6); border: 2px solid rgba(255,255,255,0.94); color: #ffffff; font-size: 10px; font-weight: 850; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; box-shadow: 0 4px 14px rgba(76,29,149,0.42);">
-                            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z"/></svg>
-                            <span style="overflow:hidden;text-overflow:ellipsis;">${placeLabel || 'Nearby circle members'}</span>
-                        </div>
-                        <div style="margin-top: 3px; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,0.96); color: #334155; font-size: 9px; font-weight: 800; white-space: nowrap; box-shadow: 0 2px 8px rgba(15,23,42,0.2);">
-                            ${clusterMembers.length} ${clusterMembers.length === 1 ? 'person' : 'people'}${nearbyPlaceCount > 0 ? ` / ${nearbyPlaceCount} ${nearbyPlaceCount === 1 ? 'place' : 'places'}` : ' here'}
-                        </div>
+                        <!-- Clean label -->
+                        <span style="
+                            color: ${isDark ? '#f8fafc' : '#0f172a'};
+                            font-size: 11px;
+                            font-weight: 800;
+                            letter-spacing: -0.01em;
+                            white-space: nowrap;
+                        ">${clusterLabel}</span>
                     </div>
                 `;
 
@@ -5545,14 +5528,12 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     el.className = 'myway-cluster-marker select-none cursor-pointer';
                     el.style.cursor = 'pointer';
                     el.style.display = 'flex';
-                    el.style.flexDirection = 'column';
                     el.style.alignItems = 'center';
                     el.style.transform = 'translate3d(0,0,0)';
                     el.innerHTML = clusterMarkerHtml;
                     (el as any)._lastHtml = clusterMarkerHtml;
 
-                    // A cluster tap expands the map until individual people and
-                    // their own place pins are legible, avoiding a hidden list.
+                    // Tap cluster to smoothly disperse into individual pins via map.easeTo
                     const handleClusterClick = (e: Event) => {
                         e.stopPropagation();
                         if ((e as any).originalEvent?.stopPropagation) {
@@ -5561,10 +5542,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         lastMemberSelectTimeRef.current = Date.now();
                         const activeMap = map.current;
                         if (!activeMap) return;
-                        activeMap.flyTo({
+                        activeMap.easeTo({
                             center: [cluster.centroid.lng, cluster.centroid.lat],
-                            zoom: Math.max(16, activeMap.getZoom() + 2),
-                            duration: 420
+                            zoom: activeMap.getZoom() + 2,
+                            duration: 400
                         });
                     };
                     el.addEventListener('click', handleClusterClick);
@@ -5577,6 +5558,15 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     el.addEventListener('pointerdown', stopClusterPointerPropagation);
                     el.addEventListener('mousedown', stopClusterPointerPropagation);
                     el.addEventListener('touchstart', stopClusterPointerPropagation, { passive: false });
+
+                    el.addEventListener('mouseenter', () => {
+                        const pill = el.querySelector('.myway-cluster-pill') as HTMLElement | null;
+                        if (pill) pill.style.transform = 'scale(1.05)';
+                    });
+                    el.addEventListener('mouseleave', () => {
+                        const pill = el.querySelector('.myway-cluster-pill') as HTMLElement | null;
+                        if (pill) pill.style.transform = 'scale(1)';
+                    });
 
                     clusterMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
                         .setLngLat([cluster.centroid.lng, cluster.centroid.lat])
@@ -5594,7 +5584,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 }
             }
         });
-    }, [members, membersSharingKey, userLocation?.lat, userLocation?.lng, currentUserId, userProfile?.displayName, userProfile?.photoURL, isMapReady, isNavigating, routeCoords, currentStepIndex, splitIndex, remainingDistanceMeters, hasArrived, mapSkin, theme, styleVersion, markerClusterZoom, onSelectMember, places, savedPlaces]);
+
+        // Restore visibility for any place marker not currently hidden in an active cluster
+        placesMarkersRef.current.forEach((marker, id) => {
+            if (!allClusteredPlaceIds.has(id)) {
+                const el = marker.getElement();
+                if (el && el.dataset.clusterHidden === 'true') {
+                    delete el.dataset.clusterHidden;
+                    el.style.display = 'flex';
+                }
+            }
+        });
+    }, [members, membersSharingKey, memberPresenceTick, userLocation?.lat, userLocation?.lng, currentUserId, userProfile?.displayName, userProfile?.photoURL, isMapReady, isNavigating, routeCoords, currentStepIndex, splitIndex, remainingDistanceMeters, hasArrived, mapSkin, theme, styleVersion, markerClusterZoom, onSelectMember, places, savedPlaces]);
 
     // ==========================================
     // VEHICLE PUCK INTERPOLATION LIFECYCLE & CLEANUP
@@ -5705,7 +5706,9 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const containerHeight = mapContainer.current?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 800);
             const containerWidth = mapContainer.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1000);
             const isLandscape = containerWidth > containerHeight;
-            const navTopPadding = isLandscape ? Math.round(containerHeight * 0.42) : Math.round(containerHeight * 0.52); // Anchors vehicle at proper height (42% in landscape, 52% in portrait)
+            const navTopPadding = isLandscape
+                ? Math.min(Math.round(containerHeight * 0.35), 260)
+                : Math.min(Math.round(containerHeight * 0.38), 320); // Clamped driving perspective anchor to prevent tile horizon overflow
 
             if (activeConvoy && activeConvoy.isActive && activeConvoy.memberIds && activeConvoy.memberIds.length > 1) {
                 const fleetMembers = members.filter(m =>
@@ -5731,14 +5734,14 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     if (membersEnclosed > 1) {
                         isMultiVehicleConvoy = true;
                         map.current.fitBounds(convoyBounds, {
-                            pitch: 58,
+                            pitch: 50,
                             bearing: prevBearingRef.current,
-                            maxZoom: isMobileRef.current ? 17.5 : 18.0,
+                            maxZoom: isMobileRef.current ? 17.0 : 17.2,
                             padding: {
-                                top: Math.round(containerHeight * 0.35),
+                                top: Math.min(Math.round(containerHeight * 0.30), 240),
                                 bottom: 40,
-                                left: isMobileRef.current ? 50 : 160,
-                                right: isMobileRef.current ? 50 : 80
+                                left: isMobileRef.current ? 40 : 120,
+                                right: isMobileRef.current ? 40 : 80
                             },
                             duration: isInitialNavStart ? 1200 : 1000,
                             easing: (t: number) => t
@@ -5766,16 +5769,18 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     return;
                 }
 
-                let targetPitch = 60;
-                let targetZoom = isMobileRef.current ? 18.2 : 18.4;
+                // Perspective stability: clamp driving pitch to 52° on mobile (55° desktop)
+                // and zoom to 17.0 on mobile (17.2 desktop). This prevents overzoom tile starvation
+                // and GL_OUT_OF_MEMORY context crashes when looking towards the horizon.
+                let targetPitch = isMobileRef.current ? 52 : 55;
+                let targetZoom = isMobileRef.current ? 17.0 : 17.2;
                 let targetCenter: [number, number] = [driverLoc.lng, driverLoc.lat];
 
                 if (isFinalApproach && destLoc) {
-                    // Waze approach sequence: as vehicle enters final 200 ft (65m), smoothly tilt camera pitch down from 60Â° to 45Â°,
-                    // slow rotation, and frame destination pin in the viewport
+                    // Approach sequence: smoothly ease pitch to 42° and frame destination pin
                     const approachProgress = Math.max(0, Math.min(1, remainingDistanceMeters / 65)); // 1 at 65m, 0 at 0m
-                    targetPitch = 45 + 15 * approachProgress;
-                    targetZoom = 17.6 + (isMobileRef.current ? 0.6 : 0.8) * approachProgress;
+                    targetPitch = 42 + 10 * approachProgress;
+                    targetZoom = 16.8 + (isMobileRef.current ? 0.3 : 0.4) * approachProgress;
 
                     // Shift camera center toward destination pin for clean framing
                     const blend = (1 - approachProgress) * 0.40;
@@ -5833,7 +5838,6 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
     }, [selectedMemberId, is3DMode]);
 
-    const lastAnimatedCenterRef = useRef<{ lng: number; lat: number } | null>(null);
     const centerLng = center ? center[0] : null;
     const centerLat = center ? center[1] : null;
 
@@ -5851,9 +5855,10 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         const dist = Math.hypot(currentCenter.lng - centerLng, currentCenter.lat - centerLat);
         if (dist > 0.0001) {
             lastAnimatedCenterRef.current = { lng: centerLng, lat: centerLat };
-            const padding = isMobile ? { top: 0, bottom: 200, left: 0, right: 0 } : { top: 0, bottom: 0, left: 0, right: 0 };
+            const bottomSheetHeight = isMobile ? (selectedPlaceId ? Math.min(Math.round(window.innerHeight * 0.46), 360) : 200) : 0;
+            const offset: [number, number] = [0, -bottomSheetHeight / 2];
             const curZoom = map.current.getZoom();
-            const targetZoom = Math.max(16, curZoom);
+            const targetZoom = Math.max(16.5, curZoom);
             if (dist > 0.25) {
                 map.current.flyTo({
                     center: [centerLng, centerLat],
@@ -5863,7 +5868,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     curve: 1.0,
                     maxDuration: 850,
                     essential: true,
-                    padding
+                    offset
                 });
             } else {
                 map.current.easeTo({
@@ -5872,11 +5877,11 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     pitch: is3DMode ? 60 : 0,
                     duration: 550,
                     essential: true,
-                    padding
+                    offset
                 });
             }
         }
-    }, [centerLng, centerLat, isNavigating, isMobile, is3DMode]);
+    }, [centerLng, centerLat, isNavigating, isMobile, is3DMode, selectedPlaceId]);
 
     // Consolidated Map Style & 3D Mode Handlers
     const [showStylePicker, setShowStylePicker] = React.useState(false);
@@ -5937,7 +5942,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
             {/* Unified Map Controls & Alerts Tool Stack */}
             <div 
-                className={`absolute z-40 pointer-events-auto flex flex-col items-center gap-3 transition-all duration-300 map-controls-cluster ${
+                className={`absolute z-40 pointer-events-auto flex flex-col items-center gap-3 transition-all duration-300 map-controls-cluster ${isMobile ? 'map-controls-mobile' : ''} ${isNavigating ? 'map-controls-navigating' : ''} ${
                     isMobile
                         ? (isNavigating 
                             ? 'right-[max(0.875rem,env(safe-area-inset-right,0px))] bottom-[calc(14rem+env(safe-area-inset-bottom,0px))]' 
@@ -5995,7 +6000,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 )}
 
                 {/* Control Pill: [+] [-] [3D/Style] */}
-                <div className="flex flex-col p-1 bg-white rounded-2xl border border-gray-100 shadow-md overflow-hidden divide-y divide-gray-100">
+                <div className="map-controls-zoom-pill flex flex-col p-1 bg-white rounded-2xl border border-gray-100 shadow-md overflow-hidden divide-y divide-gray-100">
                     {/* Zoom In */}
                     <button
                         type="button"

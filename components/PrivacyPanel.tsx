@@ -242,14 +242,12 @@ const PrivacyPanel: React.FC<PrivacyPanelProps> = ({
                             <p className="text-xs font-black truncate text-white">
                                 {activePrivacyMode === 'exact' && '📍 Exact Location • 45 MPH Live Speed'}
                                 {activePrivacyMode === 'blurred' && '🛡️ In Neighborhood Bubble (~1.5 mi Area)'}
-                                {activePrivacyMode === 'status_only' && '🏷️ At Home (No Live GPS Coordinates)'}
-                                {activePrivacyMode === 'frozen' && '❄️ Location Paused (Ghost Mode)'}
+                                {activePrivacyMode === 'invisible' && '👁️ Invisible (No Live GPS Coordinates)'}
                             </p>
                             <p className="text-[10px] text-slate-400 mt-0.5">
                                 {activePrivacyMode === 'exact' && 'Full street address and live telemetry shared.'}
                                 {activePrivacyMode === 'blurred' && 'Precise street address and speed hidden.'}
-                                {activePrivacyMode === 'status_only' && 'Map pin removed; only shows milestone status.'}
-                                {activePrivacyMode === 'frozen' && 'No location data broadcast to this group.'}
+                                {activePrivacyMode === 'invisible' && 'No location data is broadcast to this circle.'}
                             </p>
                         </div>
                     </div>
@@ -262,7 +260,7 @@ const PrivacyPanel: React.FC<PrivacyPanelProps> = ({
                         <span>Independent Circle Privacy</span>
                     </p>
                     <p className="text-[10px] text-slate-400 leading-relaxed">
-                        You can be <strong>Exact Live GPS</strong> with your immediate family in one circle, while staying <strong>Blurred</strong> or <strong>Status Only</strong> in work, carpool, or social circles.
+                        You can be <strong>Exact Live GPS</strong> with your immediate family in one circle, while staying <strong>Blurred</strong> or <strong>Invisible</strong> in work, carpool, or social circles.
                     </p>
                 </div>
             </div>

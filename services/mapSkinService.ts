@@ -213,24 +213,10 @@ export const applySkinOverrides = (
             (l['source-layer'] === 'address' && l.type === 'symbol')
         ) {
             try {
-                map.setLayoutProperty(l.id, 'visibility', 'visible');
-                map.setLayoutProperty(l.id, 'text-pitch-alignment', 'viewport');
-                map.setLayoutProperty(l.id, 'text-rotation-alignment', 'viewport');
-                map.setLayoutProperty(l.id, 'text-field', ['coalesce', ['get', 'houseNumber'], ['get', 'housenumber'], ['get', 'addr:housenumber'], '']);
-                map.setLayoutProperty(l.id, 'text-font', ['Open Sans Bold', 'Open Sans Regular', 'Arial Unicode MS Bold']);
-                map.setLayoutProperty(l.id, 'text-anchor', 'center');
-                map.setLayoutProperty(l.id, 'text-justify', 'center');
-                try {
-                    map.setLayerZoomRange(l.id, 16, 24);
-                } catch {}
-                map.setPaintProperty(l.id, 'text-color', isCarbonAmber ? '#fef9c3' : '#0f172a');
-                map.setPaintProperty(l.id, 'text-halo-color', isCarbonAmber ? 'rgba(0, 0, 0, 0.95)' : 'rgba(255, 255, 255, 0.95)');
-                map.setPaintProperty(l.id, 'text-halo-width', 2.0);
-                map.setPaintProperty(l.id, 'text-halo-blur', 0.5);
-                // Ensure vector housenumber layer is moved above 3D extrusions
-                try {
-                    map.moveLayer(l.id);
-                } catch {}
+                // My Way supplies one verified address-number layer. Hiding
+                // the basemap's equivalent prevents duplicate labels on the
+                // same building (for example, the two "417" labels).
+                map.setLayoutProperty(l.id, 'visibility', 'none');
             } catch (e) {}
         }
     });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { offlineMapService, DownloadArea, DownloadProgress, computeRadiusBounds } from '../services/offlineMapService';
+import { offlineMapService, DownloadArea, DownloadProgress } from '../services/offlineMapService';
 
 interface OfflineMapManagerProps {
     currentBounds: {
@@ -8,12 +8,21 @@ interface OfflineMapManagerProps {
         east: number;
         west: number;
     } | null;
-    userLocation?: { lat: number; lng: number } | null;
     theme: 'light' | 'dark';
+    isMobile: boolean;
     onClose: () => void;
+    onDownloadComplete: (area: DownloadArea) => void;
 }
 
-const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, userLocation, theme, onClose }) => {
+const getFriendlyAreaName = (name: string): string => {
+    if (/^auto-cache\s*\(dwelling\)$/i.test(name)) return 'Nearby area';
+    if (/^dead zone\s*\(/i.test(name)) return 'Low-signal area';
+    if (/^low-signal area\s*\(/i.test(name)) return 'Low-signal area';
+    if (/^active route corridor$/i.test(name)) return 'Route coverage';
+    return name;
+};
+
+const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, theme, isMobile, onClose, onDownloadComplete }) => {
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadingName, setDownloadingName] = useState<string>('');
     const [downloadingDesc, setDownloadingDesc] = useState<string>('');
@@ -26,20 +35,10 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
     });
     const [downloadedAreas, setDownloadedAreas] = useState<DownloadArea[]>([]);
     const [isServiceReady, setIsServiceReady] = useState(false);
-    const [areaName, setAreaName] = useState('Visible Map View');
     const [syncToast, setSyncToast] = useState<string | null>(null);
-
-    // 80km region bounds computed from user location
-    const local80kmBounds = useMemo(() => {
-        if (!userLocation) return null;
-        return computeRadiusBounds(userLocation, 80);
-    }, [userLocation]);
-
-    // Estimated tile counts
-    const estimated80kmTiles = useMemo(() => {
-        if (!local80kmBounds) return 0;
-        return offlineMapService.estimateTileCount(local80kmBounds, 10, 13);
-    }, [local80kmBounds]);
+    const [view, setView] = useState<'select' | 'saved'>('saved');
+    const [cacheUsage, setCacheUsage] = useState({ tiles: 0, bytes: 0 });
+    const [isClearingMaps, setIsClearingMaps] = useState(false);
 
     const estimatedScreenTiles = useMemo(() => {
         if (!currentBounds) return 0;
@@ -47,10 +46,11 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
     }, [currentBounds]);
 
     useEffect(() => {
-        offlineMapService.init().then((ready) => {
+        offlineMapService.init().then(async (ready) => {
             setIsServiceReady(ready);
             if (ready) {
                 setDownloadedAreas(offlineMapService.getDownloadedAreas());
+                setCacheUsage(await offlineMapService.getCacheUsage());
             }
         });
     }, []);
@@ -84,10 +84,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                 description
             );
             setDownloadedAreas(offlineMapService.getDownloadedAreas());
-            if (progress.deltaUnchanged > 0) {
-                setSyncToast(`⚡ Delta sync saved ${(progress.bytesSavedKb / 1024).toFixed(1)} MB (${progress.deltaUnchanged} unchanged tiles).`);
-                setTimeout(() => setSyncToast(null), 5000);
-            }
+            onDownloadComplete(area);
         } catch (error: any) {
             if (error?.name === 'AbortError' || error?.message?.includes('cancelled')) {
                 console.log('[OfflineMapManager] Download cancelled by user');
@@ -143,14 +140,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
     const handleDownloadCurrentView = () => {
         if (currentBounds) {
             const desc = `Visible Screen View (${currentBounds.north.toFixed(2)}°N to ${currentBounds.south.toFixed(2)}°N)`;
-            handleDownloadBounds(currentBounds, areaName.trim() || 'Visible Screen View', desc);
-        }
-    };
-
-    const handleDownload80kmRegion = () => {
-        if (local80kmBounds && userLocation) {
-            const desc = `50-mile (80km) radius around GPS (${userLocation.lat.toFixed(3)}°N, ${userLocation.lng.toFixed(3)}°W)`;
-            handleDownloadBounds(local80kmBounds, 'Home / 80km Safety Region', desc);
+            handleDownloadBounds(currentBounds, `Map area · ${new Date().toLocaleDateString()}`, desc);
         }
     };
 
@@ -161,17 +151,85 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
         }
     };
 
-    const handleClearCache = async () => {
-        if (confirm('Clear all downloaded offline map tiles?')) {
+    const handleClearDownloadedMaps = async () => {
+        if (isClearingMaps) return;
+        setIsClearingMaps(true);
+        try {
             await offlineMapService.clearCache();
             setDownloadedAreas([]);
+            setCacheUsage(await offlineMapService.getCacheUsage());
+            setSyncToast('Downloaded maps cleared.');
+        } catch (error) {
+            console.warn('[OfflineMapManager] Could not clear downloaded maps:', error);
+            setSyncToast('Could not clear downloaded maps.');
+        } finally {
+            setIsClearingMaps(false);
         }
     };
 
     const progressPercent = progress.total > 0 ? Math.round((progress.cached / progress.total) * 100) : 0;
 
+    if (view === 'select') {
+        const estimateMb = Math.max(1, Math.round((estimatedScreenTiles * 25) / 1024));
+        return (
+            <div className="relative h-full w-full overflow-hidden pointer-events-none text-white">
+                <div className="absolute inset-0 bg-slate-950/42" />
+
+                <header className="absolute inset-x-0 top-0 flex items-center justify-between px-6 pt-[max(2rem,env(safe-area-inset-top))] pointer-events-auto">
+                    <div>
+                        <h2 className="text-2xl font-semibold tracking-tight">Download a map of this area?</h2>
+                        <p className="mt-1 text-sm text-white/65">Drag or zoom to adjust the map</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-3xl font-light text-white transition-colors hover:bg-white/20"
+                        aria-label="Close offline maps"
+                    >
+                        ×
+                    </button>
+                </header>
+
+                <div
+                    className="absolute left-[7%] right-[7%] top-[17%] bottom-[23%] rounded-[28px] border-2 border-white/80 pointer-events-none"
+                    style={{ boxShadow: '0 0 0 9999px rgba(2, 6, 23, 0.22), inset 0 0 0 1px rgba(255,255,255,0.22)' }}
+                >
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="rounded-full bg-slate-950/70 px-4 py-2 text-sm font-semibold shadow-lg">
+                            Drag or zoom to adjust the map
+                        </div>
+                    </div>
+                </div>
+
+                <div className="absolute inset-x-0 bottom-0 rounded-t-[32px] bg-[#161616] px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 shadow-2xl pointer-events-auto">
+                    <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+                        <button type="button" onClick={() => setView('saved')} className="font-semibold text-white/70 hover:text-white">
+                            Saved maps{downloadedAreas.length ? ` (${downloadedAreas.length})` : ''}
+                        </button>
+                        {currentBounds && <span className="text-white/60">~{estimateMb} MB · {estimatedScreenTiles.toLocaleString()} tiles</span>}
+                    </div>
+                    {isDownloading ? (
+                        <div className="rounded-2xl bg-white/10 px-4 py-3">
+                            <div className="flex items-center justify-between text-sm font-semibold"><span>Downloading map…</span><span>{progressPercent}%</span></div>
+                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/15"><div className="h-full rounded-full bg-indigo-400 transition-all" style={{ width: `${progressPercent}%` }} /></div>
+                        </div>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={handleDownloadCurrentView}
+                            disabled={!currentBounds || !isServiceReady}
+                            className="w-full rounded-2xl bg-indigo-500 py-4 text-base font-bold text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/40"
+                        >
+                            Download
+                        </button>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div className={`rounded-3xl border backdrop-blur-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col
+        <div className={`absolute bottom-0 overflow-hidden border shadow-2xl flex flex-col pointer-events-auto ${isMobile ? 'inset-x-0 max-h-[82dvh] rounded-t-3xl' : 'right-6 w-96 max-h-[85vh] rounded-3xl'}
       ${theme === 'dark'
                 ? 'bg-[#0a0f1e]/95 border-white/10 text-white'
                 : 'bg-white/95 border-slate-200 text-slate-900'}`}
@@ -184,19 +242,13 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                         📥
                     </div>
                     <div>
-                        <h2 className="font-black text-lg tracking-tight">Offline Navigation Maps</h2>
+                        <h2 className="font-black text-lg tracking-tight">Offline maps</h2>
                         <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-                            Delta ETag updates • 100% offline GPS & vector routing
+                            Your downloaded map areas and storage.
                         </p>
                     </div>
                 </div>
-                <button
-                    onClick={onClose}
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-105
-            ${theme === 'dark' ? 'hover:bg-white/10 text-slate-400 hover:text-white' : 'hover:bg-slate-100 text-slate-600'}`}
-                >
-                    ✕
-                </button>
+                <button onClick={onClose} className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-105 ${theme === 'dark' ? 'hover:bg-white/10 text-slate-400 hover:text-white' : 'hover:bg-slate-100 text-slate-600'}`}>✕</button>
             </div>
 
             {/* Content */}
@@ -277,105 +329,17 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                             </div>
                         )}
 
-                        {/* Quick 80km Region Download Card */}
-                        {userLocation && (
-                            <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-indigo-500/15 border border-amber-500/30 space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-lg">⚡</span>
-                                        <h3 className="font-black text-xs uppercase tracking-wider text-amber-400">
-                                            Instant 80km Safety Region
-                                        </h3>
-                                    </div>
-                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300">
-                                        ~{Math.round((estimated80kmTiles * 25) / 1024)} MB ({estimated80kmTiles.toLocaleString()} tiles)
-                                    </span>
+                        {/* Saved maps is the one user-facing source of truth. */}
+                        <div>
+                            <div className="flex items-center justify-between mb-2.5">
+                                <div>
+                                    <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400">Saved maps ({downloadedAreas.length})</h3>
+                                    <p className={`mt-0.5 text-[10px] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>{(cacheUsage.bytes / 1024 / 1024).toFixed(1)} MB stored on this device</p>
                                 </div>
-
-                                <div className={`text-xs space-y-1.5 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                                    <p>
-                                        📍 <strong>Coverage:</strong> 80 km (50 miles) radius around GPS ({userLocation.lat.toFixed(3)}°N, {userLocation.lng.toFixed(3)}°W)
-                                    </p>
-                                    <p className="text-[11px] opacity-80">
-                                        🛣️ Delta updates only fetch modified tiles using HTTP ETags, saving cellular bandwidth.
-                                    </p>
-                                </div>
-
-                                <button
-                                    onClick={handleDownload80kmRegion}
-                                    disabled={isDownloading}
-                                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
-                                >
-                                    <span>📥</span>
-                                    <span>Download / Delta Sync 80km Corridor</span>
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Download Visible Screen Area Card */}
-                        <div className={`p-4 rounded-2xl border ${theme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
-                            <div className="flex items-center justify-between mb-2">
-                                <h3 className="font-bold text-xs uppercase tracking-wider text-indigo-400">
-                                    Download Visible Screen Area
-                                </h3>
-                                {currentBounds && (
-                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300">
-                                        ~{Math.max(1, Math.round((estimatedScreenTiles * 25) / 1024))} MB ({estimatedScreenTiles.toLocaleString()} tiles)
-                                    </span>
-                                )}
+                                {cacheUsage.tiles > 0 && <button type="button" onClick={handleClearDownloadedMaps} disabled={isClearingMaps} className="rounded-lg px-2 py-1 text-[10px] font-bold text-rose-500 hover:bg-rose-500/10 disabled:opacity-50">{isClearingMaps ? 'Clearing…' : 'Clear all'}</button>}
                             </div>
 
-                            <input
-                                type="text"
-                                value={areaName}
-                                onChange={(e) => setAreaName(e.target.value)}
-                                disabled={isDownloading}
-                                placeholder="Area label (e.g. Downtown / Raleigh to NY)..."
-                                className={`w-full px-4 py-2 rounded-xl mb-3 text-xs font-semibold border outline-none ${
-                                    theme === 'dark'
-                                        ? 'bg-slate-800 border-white/10 text-white placeholder-slate-500'
-                                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                                }`}
-                            />
-
-                            {currentBounds ? (
-                                <div className={`text-[11px] mb-3 space-y-1 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                                    <p>
-                                        📐 <strong>Bounds:</strong> {currentBounds.north.toFixed(2)}°N to {currentBounds.south.toFixed(2)}°N, {currentBounds.west.toFixed(2)}°W to {currentBounds.east.toFixed(2)}°E
-                                    </p>
-                                </div>
-                            ) : (
-                                <p className="text-[11px] text-slate-400 mb-3">
-                                    Move the map to frame your desired region before downloading.
-                                </p>
-                            )}
-
-                            <button
-                                onClick={handleDownloadCurrentView}
-                                disabled={!currentBounds || isDownloading}
-                                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
-                            >
-                                <span>📥</span>
-                                <span>Download Visible Viewport</span>
-                            </button>
-                        </div>
-
-                        {/* Downloaded Areas List */}
-                        {downloadedAreas.length > 0 && (
-                            <div>
-                                <div className="flex items-center justify-between mb-2.5">
-                                    <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400">
-                                        Saved Offline Regions ({downloadedAreas.length})
-                                    </h3>
-                                    <button
-                                        onClick={handleClearCache}
-                                        disabled={isDownloading}
-                                        className="text-[11px] font-bold px-2 py-0.5 rounded-lg text-rose-400 hover:bg-rose-500/20 transition-all disabled:opacity-50"
-                                    >
-                                        Clear All
-                                    </button>
-                                </div>
-
+                            {downloadedAreas.length > 0 ? (
                                 <div className="space-y-2">
                                     {downloadedAreas.map((area) => (
                                         <div
@@ -387,7 +351,7 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                             <div className="min-w-0 flex-1">
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-emerald-400 font-bold text-xs">✓</span>
-                                                    <p className="font-bold text-xs truncate">{area.name}</p>
+                                                    <p className="font-bold text-xs truncate">{getFriendlyAreaName(area.name)}</p>
                                                 </div>
                                                 {area.description && (
                                                     <p className={`text-[10px] ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'} truncate mt-0.5`}>
@@ -420,17 +384,28 @@ const OfflineMapManager: React.FC<OfflineMapManagerProps> = ({ currentBounds, us
                                         </div>
                                     ))}
                                 </div>
-                            </div>
-                        )}
+                            ) : (
+                                <div className={`rounded-xl border px-3 py-4 text-center text-xs ${theme === 'dark' ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-500'}`}>No map areas saved yet.</div>
+                            )}
+                        </div>
 
                         {/* Offline Status Footer */}
                         <div className={`p-3 rounded-xl text-center text-xs font-bold ${
                             theme === 'dark' ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         }`}>
-                            📶 Delta ETag caching active: only modified tiles consume network bandwidth.
+                            Your saved maps stay ready when service is weak or unavailable.
                         </div>
                     </>
                 )}
+            </div>
+            <div className={`shrink-0 border-t p-4 ${theme === 'dark' ? 'border-white/10 bg-slate-950/40' : 'border-slate-200 bg-white/90'}`}>
+                <button
+                    type="button"
+                    onClick={() => setView('select')}
+                    className="w-full rounded-2xl bg-indigo-600 py-3.5 text-sm font-black text-white transition-colors hover:bg-indigo-500"
+                >
+                    Download offline map
+                </button>
             </div>
         </div>
     );

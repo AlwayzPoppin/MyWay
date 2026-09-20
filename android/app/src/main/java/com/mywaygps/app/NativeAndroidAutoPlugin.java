@@ -26,6 +26,7 @@ public class NativeAndroidAutoPlugin extends Plugin {
     public void load() {
         super.load();
         activeInstance = this;
+        CarStateRepository.getInstance().initialize(getContext());
     }
 
     public static void setCarSessionActive(boolean active) {
@@ -65,6 +66,67 @@ public class NativeAndroidAutoPlugin extends Plugin {
         }
     }
 
+    /**
+     * Called when the driver taps a saved place, recent trip, or search result
+     * on the car head unit. Emits event to React so useNavigation starts routing.
+     */
+    public static void notifyDestinationSelectedFromCar(String name, double lat, double lng, boolean addStop) {
+        if (activeInstance != null) {
+            JSObject data = new JSObject();
+            data.put("name", name != null ? name : "Destination");
+            data.put("lat", lat);
+            data.put("lng", lng);
+            data.put("intent", addStop ? "add_stop" : "start_trip");
+            data.put("timestamp", System.currentTimeMillis());
+            activeInstance.notifyListeners("carDestinationSelected", data);
+        }
+    }
+
+    /**
+     * Called when the driver submits or types a search query on the car head unit.
+     * Emits event to React so App.tsx can geocode and return results.
+     */
+    public static void notifySearchRequestedFromCar(String query, boolean addStop) {
+        if (activeInstance != null && query != null && !query.isEmpty()) {
+            CarStateRepository.getInstance().beginSearch();
+            JSObject data = new JSObject();
+            data.put("query", query);
+            data.put("intent", addStop ? "add_stop" : "start_trip");
+            data.put("timestamp", System.currentTimeMillis());
+            activeInstance.notifyListeners("carSearchRequested", data);
+        }
+    }
+
+    /** Emits incident confirmation ("Still There" / "Confirm feature") from car back to phone. */
+    public static void notifyIncidentConfirmedFromCar(String incidentId) {
+        if (activeInstance != null && incidentId != null && !incidentId.isEmpty()) {
+            JSObject data = new JSObject();
+            data.put("incidentId", incidentId);
+            data.put("timestamp", System.currentTimeMillis());
+            activeInstance.notifyListeners("carIncidentConfirmed", data);
+        }
+    }
+
+    /** Emits incident cleared ("Cleared" / "Feature removed") from car back to phone. */
+    public static void notifyIncidentClearedFromCar(String incidentId) {
+        if (activeInstance != null && incidentId != null && !incidentId.isEmpty()) {
+            JSObject data = new JSObject();
+            data.put("incidentId", incidentId);
+            data.put("timestamp", System.currentTimeMillis());
+            activeInstance.notifyListeners("carIncidentCleared", data);
+        }
+    }
+
+    /** Emits incident removal ("Remove feature I added") from car back to phone. */
+    public static void notifyIncidentRemovedFromCar(String incidentId) {
+        if (activeInstance != null && incidentId != null && !incidentId.isEmpty()) {
+            JSObject data = new JSObject();
+            data.put("incidentId", incidentId);
+            data.put("timestamp", System.currentTimeMillis());
+            activeInstance.notifyListeners("carIncidentRemoved", data);
+        }
+    }
+
     @PluginMethod
     public void updateNavigationState(PluginCall call) {
         try {
@@ -79,6 +141,7 @@ public class NativeAndroidAutoPlugin extends Plugin {
             double currentLongitude = call.getDouble("currentLongitude", Double.NaN);
             double destinationLatitude = call.getDouble("destinationLatitude", Double.NaN);
             double destinationLongitude = call.getDouble("destinationLongitude", Double.NaN);
+            double bearing = call.getDouble("bearing", Double.NaN);
             double fuelGallonsBurned = call.getDouble("fuelGallonsBurned", Double.NaN);
             double fuelCostSoFar = call.getDouble("fuelCostSoFar", Double.NaN);
             double fuelGallonsRemaining = call.getDouble("fuelGallonsRemaining", Double.NaN);
@@ -115,6 +178,7 @@ public class NativeAndroidAutoPlugin extends Plugin {
                     currentLongitude,
                     destinationLatitude,
                     destinationLongitude,
+                    bearing,
                     routePoints,
                     fuelGallonsBurned,
                     fuelCostSoFar,
@@ -122,10 +186,8 @@ public class NativeAndroidAutoPlugin extends Plugin {
                     fuelPercentRemaining,
                     fuelRangeMiles
             );
-
             JSObject ret = new JSObject();
             ret.put("success", true);
-            ret.put("isCarConnected", isCarSessionActive);
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Failed to update car navigation state: " + e.getMessage(), e);
@@ -133,7 +195,7 @@ public class NativeAndroidAutoPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void notifyArrival(PluginCall call) {
+    public void setArrived(PluginCall call) {
         try {
             CarStateRepository.getInstance().setArrived(true);
             JSObject ret = new JSObject();
@@ -216,6 +278,117 @@ public class NativeAndroidAutoPlugin extends Plugin {
             call.resolve(result);
         } catch (Exception e) {
             call.reject("Failed to update car route options: " + e.getMessage(), e);
+        }
+    }
+
+    @PluginMethod
+    public void updateSearchResults(PluginCall call) {
+        try {
+            JSArray resultsArray = call.getArray("results");
+            List<CarStateRepository.SearchResultItem> resultList = new ArrayList<>();
+            if (resultsArray != null) {
+                for (int i = 0; i < resultsArray.length() && i < 6; i++) {
+                    try {
+                        JSONObject obj = resultsArray.getJSONObject(i);
+                        resultList.add(new CarStateRepository.SearchResultItem(
+                                obj.optString("name", "Place"),
+                                obj.optString("address", ""),
+                                obj.optDouble("lat", 0.0),
+                                obj.optDouble("lng", 0.0)));
+                    } catch (JSONException ignored) {}
+                }
+            }
+            CarStateRepository.getInstance().updateSearchResults(resultList);
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("count", resultList.size());
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to update car search results: " + e.getMessage(), e);
+        }
+    }
+
+    @PluginMethod
+    public void updateRecentTrips(PluginCall call) {
+        try {
+            JSArray tripsArray = call.getArray("trips");
+            List<CarStateRepository.RecentTripItem> tripList = new ArrayList<>();
+            if (tripsArray != null) {
+                for (int i = 0; i < tripsArray.length() && i < 10; i++) {
+                    try {
+                        JSONObject obj = tripsArray.getJSONObject(i);
+                        tripList.add(new CarStateRepository.RecentTripItem(
+                                obj.optString("name", "Destination"),
+                                obj.optString("address", ""),
+                                obj.optDouble("lat", 0.0),
+                                obj.optDouble("lng", 0.0),
+                                obj.optLong("timestamp", 0L)));
+                    } catch (JSONException ignored) {}
+                }
+            }
+            CarStateRepository.getInstance().updateRecentTrips(tripList);
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("count", tripList.size());
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to update car recent trips: " + e.getMessage(), e);
+        }
+    }
+
+    @PluginMethod
+    public void updateIncidents(PluginCall call) {
+        try {
+            JSArray array = call.getArray("incidents");
+            List<CarStateRepository.IncidentItem> list = new ArrayList<>();
+            if (array != null) {
+                for (int i = 0; i < array.length(); i++) {
+                    try {
+                        JSONObject obj = array.getJSONObject(i);
+                        String id = obj.optString("id", "");
+                        String type = obj.optString("type", "hazard");
+                        double lat = obj.optDouble("lat", 0.0);
+                        double lng = obj.optDouble("lng", 0.0);
+                        String title = obj.optString("title", "Road Alert");
+                        String badge = obj.optString("badge", "");
+                        String color = obj.optString("color", "#f59e0b");
+                        String reporterName = obj.optString("reporterName", "Driver");
+                        boolean isReporter = obj.optBoolean("isReporter", false);
+                        int upvotes = obj.optInt("upvotes", 1);
+                        boolean verified = obj.optBoolean("verified", false);
+                        boolean isPermanent = obj.optBoolean("isPermanent", false);
+                        String details = obj.optString("details", "");
+                        String timestamp = obj.optString("timestamp", "");
+
+                        if (lat != 0.0 && lng != 0.0) {
+                            list.add(new CarStateRepository.IncidentItem(id, type, lat, lng, title, badge, color,
+                                    reporterName, isReporter, upvotes, verified, isPermanent, details, timestamp));
+                        }
+                    } catch (JSONException ignored) {}
+                }
+            }
+            CarStateRepository.getInstance().updateIncidents(list);
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("count", list.size());
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to update car incidents: " + e.getMessage(), e);
+        }
+    }
+
+    @PluginMethod
+    public void updateMapSkin(PluginCall call) {
+        try {
+            String skin = call.getString("skin", "default");
+            String theme = call.getString("theme", "dark");
+            boolean is3DMode = call.getBoolean("is3DMode", true);
+            CarStateRepository.getInstance().updateMapSkin(skin, theme, is3DMode);
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to update car map skin: " + e.getMessage(), e);
         }
     }
 

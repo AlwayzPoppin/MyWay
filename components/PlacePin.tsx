@@ -23,6 +23,7 @@ import {
     LucideIcon
 } from 'lucide-react';
 import { Place } from '../types';
+import { getDistanceMeters, getDistanceFromCoords } from '../utils/geo';
 
 /**
  * Check if a place represents a Home or Residential location
@@ -198,6 +199,143 @@ export function getPlaceIconSvg(
     );
 }
 
+/**
+ * Resolves the cleanest street address snippet (e.g. "5610 Carson Dr")
+ * from place properties, userProfile home addresses, nearby saved places,
+ * or cached reverse-geocoded data.
+ */
+export function resolvePlaceAddressSnippet(
+    place: Partial<Place>,
+    userProfile?: any,
+    savedPlaces?: Place[],
+    cachedAddresses?: Map<string, string>
+): string {
+    if (!place) return '';
+
+    // 1. Direct place properties
+    const directCandidates = [
+        place.address,
+        (place as any).street,
+        (place as any).formattedAddress,
+        (place as any).subtitle,
+        (place as any).road,
+        place.location?.label,
+        (place.location as any)?.address,
+        place.description
+    ];
+
+    for (const cand of directCandidates) {
+        if (typeof cand === 'string' && cand.trim().length > 0) {
+            // Clean common prefixes like "Home - ", "Home: "
+            const cleaned = cand.replace(/^(?:home|work|office|school)\s*[-:–—·]\s*/i, '').trim();
+            const firstPart = cleaned.split(',')[0]?.trim();
+            if (firstPart && firstPart.length > 0) {
+                return firstPart;
+            }
+        }
+    }
+
+    // Combined house number + street name fallback
+    if (place.houseNumber && ((place as any).street || (place as any).road)) {
+        const st = ((place as any).street || (place as any).road || '').trim();
+        if (st) {
+            return `${place.houseNumber.trim()} ${st}`;
+        }
+    }
+
+    // 2. User profile Home address fallback ONLY if this represents the user's primary home
+    const isHome = isHomePlace(place);
+    if (isHome && userProfile?.preciseHomeLocation) {
+        const phLoc = userProfile.preciseHomeLocation;
+        const isNearProfileHome = !place.location || (
+            typeof phLoc.lat === 'number' && typeof phLoc.lng === 'number' &&
+            typeof place.location.lat === 'number' && typeof place.location.lng === 'number' &&
+            getDistanceFromCoords(place.location.lat, place.location.lng, phLoc.lat, phLoc.lng) < 60
+        );
+        if (isNearProfileHome) {
+            const profileHomeCandidates = [
+                (userProfile?.preciseHomeLocation as any)?.address,
+                (userProfile?.homeLocation as any)?.address,
+                (userProfile as any)?.homeAddress
+            ];
+            for (const cand of profileHomeCandidates) {
+                if (typeof cand === 'string' && cand.trim().length > 0) {
+                    const cleaned = cand.replace(/^(?:home|work|office|school)\s*[-:–—·]\s*/i, '').trim();
+                    const firstPart = cleaned.split(',')[0]?.trim();
+                    if (firstPart && firstPart.length > 0) {
+                        return firstPart;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Proximity matching against saved places with addresses (strictly within 35m)
+    if (place.location && typeof place.location.lat === 'number' && typeof place.location.lng === 'number' && savedPlaces && savedPlaces.length > 0) {
+        for (const sp of savedPlaces) {
+            if (!sp || sp.id === place.id) continue;
+            const spAddr = sp.address || (sp as any).street || (sp as any).formattedAddress || sp.description;
+            if (spAddr && sp.location && typeof sp.location.lat === 'number' && typeof sp.location.lng === 'number') {
+                const dist = getDistanceFromCoords(place.location.lat, place.location.lng, sp.location.lat, sp.location.lng);
+                if (dist < 35) {
+                    const cleaned = spAddr.replace(/^(?:home|work|office|school)\s*[-:–—·]\s*/i, '').trim();
+                    const firstPart = cleaned.split(',')[0]?.trim();
+                    if (firstPart) return firstPart;
+                }
+            }
+        }
+    }
+
+    // 4. In-memory cached reverse-geocoded address
+    if (place.id && cachedAddresses && cachedAddresses.has(place.id)) {
+        const cached = cachedAddresses.get(place.id);
+        if (cached) {
+            const firstPart = cached.split(',')[0]?.trim();
+            if (firstPart) return firstPart;
+        }
+    }
+
+    return '';
+}
+
+/**
+ * Formats the combined marker label following the standard pattern:
+ * "${displayName}${displayAddress ? ` · ${displayAddress}` : ''}"
+ * If displayName already equals or contains the address snippet, avoids duplication.
+ */
+export function formatPlaceMarkerLabel(placeName?: string | null, addressSnippet?: string | null): string {
+    const cleanName = (placeName || '').trim() || 'Saved Place';
+    if (!addressSnippet || !addressSnippet.trim()) {
+        return cleanName;
+    }
+    const cleanSnippet = addressSnippet.trim();
+
+    // 1. Direct or lowercase substring match
+    const lowerName = cleanName.toLowerCase();
+    const lowerSnippet = cleanSnippet.toLowerCase();
+    if (lowerName === lowerSnippet || lowerName.includes(lowerSnippet) || lowerSnippet.includes(lowerName)) {
+        return cleanName;
+    }
+
+    // 2. Normalized alphanumeric match (ignores punctuation/spaces/abbreviations)
+    const normPlaceName = lowerName.replace(/[^a-z0-9]/g, '');
+    const normSnippet = lowerSnippet.replace(/[^a-z0-9]/g, '');
+    if (normPlaceName === normSnippet || normPlaceName.includes(normSnippet) || normSnippet.includes(normPlaceName)) {
+        return cleanName;
+    }
+
+    // 3. Word token prefix match (e.g. "417 Santa Fe Drive" and "417 Santa Fe")
+    const nameWords = lowerName.split(/\s+/).filter(Boolean);
+    const snippetWords = lowerSnippet.split(/\s+/).filter(Boolean);
+    if (nameWords.length >= 2 && snippetWords.length >= 2) {
+        if (nameWords[0] === snippetWords[0] && nameWords[1] === snippetWords[1]) {
+            return cleanName;
+        }
+    }
+
+    return `${cleanName} · ${cleanSnippet}`;
+}
+
 export interface PlacePinProps {
     place: Partial<Place>;
     isSelected?: boolean;
@@ -221,6 +359,10 @@ export const PlacePin: React.FC<PlacePinProps> = ({
     const placeColor = getPlaceColor(place);
     const IconComp = getPlaceLucideIcon(place);
     const iconSize = isSelected ? 18 : 16;
+    const displayName = place.name || (place as any).title || (isHome ? 'Home' : 'Place');
+    const directAddress = place.address || (place as any).formattedAddress || (place as any).street || '';
+    const addressSnippet = resolvePlaceAddressSnippet(place) || directAddress;
+    const displayLabel = formatPlaceMarkerLabel(displayName, addressSnippet);
 
     return (
         <div
@@ -247,9 +389,9 @@ export const PlacePin: React.FC<PlacePinProps> = ({
                     className="w-4 h-4 text-white shrink-0"
                     strokeWidth={2.2}
                 />
-                {isHome && showLabel && (
+                {showLabel && (isHome || place.isSaved) && (
                     <span className="text-[13px] font-bold text-white whitespace-nowrap leading-none tracking-tight">
-                        Home
+                        {displayLabel}
                     </span>
                 )}
             </div>

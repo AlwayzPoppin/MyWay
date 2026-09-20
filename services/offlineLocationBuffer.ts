@@ -303,10 +303,9 @@ export const setupAutoFlush = (
     syncFn: (locations: BufferedLocation[]) => Promise<void>
 ): (() => void) => {
     const handleOnline = async () => {
-        console.log('📦 Network restored — auto-flushing offline location buffer...');
         const count = await flushBuffer(syncFn);
         if (count > 0) {
-            console.log(`📦 Auto-flushed ${count} locations`);
+            console.log(`📦 Network restored — auto-flushed ${count} offline location${count === 1 ? '' : 's'}`);
         }
     };
 
@@ -365,7 +364,7 @@ export const syncDeadZoneTiles = async (deadZone: DeadZoneRecord): Promise<boole
 
     try {
         const area = await offlineMapService.downloadArea(
-            `Dead Zone (${deadZone.center.lat.toFixed(2)}, ${deadZone.center.lng.toFixed(2)})`,
+            `Low-signal area (${deadZone.center.lat.toFixed(2)}, ${deadZone.center.lng.toFixed(2)})`,
             bounds,
             10,
             14

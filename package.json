@@ -1,7 +1,7 @@
 {
   "name": "myway",
   "private": true,
-  "version": "1.0.27",
+  "version": "1.0.41",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,6 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@capacitor-community/background-geolocation": "^1.2.26",
     "@capacitor-community/bluetooth-le": "^7.3.0",
     "@capacitor-community/text-to-speech": "^6.1.0",
     "@capacitor/android": "^8.0.1",
