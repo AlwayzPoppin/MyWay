@@ -38,6 +38,7 @@ import { contributionService, TripContributionPayload } from '../services/contri
 import { placePhotoService } from '../services/placePhotoService';
 import { APP_VERSION } from '../services/appVersionService';
 import { nativeBackgroundTrackingService } from '../services/nativeBackgroundTrackingService';
+import { nativeRoadRecorderService, RoadRecorderDiagnostic } from '../services/nativeRoadRecorderService';
 import { FamilyCircle } from '../services/authService';
 import { loadCircleContacts } from '../services/nativeContactService';
 import MapReviewPanel from './MapReviewPanel';
@@ -150,10 +151,27 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         setCurrentView('contributions');
     };
     const [localSettings, setLocalSettings] = useState(settings);
+    const [roadRecorderDiagnostic, setRoadRecorderDiagnostic] = useState<RoadRecorderDiagnostic | null>(null);
 
     useEffect(() => {
         setLocalSettings(settings);
     }, [settings]);
+
+    const refreshRoadRecorderDiagnostic = React.useCallback(async () => {
+        if (!nativeRoadRecorderService.isSupported()) {
+            setRoadRecorderDiagnostic(null);
+            return;
+        }
+        try {
+            setRoadRecorderDiagnostic(await nativeRoadRecorderService.getDiagnostics());
+        } catch {
+            setRoadRecorderDiagnostic({ status: 'camera_unavailable', message: 'Could not check camera status.' });
+        }
+    }, []);
+
+    useEffect(() => {
+        void refreshRoadRecorderDiagnostic();
+    }, [refreshRoadRecorderDiagnostic]);
     const [trustedDevices, setTrustedDevices] = useState<TrustedDevice[]>([]);
     const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
     const [deviceActionPending, setDeviceActionPending] = useState(false);
@@ -1073,6 +1091,36 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <SettingRow label="Auto-record trips" description="Record rear-camera footage locally during navigation">
                         <ToggleSwitch enabled={localSettings.autoRoadRecording !== false} onChange={(v) => updateSetting('autoRoadRecording', v)} />
                     </SettingRow>
+                    <div className={`mx-1 mb-3 rounded-xl border p-3 ${
+                        !nativeRoadRecorderService.isSupported()
+                            ? 'border-slate-200 bg-slate-50 text-slate-600'
+                            : roadRecorderDiagnostic?.status === 'ready' || roadRecorderDiagnostic?.status === 'recording'
+                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                    }`}>
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-wide">Camera check</p>
+                                <p className="mt-0.5 text-[11px] font-bold">
+                                    {!nativeRoadRecorderService.isSupported()
+                                        ? 'Available in an Android build'
+                                        : roadRecorderDiagnostic?.status === 'recording'
+                                            ? 'Camera is recording'
+                                            : roadRecorderDiagnostic?.status === 'ready'
+                                                ? 'Camera ready'
+                                                : roadRecorderDiagnostic?.status === 'permission_required'
+                                                    ? 'Camera permission required'
+                                                    : roadRecorderDiagnostic?.status === 'camera_busy'
+                                                        ? 'Camera is being used by another app'
+                                                        : roadRecorderDiagnostic?.status === 'unsupported'
+                                                            ? 'This device has no supported camera'
+                                                            : 'Camera unavailable'}
+                                </p>
+                                {roadRecorderDiagnostic?.message && <p className="mt-0.5 text-[10px] opacity-75">{roadRecorderDiagnostic.message}</p>}
+                            </div>
+                            {nativeRoadRecorderService.isSupported() && <button type="button" onClick={() => void refreshRoadRecorderDiagnostic()} className="rounded-lg bg-white/10 px-2 py-1.5 text-[10px] font-black">Check</button>}
+                        </div>
+                    </div>
                     {localSettings.autoRoadRecording !== false && (
                         <div className="space-y-4 px-1 pb-1">
                             <div>

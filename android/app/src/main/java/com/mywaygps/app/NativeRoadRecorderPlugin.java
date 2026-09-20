@@ -2,6 +2,7 @@ package com.mywaygps.app;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Environment;
@@ -55,6 +56,7 @@ public class NativeRoadRecorderPlugin extends Plugin {
     private boolean starting = false;
     private String outputPath = "";
     private long maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES;
+    private String lastCameraError = "";
 
     @PluginMethod
     public void start(PluginCall call) {
@@ -101,15 +103,18 @@ public class NativeRoadRecorderPlugin extends Plugin {
                 recording = recorder.prepareRecording(getContext(), options)
                     .start(ContextCompat.getMainExecutor(getContext()), event -> onVideoEvent(event));
                 starting = false;
+                lastCameraError = "";
                 resolveState(call, true);
                 notifyStatus(true, null);
             } catch (ExecutionException | InterruptedException error) {
                 Thread.currentThread().interrupt();
                 starting = false;
+                lastCameraError = error.getMessage() == null ? "Camera unavailable" : error.getMessage();
                 call.reject("Could not start the road recorder.", error);
                 notifyStatus(false, error.getMessage());
             } catch (Exception error) {
                 starting = false;
+                lastCameraError = error.getMessage() == null ? "Camera unavailable" : error.getMessage();
                 call.reject("Could not start the road recorder.", error);
                 notifyStatus(false, error.getMessage());
             }
@@ -147,6 +152,30 @@ public class NativeRoadRecorderPlugin extends Plugin {
 
     @PluginMethod
     public void getStatus(PluginCall call) { resolveState(call, recording != null || starting); }
+
+    @PluginMethod
+    public void getDiagnostics(PluginCall call) {
+        boolean hasCamera = getContext().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
+        boolean hasPermission = getPermissionState("camera") == PermissionState.GRANTED;
+        String status;
+        if (!hasCamera) {
+            status = "unsupported";
+        } else if (!hasPermission) {
+            status = "permission_required";
+        } else if (recording != null || starting) {
+            status = "recording";
+        } else if (lastCameraError.toLowerCase().contains("busy") || lastCameraError.toLowerCase().contains("in use")) {
+            status = "camera_busy";
+        } else if (!lastCameraError.isEmpty()) {
+            status = "camera_unavailable";
+        } else {
+            status = "ready";
+        }
+        JSObject result = new JSObject();
+        result.put("status", status);
+        result.put("message", lastCameraError);
+        call.resolve(result);
+    }
 
     @PluginMethod
     public void showPreview(PluginCall call) {
