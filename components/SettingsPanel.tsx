@@ -1118,7 +1118,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 </p>
                                 {roadRecorderDiagnostic?.message && <p className="mt-0.5 text-[10px] opacity-75">{roadRecorderDiagnostic.message}</p>}
                             </div>
-                            {nativeRoadRecorderService.isSupported() && <button type="button" onClick={() => void refreshRoadRecorderDiagnostic()} className="rounded-lg bg-white/10 px-2 py-1.5 text-[10px] font-black">Check</button>}
+                            {nativeRoadRecorderService.isSupported() && <button type="button" onClick={() => void (async () => {
+                                if (roadRecorderDiagnostic?.status === 'permission_required') {
+                                    try { await nativeRoadRecorderService.requestCameraPermission(); } catch {}
+                                }
+                                await refreshRoadRecorderDiagnostic();
+                            })()} className="rounded-lg bg-white/10 px-2 py-1.5 text-[10px] font-black">{roadRecorderDiagnostic?.status === 'permission_required' ? 'Allow camera' : 'Check'}</button>}
                         </div>
                     </div>
                     {localSettings.autoRoadRecording !== false && (

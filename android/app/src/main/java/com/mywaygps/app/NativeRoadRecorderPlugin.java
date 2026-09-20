@@ -178,6 +178,24 @@ public class NativeRoadRecorderPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void requestCameraPermission(PluginCall call) {
+        if (getPermissionState("camera") == PermissionState.GRANTED) {
+            call.resolve();
+            return;
+        }
+        requestPermissionForAlias("camera", call, "cameraDiagnosticsPermissionCallback");
+    }
+
+    public void cameraDiagnosticsPermissionCallback(PluginCall call) {
+        if (getPermissionState("camera") == PermissionState.GRANTED) {
+            lastCameraError = "";
+            call.resolve();
+        } else {
+            call.reject("Camera permission was not granted.");
+        }
+    }
+
+    @PluginMethod
     public void showPreview(PluginCall call) {
         if (recording == null || cameraPreview == null) {
             call.reject("Start recording before opening the camera preview.");
