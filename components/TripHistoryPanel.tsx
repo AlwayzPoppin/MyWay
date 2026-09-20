@@ -189,7 +189,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
             </div>
 
             {/* View Tabs */}
-            <div className="flex items-center gap-2 px-4 py-2 bg-white/5 border-b border-white/10 shrink-0">
+            <div className="flex items-center gap-2 overflow-x-auto px-4 py-2 bg-white/5 border-b border-white/10 shrink-0">
                 <button
                     type="button"
                     onClick={() => setActiveTab('trips')}
@@ -214,20 +214,18 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                     <span>⛽</span>
                     <span>Fuel & Savings</span>
                 </button>
-                {nativeRoadRecorderService.isSupported() && (
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab('road_recorder')}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
-                            activeTab === 'road_recorder'
-                                ? 'bg-violet-600 text-white shadow-md'
-                                : 'text-slate-400 hover:text-white hover:bg-white/5'
-                        }`}
-                    >
-                        <span>📹</span>
-                        <span>Road Recorder ({roadClips.length})</span>
-                    </button>
-                )}
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('road_recorder')}
+                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                        activeTab === 'road_recorder'
+                            ? 'bg-violet-600 text-white shadow-md'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                >
+                    <span>📹</span>
+                    <span>Road Recorder ({roadClips.length})</span>
+                </button>
             </div>
 
             {/* Trip List or Trip Detail or Fuel Analytics */}
@@ -248,7 +246,13 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                             <p className="mt-1.5 text-[10px] font-bold text-violet-200">{formatBytes(roadStorage.totalBytes)} of {formatBytes(roadStorage.maxBytes || 2 * 1024 * 1024 * 1024)} used</p>
                         </div>
 
-                        {isLoadingRoadClips ? (
+                        {!nativeRoadRecorderService.isSupported() ? (
+                            <div className="py-12 text-center">
+                                <span className="mb-3 block text-4xl">📱</span>
+                                <p className="text-sm text-slate-300">Road Recorder is available on Android</p>
+                                <p className="mt-1 text-xs text-slate-500">Install a build that includes Road Recorder to record and review local clips.</p>
+                            </div>
+                        ) : isLoadingRoadClips ? (
                             <p className="py-10 text-center text-xs font-bold text-slate-400">Loading recordings…</p>
                         ) : roadClips.length === 0 ? (
                             <div className="py-12 text-center">
