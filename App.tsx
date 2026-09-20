@@ -820,6 +820,7 @@ const App: React.FC = () => {
   );
 
   const roadRecorderPauseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [roadRecorderStatus, setRoadRecorderStatus] = useState<'recording' | 'paused' | 'error' | 'off'>('off');
 
   // Recording is local-only and starts from the visible navigation UI, which
   // lets Android grant the camera permission without background access.
@@ -839,24 +840,28 @@ const App: React.FC = () => {
         const currentlyMoving = typeof liveSpeedMph !== 'number' || liveSpeedMph > 1.5;
         if (recordingEnabled && (!movingOnly || currentlyMoving)) {
           clearPauseTimer();
-          await nativeRoadRecorderService.start({
+          const status = await nativeRoadRecorderService.start({
             quality: userSettings.roadRecordingQuality || 'hd',
             storageGb: userSettings.roadRecordingStorageGb || 2
           });
+          if (!cancelled) setRoadRecorderStatus(status.recording ? 'recording' : 'error');
         } else if (recordingEnabled && movingOnly) {
           if (!roadRecorderPauseRef.current) {
             roadRecorderPauseRef.current = setTimeout(() => {
               roadRecorderPauseRef.current = null;
               void nativeRoadRecorderService.stop();
+              setRoadRecorderStatus('paused');
             }, 90_000);
           }
         } else {
           clearPauseTimer();
           await nativeRoadRecorderService.stop();
+          if (!cancelled) setRoadRecorderStatus('off');
         }
       } catch (error: any) {
         if (!cancelled && isNavigating) {
           console.warn('[RoadRecorder] Could not start:', error?.message || error);
+          setRoadRecorderStatus('error');
           showNotification('Road Recorder needs camera permission to record this trip.', 4000);
         }
       }
@@ -2402,6 +2407,8 @@ const App: React.FC = () => {
                 onQuickFuelUpdate={handleQuickFuelUpdate}
                 onContinueAfterFuelStop={handleContinueAfterStop}
                 savedPlaces={userPlaces}
+                roadRecorderStatus={roadRecorderStatus}
+                roadRecorderEnabled={userSettings.autoRoadRecording !== false}
               />
             </OverlayManager>
           ) : (

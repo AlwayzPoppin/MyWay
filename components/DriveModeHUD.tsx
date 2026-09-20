@@ -148,6 +148,8 @@ interface DriveModeHUDProps {
   onContinueAfterFuelStop?: () => void;
   isMapRecovering?: boolean;
   savedPlaces?: Place[];
+  roadRecorderStatus?: 'recording' | 'paused' | 'error' | 'off';
+  roadRecorderEnabled?: boolean;
 }
 
 const getStopSearchLocation = (location?: Location | null): { lat: number; lng: number } | undefined => {
@@ -966,7 +968,9 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
   onQuickFuelUpdate,
   onContinueAfterFuelStop,
   isMapRecovering = false,
-  savedPlaces = []
+  savedPlaces = [],
+  roadRecorderStatus = 'off',
+  roadRecorderEnabled = false
 }) => {
   const [showDetails, setShowDetails] = useState(!isMobile);
   const [isAlternativesModalOpen, setIsAlternativesModalOpen] = useState(false);
@@ -2197,6 +2201,20 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
         ref={hudRef}
         className={`drive-hud-bottom absolute z-40 pointer-events-none ${isSplitScreenCompact ? 'drive-hud-split-compact' : ''}`}
       >
+        {roadRecorderEnabled && (
+          <div className={`absolute bottom-full right-2 mb-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide shadow-lg ${
+            roadRecorderStatus === 'recording'
+              ? 'border-rose-300 bg-rose-600 text-white'
+              : roadRecorderStatus === 'paused'
+                ? 'border-amber-300 bg-amber-50 text-amber-700'
+                : roadRecorderStatus === 'error'
+                  ? 'border-red-300 bg-red-50 text-red-700'
+                  : 'border-slate-200 bg-white text-slate-500'
+          }`}>
+            <Camera className={`h-3 w-3 ${roadRecorderStatus === 'recording' ? 'animate-pulse' : ''}`} />
+            <span>{roadRecorderStatus === 'recording' ? 'Recording' : roadRecorderStatus === 'paused' ? 'Recorder paused' : roadRecorderStatus === 'error' ? 'Recorder unavailable' : 'Recorder starting'}</span>
+          </div>
+        )}
         {upcomingGuidance.currentRoadName?.trim() && (
           <div ref={currentStreetRef} className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 max-w-[calc(100%-24px)] rounded-full border border-slate-200 bg-white px-4 py-2 shadow-lg" title={upcomingGuidance.currentRoadName} aria-label={`Current street: ${upcomingGuidance.currentRoadName}`}>
             <p className="truncate text-sm sm:text-base font-extrabold leading-tight text-slate-900">
