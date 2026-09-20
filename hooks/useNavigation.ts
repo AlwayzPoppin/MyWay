@@ -3,7 +3,7 @@ import { FamilyMember, Place, NavigationRoute, ArrivalTripData, Location, RouteW
 import { getDistanceMeters } from '../utils/geo';
 import { getRouteFromOSRM, geocodePlace, fetchRouteOptions, clearRouteCache } from '../services/osrmService';
 import { searchGasStations, searchCoffeeShops, searchRestaurants, searchGroceryStores, searchPlacesText, searchMaintenanceAlongRoute, searchGasStationsAlongRoute } from '../services/placesService';
-import { updateNavigationState, NavigationState, analyzeDrivingBehavior, ARRIVAL_RADIUS_METERS, ARRIVAL_APPROACH_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS, formatRemainingDistance, getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
+import { updateNavigationState, NavigationState, analyzeDrivingBehavior, ARRIVAL_RADIUS_METERS, ARRIVAL_APPROACH_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS, formatRemainingDistance, formatRemainingDuration, getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
 import { geolocationService } from '../services/geolocationService';
 
 export { ARRIVAL_RADIUS_METERS, ARRIVAL_SPEED_THRESHOLD_MPS, ARRIVAL_CONSECUTIVE_TICKS };
@@ -1339,7 +1339,11 @@ export const useNavigation = (
 
             syncNavigationTelemetry({
                 destinationName: activeRoute.destinationName || 'Destination',
-                eta: isArrived ? '0 min' : (activeRoute.totalTime || ''),
+                eta: isArrived
+                    ? '0 min'
+                    : (typeof newNavState.remainingDurationSeconds === 'number' && Number.isFinite(newNavState.remainingDurationSeconds)
+                        ? formatRemainingDuration(newNavState.remainingDurationSeconds)
+                        : (activeRoute.totalTime || '')),
                 remainingDistance: remainDistStr,
                 currentInstruction: instructionText,
                 speedMph: Math.round(selfSpeedMph),

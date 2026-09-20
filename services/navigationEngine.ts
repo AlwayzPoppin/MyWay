@@ -96,6 +96,12 @@ export function formatRemainingDistance(meters: number): string {
     return `${Math.max(0, Math.round(meters * 3.28084))} ft`;
 }
 
+/** Formats a live route duration for the driving HUD and Android Auto. */
+export function formatRemainingDuration(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds <= 0) return '0 min';
+    return `${Math.max(1, Math.ceil(seconds / 60))} min`;
+}
+
 /**
  * Extracts target road name from instruction string
  */

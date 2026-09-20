@@ -11,7 +11,7 @@ import { SchoolZoneAdvisory } from '../services/schoolZoneService';
 import { incidentService } from '../services/incidentService';
 import { communityFuelPriceService, CommunityFuelPriceEstimate } from '../services/communityFuelPriceService';
 import { getDistanceMeters, getDistanceMiles } from '../utils/geo';
-import { formatRemainingDistance, getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
+import { formatRemainingDistance, formatRemainingDuration, getUpcomingManeuverGuidance, UpcomingManeuverGuidance } from '../services/navigationEngine';
 import { searchCoffeeShops, searchGasStations, searchGroceryStores, searchPlacesText, searchRestaurants } from '../services/placesService';
 import { geocodePlace } from '../services/osrmService';
 import IncidentReporter from './IncidentReporter';
@@ -1522,7 +1522,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
   };
 
   const displayEta = typeof remainingDurationSeconds === 'number' && Number.isFinite(remainingDurationSeconds)
-    ? `${Math.max(0, Math.ceil(remainingDurationSeconds / 60))} min`
+    ? formatRemainingDuration(remainingDurationSeconds)
     : (activeLeg?.duration || route.totalTime);
   const displayDist = typeof remainingDistanceMeters === 'number' && Number.isFinite(remainingDistanceMeters)
     ? formatRemainingDistance(remainingDistanceMeters)
