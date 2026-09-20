@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Trip, TripPoint } from '../types';
 import { getSavedTrips, getTripDetail, deleteTrip, clearTripHistory, formatDuration } from '../services/tripHistoryService';
 import { vehicleFuelService, RollingFuelReport } from '../services/vehicleFuelService';
+import { nativeRoadRecorderService, RoadRecorderClip } from '../services/nativeRoadRecorderService';
 
 interface TripHistoryPanelProps {
     onClose: () => void;
@@ -12,7 +13,10 @@ interface TripHistoryPanelProps {
 const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, onReplayTrip }) => {
     const [trips, setTrips] = useState<Trip[]>([]);
     const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
-    const [activeTab, setActiveTab] = useState<'trips' | 'fuel_analytics'>('trips');
+    const [activeTab, setActiveTab] = useState<'trips' | 'fuel_analytics' | 'road_recorder'>('trips');
+    const [roadClips, setRoadClips] = useState<RoadRecorderClip[]>([]);
+    const [roadStorage, setRoadStorage] = useState({ totalBytes: 0, maxBytes: 0 });
+    const [isLoadingRoadClips, setIsLoadingRoadClips] = useState(false);
     const [selectedPeriod, setSelectedPeriod] = useState<'today' | 'thisWeek' | 'thisMonth' | 'thisYear'>('thisWeek');
     const [isReplaying, setIsReplaying] = useState(false);
     const [replayIndex, setReplayIndex] = useState(0);
@@ -22,6 +26,24 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
     useEffect(() => {
         setTrips(getSavedTrips());
     }, []);
+
+    const loadRoadClips = useCallback(async () => {
+        if (!nativeRoadRecorderService.isSupported()) return;
+        setIsLoadingRoadClips(true);
+        try {
+            const library = await nativeRoadRecorderService.listClips();
+            setRoadClips(library.clips);
+            setRoadStorage({ totalBytes: library.totalBytes, maxBytes: library.maxBytes });
+        } catch (error) {
+            console.warn('[RoadRecorder] Could not load recordings:', error);
+        } finally {
+            setIsLoadingRoadClips(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (activeTab === 'road_recorder') void loadRoadClips();
+    }, [activeTab, loadRoadClips]);
 
     const fuelReport = useMemo(() => {
         return vehicleFuelService.getRollingFuelReport(trips);
@@ -40,6 +62,23 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
             setSelectedTrip(null);
         }
     }, []);
+
+    const handleDeleteRoadClip = useCallback(async (clip: RoadRecorderClip) => {
+        if (!confirm('Delete this road recording?')) return;
+        await nativeRoadRecorderService.deleteClip(clip.path);
+        await loadRoadClips();
+    }, [loadRoadClips]);
+
+    const formatBytes = (bytes: number) => {
+        if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+        return `${(bytes / (1024 * 1024 * 1024)).toFixed(bytes >= 1024 * 1024 * 1024 ? 1 : 2)} GB`;
+    };
+
+    const formatClipDuration = (milliseconds: number) => {
+        const seconds = Math.floor(milliseconds / 1000);
+        const minutes = Math.floor(seconds / 60);
+        return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+    };
 
     const openTripDetail = useCallback(async (trip: Trip) => {
         setIsLoadingTripDetail(true);
@@ -170,11 +209,60 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                     <span>⛽</span>
                     <span>Fuel & Savings</span>
                 </button>
+                {nativeRoadRecorderService.isSupported() && (
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('road_recorder')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                            activeTab === 'road_recorder'
+                                ? 'bg-violet-600 text-white shadow-md'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                    >
+                        <span>📹</span>
+                        <span>Road Recorder ({roadClips.length})</span>
+                    </button>
+                )}
             </div>
 
             {/* Trip List or Trip Detail or Fuel Analytics */}
             <div className="flex-1 overflow-y-auto">
-                {activeTab === 'fuel_analytics' ? (
+                {activeTab === 'road_recorder' ? (
+                    <div className="p-4 space-y-3">
+                        <div className="rounded-2xl border border-violet-500/30 bg-violet-950/25 p-3.5">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <h3 className="text-sm font-black text-white">Local Road Recorder</h3>
+                                    <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Clips stay on this phone. MyWay keeps the newest recordings within a 20-clip or 2 GB limit.</p>
+                                </div>
+                                <button type="button" onClick={() => void loadRoadClips()} className="rounded-lg bg-white/10 px-2.5 py-1.5 text-[10px] font-black text-violet-200 hover:bg-white/15">Refresh</button>
+                            </div>
+                            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+                                <div className="h-full rounded-full bg-violet-500" style={{ width: `${roadStorage.maxBytes ? Math.min(100, (roadStorage.totalBytes / roadStorage.maxBytes) * 100) : 0}%` }} />
+                            </div>
+                            <p className="mt-1.5 text-[10px] font-bold text-violet-200">{formatBytes(roadStorage.totalBytes)} of {formatBytes(roadStorage.maxBytes || 2 * 1024 * 1024 * 1024)} used</p>
+                        </div>
+
+                        {isLoadingRoadClips ? (
+                            <p className="py-10 text-center text-xs font-bold text-slate-400">Loading recordings…</p>
+                        ) : roadClips.length === 0 ? (
+                            <div className="py-12 text-center">
+                                <span className="mb-3 block text-4xl">📹</span>
+                                <p className="text-sm text-slate-300">No road recordings yet</p>
+                                <p className="mt-1 text-xs text-slate-500">Start a trip with Auto-record trips enabled.</p>
+                            </div>
+                        ) : roadClips.map((clip) => (
+                            <div key={clip.path} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+                                <span className="text-2xl">🎥</span>
+                                <button type="button" onClick={() => void nativeRoadRecorderService.openClip(clip.path)} className="min-w-0 flex-1 text-left">
+                                    <p className="truncate text-sm font-bold text-white">{new Date(clip.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
+                                    <p className="mt-0.5 text-[10px] font-bold text-slate-400">{formatClipDuration(clip.durationMs)} · {formatBytes(clip.sizeBytes)}</p>
+                                </button>
+                                <button type="button" onClick={() => void handleDeleteRoadClip(clip)} className="rounded-xl bg-red-500/10 px-2.5 py-2 text-xs text-red-300 hover:bg-red-500/20" title="Delete recording">🗑️</button>
+                            </div>
+                        ))}
+                    </div>
+                ) : activeTab === 'fuel_analytics' ? (
                     /* Fuel & Savings Analytics Dashboard */
                     <div className="p-4 space-y-4">
                         {/* Active Vehicle & Gas Price Banner */}

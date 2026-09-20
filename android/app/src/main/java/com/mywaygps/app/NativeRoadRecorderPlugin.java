@@ -1,6 +1,9 @@
 package com.mywaygps.app;
 
 import android.Manifest;
+import android.content.Intent;
+import android.media.MediaMetadataRetriever;
+import android.net.Uri;
 import android.os.Environment;
 import androidx.annotation.NonNull;
 import androidx.camera.core.CameraSelector;
@@ -13,6 +16,8 @@ import androidx.camera.video.Recording;
 import androidx.camera.video.VideoCapture;
 import androidx.camera.video.VideoRecordEvent;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -21,6 +26,8 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import java.io.File;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.concurrent.ExecutionException;
 
 /** Local-only rear-camera recording for an active MyWay trip. */
@@ -29,6 +36,8 @@ import java.util.concurrent.ExecutionException;
     permissions = { @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }) }
 )
 public class NativeRoadRecorderPlugin extends Plugin {
+    private static final int MAX_CLIPS = 20;
+    private static final long MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L;
     private ProcessCameraProvider cameraProvider;
     private Recording recording;
     private boolean starting = false;
@@ -96,7 +105,13 @@ public class NativeRoadRecorderPlugin extends Plugin {
             VideoRecordEvent.Finalize finalized = (VideoRecordEvent.Finalize) event;
             boolean success = !finalized.hasError();
             recording = null;
-            if (!success) outputPath = "";
+            if (!success) {
+                File failedOutput = new File(outputPath);
+                if (failedOutput.exists()) failedOutput.delete();
+                outputPath = "";
+            } else {
+                enforceStorageLimit();
+            }
             notifyStatus(false, success ? null : "Recording stopped unexpectedly.");
         }
     }
@@ -113,6 +128,118 @@ public class NativeRoadRecorderPlugin extends Plugin {
 
     @PluginMethod
     public void getStatus(PluginCall call) { resolveState(call, recording != null || starting); }
+
+    @PluginMethod
+    public void listClips(PluginCall call) {
+        JSArray clips = new JSArray();
+        long totalBytes = 0;
+        for (File clip : getClips()) {
+            totalBytes += clip.length();
+            JSObject item = new JSObject();
+            item.put("path", clip.getAbsolutePath());
+            item.put("name", clip.getName());
+            item.put("createdAt", clip.lastModified());
+            item.put("sizeBytes", clip.length());
+            item.put("durationMs", getDurationMs(clip));
+            clips.put(item);
+        }
+        JSObject result = new JSObject();
+        result.put("clips", clips);
+        result.put("totalBytes", totalBytes);
+        result.put("maxBytes", MAX_TOTAL_BYTES);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void deleteClip(PluginCall call) {
+        String path = call.getString("path");
+        if (!isManagedClip(path)) {
+            call.reject("That recording is not in the MyWay Road Recorder library.");
+            return;
+        }
+        File clip = new File(path);
+        if (clip.exists() && !clip.delete()) {
+            call.reject("Could not delete this recording.");
+            return;
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openClip(PluginCall call) {
+        String path = call.getString("path");
+        if (!isManagedClip(path) || !new File(path).exists()) {
+            call.reject("This recording is unavailable.");
+            return;
+        }
+        try {
+            File clip = new File(path);
+            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", clip);
+            Intent intent = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "video/mp4")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getActivity().startActivity(Intent.createChooser(intent, "Open road recording"));
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Could not open this recording.", error);
+        }
+    }
+
+    private File[] getClips() {
+        File movies = getContext().getExternalFilesDir(Environment.DIRECTORY_MOVIES);
+        if (movies == null) return new File[0];
+        File[] clips = movies.listFiles(file -> file.isFile() && file.getName().startsWith("MyWay-") && file.getName().endsWith(".mp4"));
+        if (clips == null) return new File[0];
+        Arrays.sort(clips, Comparator.comparingLong(File::lastModified).reversed());
+        return clips;
+    }
+
+    private boolean isManagedClip(String path) {
+        if (path == null || path.isEmpty()) return false;
+        try {
+            File movies = getContext().getExternalFilesDir(Environment.DIRECTORY_MOVIES);
+            if (movies == null) return false;
+            File clip = new File(path).getCanonicalFile();
+            String libraryPath = movies.getCanonicalPath() + File.separator;
+            return clip.getPath().startsWith(libraryPath)
+                && clip.getName().startsWith("MyWay-")
+                && clip.getName().endsWith(".mp4");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private long getDurationMs(File clip) {
+        MediaMetadataRetriever metadata = new MediaMetadataRetriever();
+        try {
+            metadata.setDataSource(clip.getAbsolutePath());
+            String duration = metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+            return duration == null ? 0 : Long.parseLong(duration);
+        } catch (Exception ignored) {
+            return 0;
+        } finally {
+            try {
+                metadata.release();
+            } catch (Exception ignored) {
+                // Some device codecs can fail while releasing metadata.
+            }
+        }
+    }
+
+    private void enforceStorageLimit() {
+        File[] clips = getClips();
+        long totalBytes = 0;
+        for (File clip : clips) totalBytes += clip.length();
+        int remainingClips = clips.length;
+        for (int index = clips.length - 1; index >= 0 && (remainingClips > MAX_CLIPS || totalBytes > MAX_TOTAL_BYTES); index--) {
+            File oldest = clips[index];
+            long size = oldest.length();
+            if (oldest.delete()) {
+                totalBytes -= size;
+                remainingClips--;
+            }
+        }
+    }
 
     private void resolveState(PluginCall call, boolean active) {
         JSObject result = new JSObject();
