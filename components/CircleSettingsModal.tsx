@@ -1019,7 +1019,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                     </p>
                                 )}
                                 {entitlementError && <p className="text-[9px] font-semibold text-amber-500">{entitlementError}</p>}
-                                {!entitlement?.active && entitlement?.personalTier !== 'free' && (
+                                {entitlement && !entitlement.active && entitlement.personalTier !== 'free' && (
                                     <button type="button" disabled={isSubmitting} onClick={handleSponsorCircle} className="w-full rounded-xl bg-violet-600 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-white transition hover:bg-violet-500 disabled:opacity-50">
                                         Sponsor this Circle with {entitlement.personalTier === 'platinum' ? 'Platinum' : 'Gold'}
                                     </button>
