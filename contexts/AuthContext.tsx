@@ -373,7 +373,9 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
     const handleCreateCircle = async (name: string, color?: string) => {
         if (!user) throw new Error('Must be logged in');
         const circle = await createFamilyCircle(name, user.uid, color);
-        setProfile(prev => prev ? { ...prev, familyCircleId: circle.id } : prev);
+        const nextProfile = profileRef.current ? { ...profileRef.current, familyCircleId: circle.id } : null;
+        profileRef.current = nextProfile;
+        setProfile(nextProfile);
         setCurrentCircle(circle);
         await refreshCircles();
         return circle;
@@ -417,10 +419,14 @@ const formatAuthError = (err: any, defaultMsg: string): string => {
             ? (remainingCircles.find(circle => circle.id === nextActiveCircleId) || null)
             : previous
         );
-        setProfile(previous => previous ? { ...previous, familyCircleId: nextActiveCircleId } : previous);
-
-        const updatedProfile = await getUserProfile(user.uid);
-        setProfile(updatedProfile);
+        // RTDB can satisfy an immediate get() from its local cache. Preserve
+        // the confirmed leave result until the live profile subscription
+        // receives the server update, rather than reviving the departed Circle.
+        const nextProfile = profileRef.current
+            ? { ...profileRef.current, familyCircleId: nextActiveCircleId }
+            : null;
+        profileRef.current = nextProfile;
+        setProfile(nextProfile);
         await refreshCircles();
     };
 

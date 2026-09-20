@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.removeDeletedUserContact = exports.getCircleContacts = exports.saveContactPreferences = exports.sendSosAlert = exports.sendGeofenceAlert = exports.computeTrafficRoutes = exports.geocodeAddress = exports.searchPlaces = exports.callGeminiAIv2 = exports.callGeminiAI = exports.getNationalAddressPoints = exports.assignAdminRole = exports.listMapReviewHistory = exports.listPendingDestinationAccessPoints = exports.assertCanDeleteMyWayAccount = exports.getAdminDeletionProtection = exports.getMapReviewAccess = exports.finalizeAdminCommunityPhoto = exports.withdrawCommunityPhoto = exports.moderateDestinationAccessPoint = exports.getAmbientEmergencyPois = exports.submitDestinationAccessPoint = exports.deleteCircleSafely = exports.leaveCircleSafely = exports.joinCircleSafely = exports.removeCircleSponsorship = exports.getCircleSubscriptionEntitlement = exports.sponsorCircleSubscription = exports.syncCircleMembership = exports.revokeAllDeviceSessions = exports.revokeTrustedDevice = exports.backgroundLocationUpdate = exports.createBackgroundTrackingCredential = exports.updateTrustedDevicePushToken = exports.claimLocationSharingDevice = exports.registerTrustedDevice = void 0;
+exports.removeDeletedUserContact = exports.getCircleContacts = exports.saveContactPreferences = exports.sendSosAlert = exports.sendGeofenceAlert = exports.computeTrafficRoutes = exports.geocodeAddress = exports.searchPlaces = exports.callGeminiAIv2 = exports.callGeminiAI = exports.getNationalAddressPoints = exports.assignAdminRole = exports.listMapReviewHistory = exports.listPendingDestinationAccessPoints = exports.assertCanDeleteMyWayAccount = exports.getAdminDeletionProtection = exports.getMapReviewAccess = exports.finalizeAdminCommunityPhoto = exports.withdrawCommunityPhoto = exports.moderateDestinationAccessPoint = exports.getAmbientEmergencyPois = exports.submitDestinationAccessPoint = exports.deleteCircleSafely = exports.leaveCircleSafely = exports.createCircleSafely = exports.joinCircleSafely = exports.removeCircleSponsorship = exports.getCircleSubscriptionEntitlement = exports.sponsorCircleSubscription = exports.syncCircleMembership = exports.revokeAllDeviceSessions = exports.revokeTrustedDevice = exports.backgroundLocationUpdate = exports.createBackgroundTrackingCredential = exports.updateTrustedDevicePushToken = exports.claimLocationSharingDevice = exports.registerTrustedDevice = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const generative_ai_1 = require("@google/generative-ai");
@@ -387,6 +387,17 @@ const cleanCircleId = (value) => {
     return circleId;
 };
 const getActiveCircleMembers = (circle) => Array.from(new Set(Array.isArray(circle === null || circle === void 0 ? void 0 : circle.members) ? circle.members.filter((member) => typeof member === 'string' && member.trim().length > 0) : []));
+const cleanCircleName = (value) => {
+    const name = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+    if (name.length < 1 || name.length > 60) {
+        throw new functions.https.HttpsError('invalid-argument', 'Circle names must be between 1 and 60 characters.');
+    }
+    return name;
+};
+const cleanCircleColor = (value) => {
+    const color = typeof value === 'string' ? value.trim() : '';
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : '#6366F1';
+};
 const isActiveSubscription = (subscription) => subscription.status === 'active' || subscription.status === 'trialing';
 const priceIdsFromSubscription = (subscription) => {
     var _a;
@@ -544,6 +555,38 @@ exports.joinCircleSafely = functions.https.onCall(async (data, context) => {
         });
     }
     return Object.assign(Object.assign({ id: circleId }, circle), { members });
+});
+/** Creates and activates a Circle atomically so a just-left Circle cannot be restored from stale client state. */
+exports.createCircleSafely = functions.https.onCall(async (data, context) => {
+    if (!context.auth)
+        throw new functions.https.HttpsError('unauthenticated', 'Sign-in is required.');
+    const uid = context.auth.uid;
+    const name = cleanCircleName(data === null || data === void 0 ? void 0 : data.name);
+    const color = cleanCircleColor(data === null || data === void 0 ? void 0 : data.color);
+    const circleId = `circle_${Date.now()}_${(0, crypto_1.randomBytes)(6).toString('hex')}`;
+    const inviteCode = (0, crypto_1.randomBytes)(5).toString('hex').toUpperCase();
+    const circle = {
+        id: circleId,
+        name,
+        ownerId: uid,
+        members: [uid],
+        inviteCode,
+        createdAt: Date.now(),
+        color
+    };
+    const root = admin.database().ref();
+    await Promise.all([
+        root.update({
+            [`circles/${circleId}`]: circle,
+            [`users/${uid}/familyCircleId`]: circleId
+        }),
+        admin.firestore().doc(`circleMemberships/${circleId}/members/${uid}`).set({
+            circleId,
+            userId: uid,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        })
+    ]);
+    return circle;
 });
 /**
  * Leaves a Circle without ever assigning ownership implicitly. An owner must

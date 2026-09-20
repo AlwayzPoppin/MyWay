@@ -446,24 +446,11 @@ export const uploadProfileImage = async (uid: string, file: File): Promise<strin
 // Family Circle Functions
 export const createFamilyCircle = async (name: string, ownerId: string, color?: string): Promise<FamilyCircle> => {
     console.log('Creating family circle:', { name, ownerId, color });
-    const circleId = `circle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const inviteCode = Math.random().toString(36).substr(2, 8).toUpperCase();
-    const assignedColor = color || getCircleColor(circleId).hex;
-
-    const circle: FamilyCircle = {
-        id: circleId,
-        name,
-        ownerId,
-        members: [ownerId],
-        inviteCode,
-        createdAt: Date.now(),
-        color: assignedColor
-    };
-
-    await set(ref(database, `circles/${circleId}`), circle);
-    await updateUserProfile(ownerId, { familyCircleId: circleId });
-
-    return circle;
+    const result = await httpsCallable<
+        { name: string; color?: string },
+        FamilyCircle
+    >(functions, 'createCircleSafely')({ name, ...(color ? { color } : {}) });
+    return result.data;
 };
 
 export const updateCircleColor = async (circleId: string, color: string): Promise<void> => {

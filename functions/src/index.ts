@@ -389,6 +389,19 @@ const getActiveCircleMembers = (circle: any): string[] => Array.from(new Set(
     Array.isArray(circle?.members) ? circle.members.filter((member: unknown): member is string => typeof member === 'string' && member.trim().length > 0) : []
 ));
 
+const cleanCircleName = (value: unknown): string => {
+    const name = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+    if (name.length < 1 || name.length > 60) {
+        throw new functions.https.HttpsError('invalid-argument', 'Circle names must be between 1 and 60 characters.');
+    }
+    return name;
+};
+
+const cleanCircleColor = (value: unknown): string => {
+    const color = typeof value === 'string' ? value.trim() : '';
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : '#6366F1';
+};
+
 type SubscriptionTier = 'gold' | 'platinum';
 
 type CircleSponsorship = {
@@ -545,6 +558,39 @@ export const joinCircleSafely = functions.https.onCall(async (data, context) => 
         });
     }
     return { id: circleId, ...circle, members };
+});
+
+/** Creates and activates a Circle atomically so a just-left Circle cannot be restored from stale client state. */
+export const createCircleSafely = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign-in is required.');
+    const uid = context.auth.uid;
+    const name = cleanCircleName(data?.name);
+    const color = cleanCircleColor(data?.color);
+    const circleId = `circle_${Date.now()}_${randomBytes(6).toString('hex')}`;
+    const inviteCode = randomBytes(5).toString('hex').toUpperCase();
+    const circle = {
+        id: circleId,
+        name,
+        ownerId: uid,
+        members: [uid],
+        inviteCode,
+        createdAt: Date.now(),
+        color
+    };
+    const root = admin.database().ref();
+
+    await Promise.all([
+        root.update({
+            [`circles/${circleId}`]: circle,
+            [`users/${uid}/familyCircleId`]: circleId
+        }),
+        admin.firestore().doc(`circleMemberships/${circleId}/members/${uid}`).set({
+            circleId,
+            userId: uid,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        })
+    ]);
+    return circle;
 });
 
 /**
