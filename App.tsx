@@ -344,7 +344,14 @@ const App: React.FC = () => {
     };
     if (navigator.onLine) retryPendingPhotos();
     window.addEventListener('online', retryPendingPhotos);
-    return () => window.removeEventListener('online', retryPendingPhotos);
+    const retryWhenVisible = () => {
+      if (document.visibilityState === 'visible') retryPendingPhotos();
+    };
+    document.addEventListener('visibilitychange', retryWhenVisible);
+    return () => {
+      window.removeEventListener('online', retryPendingPhotos);
+      document.removeEventListener('visibilitychange', retryWhenVisible);
+    };
   }, [showNotification]);
   const [parkedVehicle, setParkedVehicle] = useState<ParkedVehiclePlace | null>(() => parkingService.getParkedVehicle());
   const [searchText, setSearchText] = useState('');

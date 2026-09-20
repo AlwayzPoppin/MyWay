@@ -221,10 +221,11 @@ class PlacePhotoService {
     }): Promise<PlacePhotoContribution> {
         const { placeId, placeName, reportedAddress, placeLocation, file, userId, userName, userAvatar, caption } = params;
 
-        // 1. Compress image via canvas to maximum 1200px and 0.82 JPEG quality
+        // Entrance photos are reference images, not full-resolution gallery
+        // assets. A compact image queues and uploads much faster on mobile.
         let compressedDataUrl: string;
         try {
-            compressedDataUrl = await compressImageFile(file, 1200, 0.82);
+            compressedDataUrl = await compressImageFile(file, 960, 0.75);
         } catch (compErr) {
             console.warn('[PlacePhotoService] Image compression failed, reading original:', compErr);
             compressedDataUrl = await this.readFileAsDataUrl(file);
@@ -239,81 +240,36 @@ class PlacePhotoService {
         const fileName = `${placeId}_${timestamp}_${randId}.jpg`;
         const storagePath = `place_photos/${fileName}`;
 
-        let downloadUrl = compressedDataUrl;
-
-        // 2. Upload to Firebase Storage
-        try {
-            const fileReference = storageRef(storage, storagePath);
-            const response = await fetch(compressedDataUrl);
-            const blob = await response.blob();
-            const uploadResult = await uploadBytes(fileReference, blob, {
-                contentType: 'image/jpeg',
-                customMetadata: {
-                    placeId,
-                    userId,
-                    uploadedAt: String(timestamp)
-                }
-            });
-            downloadUrl = await getDownloadURL(uploadResult.ref);
-        } catch (storageErr) {
-            console.warn('[PlacePhotoService] Firebase Storage upload failed, utilizing compressed Data URI:', storageErr);
-        }
-
-        // 3. Save metadata record to Firestore 'photos' collection
-        let firestoreDocId = `photo_${timestamp}_${randId}`;
-        let isSynced = false;
-        let reviewStatus: 'pending' | 'approved' | 'rejected' = 'pending';
-        try {
-            const docRef = doc(db, 'photos', firestoreDocId);
-            await withDeadline(setDoc(docRef, {
-                placeId,
-                placeName: placeName || '',
-                reportedAddress: reportedAddress || placeName || '',
-                placeLocation: placeLocation || null,
-                url: downloadUrl,
-                storagePath,
-                userId: userId || 'anonymous',
-                userName: userName || 'Contributor',
-                userAvatar: userAvatar || '',
-                caption: caption || '',
-                createdAt: timestamp,
-                reviewStatus: 'pending'
-            }));
-            firestoreDocId = docRef.id;
-            isSynced = true;
-            if (userId && userId !== 'anonymous') {
-                const result = await httpsCallable<{ photoId: string }, { reviewStatus: 'pending' | 'approved' | 'rejected' }>(
-                    functions,
-                    'finalizeAdminCommunityPhoto'
-                )({ photoId: firestoreDocId });
-                reviewStatus = result.data.reviewStatus || 'pending';
-            }
-        } catch (firestoreErr) {
-            console.warn('[PlacePhotoService] Firestore save failed, storing locally:', firestoreErr);
-        }
-
+        // Persist before any network work. Android can suspend or recreate the
+        // WebView while the driver switches apps; the queued data URL is then
+        // picked up on the next foreground launch or online event.
         const newContribution: PlacePhotoContribution = {
-            id: firestoreDocId,
+            id: `photo_${timestamp}_${randId}`,
             placeId,
             placeName,
             reportedAddress: reportedAddress || placeName,
             placeLocation,
-            url: downloadUrl,
+            url: compressedDataUrl,
             storagePath,
             userId: userId || 'anonymous',
             userName: userName || 'Contributor',
             userAvatar,
             caption: caption || '',
             createdAt: timestamp,
-            reviewStatus,
-            isSynced
+            reviewStatus: 'pending',
+            isSynced: false
         };
 
-        // 4. Update memory & local caches immediately
+        // Update memory and local caches immediately, then allow the upload to
+        // continue independently of this arrival card.
         const existing = this.memoryCache.get(placeId) || this.loadLocalCache(placeId);
         const updated = [newContribution, ...existing.filter(p => p.id !== newContribution.id)];
         this.memoryCache.set(placeId, updated);
         this.saveLocalCache(placeId, updated);
+
+        void this.retryPendingContributions().catch(error => {
+            console.warn('[PlacePhotoService] Background photo sync failed:', error);
+        });
 
         return newContribution;
     }
@@ -354,9 +310,23 @@ class PlacePhotoService {
                         createdAt: photo.createdAt,
                         reviewStatus: photo.reviewStatus || 'pending'
                     }));
+                    let reviewStatus = photo.reviewStatus || 'pending';
+                    if (photo.userId && photo.userId !== 'anonymous') {
+                        try {
+                            const result = await httpsCallable<{ photoId: string }, { reviewStatus: 'pending' | 'approved' | 'rejected' }>(
+                                functions,
+                                'finalizeAdminCommunityPhoto'
+                            )({ photoId: photo.id });
+                            reviewStatus = result.data.reviewStatus || 'pending';
+                        } catch (reviewError) {
+                            // Storage and metadata are durable; a later retry can
+                            // still finish Operations review if this call fails.
+                            console.warn('[PlacePhotoService] Photo review finalization deferred:', reviewError);
+                        }
+                    }
                     changed = true;
                     syncedCount += 1;
-                    return { ...photo, url, isSynced: true, reviewStatus: photo.reviewStatus || 'pending' };
+                    return { ...photo, url, isSynced: true, reviewStatus };
                 } catch (error) {
                     console.warn('[PlacePhotoService] Pending photo retry failed:', error);
                     return photo;
