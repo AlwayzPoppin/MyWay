@@ -25,6 +25,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeBackgroundTrackingPlugin.class);
         registerPlugin(NativeAndroidAutoPlugin.class);
         registerPlugin(NativeCameraPermissionPlugin.class);
+        registerPlugin(NativeRoadRecorderPlugin.class);
         registerPlugin(NativeStatusBarPlugin.class);
         registerPlugin(NativeContactPlugin.class);
         registerPlugin(NativeSharePlugin.class);

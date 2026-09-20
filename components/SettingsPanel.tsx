@@ -60,6 +60,7 @@ export interface UserSettings {
     batteryAlerts: boolean;
     arrivalAlerts: boolean;
     speedAlerts: boolean;
+    autoRoadRecording?: boolean;
     mapStyle: 'standard' | 'satellite' | 'terrain';
     units: 'imperial' | 'metric';
     mapSkin: MapSkinId;
@@ -1057,6 +1058,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             enabled={localSettings.showTrafficControls !== false}
                             onChange={(v) => updateSetting('showTrafficControls', v)}
                         />
+                    </SettingRow>
+                    <SettingRow label="Auto-record trips" description="Record local rear-camera footage while navigating">
+                        <ToggleSwitch enabled={localSettings.autoRoadRecording !== false} onChange={(v) => updateSetting('autoRoadRecording', v)} />
                     </SettingRow>
                 </AccordionSection>
 

@@ -54,6 +54,7 @@ export interface UserProfile {
         batteryAlerts?: boolean;
         arrivalAlerts?: boolean;
         speedAlerts?: boolean;
+        autoRoadRecording?: boolean;
     };
     ecdhPublicKey?: string;
     hasCompletedSetup?: boolean;

@@ -69,6 +69,7 @@ import { isGeoIntentUrl, parseGeoIntent } from './utils/geoIntentParser';
 import { syncMapSkinSettings, syncSavedPlaces } from './services/androidAutoService';
 import { geolocationService } from './services/geolocationService';
 import { nativeBackgroundTrackingService } from './services/nativeBackgroundTrackingService';
+import { nativeRoadRecorderService } from './services/nativeRoadRecorderService';
 import { isCurrentLocationPublisher } from './services/deviceSessionService';
 import { getCirclePrivacyMode } from './services/privacyService';
 import { getMapReviewAccess, listPendingAccessPointReviews } from './services/mapReviewService';
@@ -401,6 +402,7 @@ const App: React.FC = () => {
       batteryAlerts: true,
       arrivalAlerts: true,
       speedAlerts: cachedSpeedAlerts,
+      autoRoadRecording: localStorage.getItem('myway_auto_road_recording') !== 'false',
       privacyMode: 'exact' as const,
       mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
       units: 'imperial' as 'imperial' | 'metric',
@@ -436,6 +438,7 @@ const App: React.FC = () => {
         batteryAlerts: (profile.settings as any).batteryAlerts ?? prev.batteryAlerts,
         arrivalAlerts: (profile.settings as any).arrivalAlerts ?? prev.arrivalAlerts,
         speedAlerts: effectiveSpeedAlerts,
+        autoRoadRecording: (profile.settings as any).autoRoadRecording ?? prev.autoRoadRecording,
         privacyMode: (profile.settings as any).privacyMode === 'blurred'
           ? 'blurred'
           : ((profile.settings as any).privacyMode === 'invisible' || profile.settings.locationSharing === false)
@@ -809,6 +812,28 @@ const App: React.FC = () => {
     safetyScore,
     startSearchTransition
   );
+
+  // Recording is local-only and starts from the visible navigation UI, which
+  // lets Android grant the camera permission without background access.
+  useEffect(() => {
+    if (!nativeRoadRecorderService.isSupported()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (isNavigating && userSettings.autoRoadRecording !== false) {
+          await nativeRoadRecorderService.start();
+        } else {
+          await nativeRoadRecorderService.stop();
+        }
+      } catch (error: any) {
+        if (!cancelled && isNavigating) {
+          console.warn('[RoadRecorder] Could not start:', error?.message || error);
+          showNotification('Road Recorder needs camera permission to record this trip.', 4000);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isNavigating, userSettings.autoRoadRecording, showNotification]);
 
   useEffect(() => {
     if (!isNavigating || !userLocation) {
@@ -2992,6 +3017,7 @@ const App: React.FC = () => {
                     try {
                       localStorage.setItem('setting_speed_alerts', JSON.stringify(newSettings.speedAlerts));
                       localStorage.setItem('myway_speed_alerts', JSON.stringify(newSettings.speedAlerts));
+                      localStorage.setItem('myway_auto_road_recording', String(newSettings.autoRoadRecording !== false));
                     } catch (e) {}
 
                     if (newSettings.theme !== 'auto') {
@@ -3021,7 +3047,8 @@ const App: React.FC = () => {
                             privacyMode: normalizedSettings.privacyMode,
                             batteryAlerts: newSettings.batteryAlerts,
                             arrivalAlerts: newSettings.arrivalAlerts,
-                            speedAlerts: newSettings.speedAlerts
+                            speedAlerts: newSettings.speedAlerts,
+                            autoRoadRecording: newSettings.autoRoadRecording !== false
                           }
                         });
                       } catch (err) {
