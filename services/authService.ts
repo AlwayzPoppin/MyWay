@@ -55,6 +55,9 @@ export interface UserProfile {
         arrivalAlerts?: boolean;
         speedAlerts?: boolean;
         autoRoadRecording?: boolean;
+        roadRecordingMode?: 'trip' | 'moving';
+        roadRecordingQuality?: 'standard' | 'hd';
+        roadRecordingStorageGb?: 1 | 2 | 5;
     };
     ecdhPublicKey?: string;
     hasCompletedSetup?: boolean;

@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
 type RecorderState = { recording: boolean; path?: string };
+type RecorderOptions = { quality?: 'standard' | 'hd'; storageGb?: 1 | 2 | 5 };
 
 export type RoadRecorderClip = {
   path: string;
@@ -18,7 +19,7 @@ type RoadRecorderLibrary = {
 };
 
 interface NativeRoadRecorderPlugin {
-  start(): Promise<RecorderState>;
+  start(options?: RecorderOptions): Promise<RecorderState>;
   stop(): Promise<RecorderState>;
   getStatus(): Promise<RecorderState>;
   listClips(): Promise<RoadRecorderLibrary>;
@@ -31,7 +32,7 @@ const NativeRoadRecorder = registerPlugin<NativeRoadRecorderPlugin>('NativeRoadR
 
 export const nativeRoadRecorderService = {
   isSupported: () => Capacitor.getPlatform() === 'android',
-  start: () => NativeRoadRecorder.start(),
+  start: (options: RecorderOptions = {}) => NativeRoadRecorder.start(options),
   stop: () => NativeRoadRecorder.stop(),
   getStatus: () => NativeRoadRecorder.getStatus(),
   listClips: () => NativeRoadRecorder.listClips(),

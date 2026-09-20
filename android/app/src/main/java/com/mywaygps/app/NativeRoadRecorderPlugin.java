@@ -37,11 +37,12 @@ import java.util.concurrent.ExecutionException;
 )
 public class NativeRoadRecorderPlugin extends Plugin {
     private static final int MAX_CLIPS = 20;
-    private static final long MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L;
+    private static final long DEFAULT_MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L;
     private ProcessCameraProvider cameraProvider;
     private Recording recording;
     private boolean starting = false;
     private String outputPath = "";
+    private long maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES;
 
     @PluginMethod
     public void start(PluginCall call) {
@@ -53,7 +54,8 @@ public class NativeRoadRecorderPlugin extends Plugin {
             requestPermissionForAlias("camera", call, "cameraPermissionCallback");
             return;
         }
-        beginRecording(call);
+        configureStorageLimit(call);
+        beginRecording(call, call.getString("quality", "hd"));
     }
 
     public void cameraPermissionCallback(PluginCall call) {
@@ -61,16 +63,17 @@ public class NativeRoadRecorderPlugin extends Plugin {
             call.reject("Camera permission is required to record trips.");
             return;
         }
-        beginRecording(call);
+        configureStorageLimit(call);
+        beginRecording(call, call.getString("quality", "hd"));
     }
 
-    private void beginRecording(PluginCall call) {
+    private void beginRecording(PluginCall call, String quality) {
         starting = true;
         ProcessCameraProvider.getInstance(getContext()).addListener(() -> {
             try {
                 cameraProvider = ProcessCameraProvider.getInstance(getContext()).get();
                 Recorder recorder = new Recorder.Builder()
-                    .setQualitySelector(QualitySelector.from(Quality.HD))
+                    .setQualitySelector(QualitySelector.from("standard".equals(quality) ? Quality.SD : Quality.HD))
                     .build();
                 VideoCapture<Recorder> videoCapture = VideoCapture.withOutput(recorder);
                 cameraProvider.unbindAll();
@@ -147,7 +150,7 @@ public class NativeRoadRecorderPlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("clips", clips);
         result.put("totalBytes", totalBytes);
-        result.put("maxBytes", MAX_TOTAL_BYTES);
+        result.put("maxBytes", maxTotalBytes);
         call.resolve(result);
     }
 
@@ -249,6 +252,12 @@ public class NativeRoadRecorderPlugin extends Plugin {
         return clip.getName().startsWith("MyWay-Protected-");
     }
 
+    private void configureStorageLimit(PluginCall call) {
+        Integer storageGb = call.getInt("storageGb", 2);
+        int selectedGb = storageGb != null && (storageGb == 1 || storageGb == 2 || storageGb == 5) ? storageGb : 2;
+        maxTotalBytes = selectedGb * 1024L * 1024L * 1024L;
+    }
+
     private long getDurationMs(File clip) {
         MediaMetadataRetriever metadata = new MediaMetadataRetriever();
         try {
@@ -271,7 +280,7 @@ public class NativeRoadRecorderPlugin extends Plugin {
         long totalBytes = 0;
         for (File clip : clips) totalBytes += clip.length();
         int remainingClips = clips.length;
-        for (int index = clips.length - 1; index >= 0 && (remainingClips > MAX_CLIPS || totalBytes > MAX_TOTAL_BYTES); index--) {
+        for (int index = clips.length - 1; index >= 0 && (remainingClips > MAX_CLIPS || totalBytes > maxTotalBytes); index--) {
             File oldest = clips[index];
             if (isProtectedClip(oldest)) continue;
             long size = oldest.length();

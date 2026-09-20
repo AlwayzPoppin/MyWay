@@ -403,6 +403,9 @@ const App: React.FC = () => {
       arrivalAlerts: true,
       speedAlerts: cachedSpeedAlerts,
       autoRoadRecording: localStorage.getItem('myway_auto_road_recording') !== 'false',
+      roadRecordingMode: localStorage.getItem('myway_road_recording_mode') === 'moving' ? 'moving' as const : 'trip' as const,
+      roadRecordingQuality: localStorage.getItem('myway_road_recording_quality') === 'standard' ? 'standard' as const : 'hd' as const,
+      roadRecordingStorageGb: ([1, 2, 5].includes(Number(localStorage.getItem('myway_road_recording_storage_gb'))) ? Number(localStorage.getItem('myway_road_recording_storage_gb')) : 2) as 1 | 2 | 5,
       privacyMode: 'exact' as const,
       mapStyle: 'standard' as 'standard' | 'satellite' | 'terrain',
       units: 'imperial' as 'imperial' | 'metric',
@@ -439,6 +442,9 @@ const App: React.FC = () => {
         arrivalAlerts: (profile.settings as any).arrivalAlerts ?? prev.arrivalAlerts,
         speedAlerts: effectiveSpeedAlerts,
         autoRoadRecording: (profile.settings as any).autoRoadRecording ?? prev.autoRoadRecording,
+        roadRecordingMode: (profile.settings as any).roadRecordingMode === 'moving' ? 'moving' : ((profile.settings as any).roadRecordingMode === 'trip' ? 'trip' : prev.roadRecordingMode),
+        roadRecordingQuality: (profile.settings as any).roadRecordingQuality === 'standard' ? 'standard' : ((profile.settings as any).roadRecordingQuality === 'hd' ? 'hd' : prev.roadRecordingQuality),
+        roadRecordingStorageGb: [1, 2, 5].includes((profile.settings as any).roadRecordingStorageGb) ? (profile.settings as any).roadRecordingStorageGb : prev.roadRecordingStorageGb,
         privacyMode: (profile.settings as any).privacyMode === 'blurred'
           ? 'blurred'
           : ((profile.settings as any).privacyMode === 'invisible' || profile.settings.locationSharing === false)
@@ -813,16 +819,39 @@ const App: React.FC = () => {
     startSearchTransition
   );
 
+  const roadRecorderPauseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Recording is local-only and starts from the visible navigation UI, which
   // lets Android grant the camera permission without background access.
   useEffect(() => {
     if (!nativeRoadRecorderService.isSupported()) return;
     let cancelled = false;
+    const clearPauseTimer = () => {
+      if (roadRecorderPauseRef.current) {
+        clearTimeout(roadRecorderPauseRef.current);
+        roadRecorderPauseRef.current = null;
+      }
+    };
     void (async () => {
       try {
-        if (isNavigating && userSettings.autoRoadRecording !== false) {
-          await nativeRoadRecorderService.start();
+        const recordingEnabled = isNavigating && userSettings.autoRoadRecording !== false;
+        const movingOnly = userSettings.roadRecordingMode === 'moving';
+        const currentlyMoving = typeof liveSpeedMph !== 'number' || liveSpeedMph > 1.5;
+        if (recordingEnabled && (!movingOnly || currentlyMoving)) {
+          clearPauseTimer();
+          await nativeRoadRecorderService.start({
+            quality: userSettings.roadRecordingQuality || 'hd',
+            storageGb: userSettings.roadRecordingStorageGb || 2
+          });
+        } else if (recordingEnabled && movingOnly) {
+          if (!roadRecorderPauseRef.current) {
+            roadRecorderPauseRef.current = setTimeout(() => {
+              roadRecorderPauseRef.current = null;
+              void nativeRoadRecorderService.stop();
+            }, 90_000);
+          }
         } else {
+          clearPauseTimer();
           await nativeRoadRecorderService.stop();
         }
       } catch (error: any) {
@@ -833,7 +862,11 @@ const App: React.FC = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [isNavigating, userSettings.autoRoadRecording, showNotification]);
+  }, [isNavigating, liveSpeedMph, userSettings.autoRoadRecording, userSettings.roadRecordingMode, userSettings.roadRecordingQuality, userSettings.roadRecordingStorageGb, showNotification]);
+
+  useEffect(() => () => {
+    if (roadRecorderPauseRef.current) clearTimeout(roadRecorderPauseRef.current);
+  }, []);
 
   useEffect(() => {
     if (!isNavigating || !userLocation) {
@@ -3018,6 +3051,9 @@ const App: React.FC = () => {
                       localStorage.setItem('setting_speed_alerts', JSON.stringify(newSettings.speedAlerts));
                       localStorage.setItem('myway_speed_alerts', JSON.stringify(newSettings.speedAlerts));
                       localStorage.setItem('myway_auto_road_recording', String(newSettings.autoRoadRecording !== false));
+                      localStorage.setItem('myway_road_recording_mode', newSettings.roadRecordingMode || 'trip');
+                      localStorage.setItem('myway_road_recording_quality', newSettings.roadRecordingQuality || 'hd');
+                      localStorage.setItem('myway_road_recording_storage_gb', String(newSettings.roadRecordingStorageGb || 2));
                     } catch (e) {}
 
                     if (newSettings.theme !== 'auto') {
@@ -3048,7 +3084,10 @@ const App: React.FC = () => {
                             batteryAlerts: newSettings.batteryAlerts,
                             arrivalAlerts: newSettings.arrivalAlerts,
                             speedAlerts: newSettings.speedAlerts,
-                            autoRoadRecording: newSettings.autoRoadRecording !== false
+                            autoRoadRecording: newSettings.autoRoadRecording !== false,
+                            roadRecordingMode: newSettings.roadRecordingMode || 'trip',
+                            roadRecordingQuality: newSettings.roadRecordingQuality || 'hd',
+                            roadRecordingStorageGb: newSettings.roadRecordingStorageGb || 2
                           }
                         });
                       } catch (err) {

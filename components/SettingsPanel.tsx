@@ -61,6 +61,9 @@ export interface UserSettings {
     arrivalAlerts: boolean;
     speedAlerts: boolean;
     autoRoadRecording?: boolean;
+    roadRecordingMode?: 'trip' | 'moving';
+    roadRecordingQuality?: 'standard' | 'hd';
+    roadRecordingStorageGb?: 1 | 2 | 5;
     mapStyle: 'standard' | 'satellite' | 'terrain';
     units: 'imperial' | 'metric';
     mapSkin: MapSkinId;
@@ -1059,9 +1062,53 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             onChange={(v) => updateSetting('showTrafficControls', v)}
                         />
                     </SettingRow>
-                    <SettingRow label="Auto-record trips" description="Record local rear-camera footage while navigating">
+                </AccordionSection>
+
+                <AccordionSection
+                    id="road_recorder"
+                    title="Road Recorder"
+                    icon={Camera}
+                    subtitle={localSettings.autoRoadRecording === false ? 'Off' : localSettings.roadRecordingMode === 'moving' ? 'While Moving' : 'Entire Trip'}
+                >
+                    <SettingRow label="Auto-record trips" description="Record rear-camera footage locally during navigation">
                         <ToggleSwitch enabled={localSettings.autoRoadRecording !== false} onChange={(v) => updateSetting('autoRoadRecording', v)} />
                     </SettingRow>
+                    {localSettings.autoRoadRecording !== false && (
+                        <div className="space-y-4 px-1 pb-1">
+                            <div>
+                                <p className={`mb-2 text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Recording mode</p>
+                                <div className={`grid grid-cols-2 gap-1 rounded-xl border p-1 ${theme === 'dark' ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-slate-100'}`}>
+                                    {[
+                                        { id: 'trip', label: 'Entire trip' },
+                                        { id: 'moving', label: 'While moving' }
+                                    ].map(mode => (
+                                        <button key={mode.id} type="button" onClick={() => updateSetting('roadRecordingMode', mode.id as 'trip' | 'moving')} className={`rounded-lg px-2 py-2 text-[10px] font-black ${localSettings.roadRecordingMode !== 'moving' && mode.id === 'trip' || localSettings.roadRecordingMode === mode.id ? 'bg-violet-600 text-white shadow-sm' : theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{mode.label}</button>
+                                    ))}
+                                </div>
+                                <p className="mt-1.5 text-[10px] text-slate-500">While moving waits 90 seconds at stops before pausing.</p>
+                            </div>
+                            <div>
+                                <p className={`mb-2 text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Video quality</p>
+                                <div className="grid grid-cols-2 gap-1">
+                                    {[
+                                        { id: 'standard', label: 'Standard', note: 'Saves storage' },
+                                        { id: 'hd', label: 'HD', note: 'Clearer footage' }
+                                    ].map(quality => (
+                                        <button key={quality.id} type="button" onClick={() => updateSetting('roadRecordingQuality', quality.id as 'standard' | 'hd')} className={`rounded-xl border px-2 py-2 text-left ${localSettings.roadRecordingQuality === quality.id || (!localSettings.roadRecordingQuality && quality.id === 'hd') ? 'border-violet-500 bg-violet-500/15 text-violet-200' : theme === 'dark' ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-600'}`}><span className="block text-[10px] font-black">{quality.label}</span><span className="block text-[9px] opacity-75">{quality.note}</span></button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <p className={`mb-2 text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Storage limit</p>
+                                <div className="grid grid-cols-3 gap-1">
+                                    {[1, 2, 5].map(limit => (
+                                        <button key={limit} type="button" onClick={() => updateSetting('roadRecordingStorageGb', limit as 1 | 2 | 5)} className={`rounded-xl border py-2 text-[10px] font-black ${localSettings.roadRecordingStorageGb === limit || (!localSettings.roadRecordingStorageGb && limit === 2) ? 'border-violet-500 bg-violet-500/15 text-violet-200' : theme === 'dark' ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-600'}`}>{limit} GB</button>
+                                    ))}
+                                </div>
+                            </div>
+                            <p className="rounded-xl bg-violet-500/10 px-3 py-2 text-[10px] leading-relaxed text-violet-300">Recordings stay on this phone. Protected clips are never removed automatically.</p>
+                        </div>
+                    )}
                 </AccordionSection>
 
 
