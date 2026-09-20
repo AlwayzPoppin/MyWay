@@ -1556,21 +1556,18 @@ export const useNavigation = (
                 tankStatus = vehicleFuelService.setFuelLevel(gallons, activeVeh, 'manual');
             }
         }
-        if (fuelTrackerRef.current) {
-            // The tracker keeps cumulative trip burn. Rebase its starting
-            // reading so the HUD reflects this pump reading immediately.
-            if (tankStatus) fuelTrackerRef.current.syncFuelLevel(tankStatus.gallonsRemaining);
-            setLiveFuelSnapshot(fuelTrackerRef.current.getSnapshot());
-        } else if (tankStatus) {
-            // Keep the HUD honest even during the short interval before the
-            // trip tracker is initialized.
-            setLiveFuelSnapshot(previous => previous ? {
-                ...previous,
-                gallonsRemaining: tankStatus.gallonsRemaining,
-                percentRemaining: Math.round((tankStatus.gallonsRemaining / tankStatus.tankCapacityGal) * 100),
-                predictedRangeMiles: Math.max(0, Math.round(tankStatus.gallonsRemaining * previous.effectiveTripMpg))
-            } : previous);
+        if (!tankStatus) return;
+        // A resumed trip can expose the HUD before its tracker is restored.
+        // Recreate it here so a driver-set level immediately has a snapshot
+        // and the fuel gauge remains available for the rest of the trip.
+        if (!fuelTrackerRef.current) {
+            fuelTrackerRef.current = new LiveTripFuelTracker();
+            lastFuelTickTimeRef.current = Date.now();
         }
+        // The tracker keeps cumulative trip burn. Rebase its starting reading
+        // so the HUD reflects this pump reading immediately.
+        fuelTrackerRef.current.syncFuelLevel(tankStatus.gallonsRemaining);
+        setLiveFuelSnapshot(fuelTrackerRef.current.getSnapshot());
     }, []);
 
     // Cleanup & Cancel Navigation / Manual End-Trip Override

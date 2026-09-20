@@ -1003,6 +1003,16 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
   const lastFuelStationLookupAtRef = useRef(0);
   const quickFuelOriginRef = useRef<'manual' | 'prompt' | 'station'>('manual');
   const quickFuelOpenedAtRef = useRef(0);
+  // The live tracker can be briefly unavailable while a navigation session is
+  // restoring. Preserve the driver's last tank reading so the fuel control
+  // does not disappear from the HUD during that handoff.
+  const savedTankStatus = useMemo(
+    () => vehicleFuelService.getFuelTankStatus(),
+    [liveFuelSnapshot, fuelUpdatePromptNonce]
+  );
+  const fuelPercent = liveFuelSnapshot?.percentRemaining ?? savedTankStatus?.percentRemaining ?? null;
+  const fuelIsElectric = liveFuelSnapshot?.fuelType === 'electric'
+    || (!liveFuelSnapshot && vehicleFuelService.getActiveVehicleNullable()?.fuelType === 'electric');
 
   const openQuickFuel = useCallback((origin: 'manual' | 'prompt' | 'station') => {
     quickFuelOriginRef.current = origin;
@@ -2134,10 +2144,10 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
       </div>
 
       {/* Floating Recenter Map Button (when camera is moved away from vehicle) */}
-      {isQuickFuelOpen && liveFuelSnapshot?.percentRemaining !== null && onQuickFuelUpdate && (
+      {isQuickFuelOpen && fuelPercent !== null && onQuickFuelUpdate && (
         <QuickFuelUpdateCard
-          initialPercent={liveFuelSnapshot.percentRemaining}
-          isElectric={liveFuelSnapshot.fuelType === 'electric'}
+          initialPercent={fuelPercent}
+          isElectric={fuelIsElectric}
           onDismiss={() => setIsQuickFuelOpen(false)}
           onSave={(percent, isFull) => {
             const cameFromFuelStop = quickFuelOriginRef.current === 'station';
@@ -2287,17 +2297,17 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
             )}
           </div>
 
-          {liveFuelSnapshot && liveFuelSnapshot.percentRemaining !== null && (
+          {fuelPercent !== null && (
             <button
               type="button"
               onClick={() => openQuickFuel('manual')}
               className="shrink-0 px-2.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-1.5 cursor-pointer hover:bg-slate-100 active:scale-95 transition-all"
               title="Update fuel level"
-              aria-label={`Update fuel level, currently ${liveFuelSnapshot.percentRemaining}%`}
+              aria-label={`Update fuel level, currently ${fuelPercent}%`}
             >
-              <Fuel className={`w-3.5 h-3.5 ${liveFuelSnapshot.percentRemaining <= 20 ? 'text-red-500 animate-pulse' : 'text-emerald-600'}`} />
-              <span className={`text-[10px] font-black ${liveFuelSnapshot.percentRemaining <= 20 ? 'text-red-600' : 'text-slate-800'}`}>
-                {liveFuelSnapshot.percentRemaining}%
+              <Fuel className={`w-3.5 h-3.5 ${fuelPercent <= 20 ? 'text-red-500 animate-pulse' : 'text-emerald-600'}`} />
+              <span className={`text-[10px] font-black ${fuelPercent <= 20 ? 'text-red-600' : 'text-slate-800'}`}>
+                {fuelPercent}%
               </span>
             </button>
           )}
