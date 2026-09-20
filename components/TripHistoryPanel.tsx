@@ -69,6 +69,11 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
         await loadRoadClips();
     }, [loadRoadClips]);
 
+    const handleProtectRoadClip = useCallback(async (clip: RoadRecorderClip) => {
+        await nativeRoadRecorderService.setClipProtected(clip.path, !clip.protected);
+        await loadRoadClips();
+    }, [loadRoadClips]);
+
     const formatBytes = (bytes: number) => {
         if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
         return `${(bytes / (1024 * 1024 * 1024)).toFixed(bytes >= 1024 * 1024 * 1024 ? 1 : 2)} GB`;
@@ -233,7 +238,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                             <div className="flex items-start justify-between gap-3">
                                 <div>
                                     <h3 className="text-sm font-black text-white">Local Road Recorder</h3>
-                                    <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Clips stay on this phone. MyWay keeps the newest recordings within a 20-clip or 2 GB limit.</p>
+                                    <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Clips stay on this phone. MyWay keeps the newest recordings within a 20-clip or 2 GB limit; protected clips are never auto-deleted.</p>
                                 </div>
                                 <button type="button" onClick={() => void loadRoadClips()} className="rounded-lg bg-white/10 px-2.5 py-1.5 text-[10px] font-black text-violet-200 hover:bg-white/15">Refresh</button>
                             </div>
@@ -255,9 +260,10 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                             <div key={clip.path} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
                                 <span className="text-2xl">🎥</span>
                                 <button type="button" onClick={() => void nativeRoadRecorderService.openClip(clip.path)} className="min-w-0 flex-1 text-left">
-                                    <p className="truncate text-sm font-bold text-white">{new Date(clip.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
+                                    <p className="truncate text-sm font-bold text-white">{new Date(clip.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}{clip.protected ? ' · Protected' : ''}</p>
                                     <p className="mt-0.5 text-[10px] font-bold text-slate-400">{formatClipDuration(clip.durationMs)} · {formatBytes(clip.sizeBytes)}</p>
                                 </button>
+                                <button type="button" onClick={() => void handleProtectRoadClip(clip)} className={`rounded-xl px-2.5 py-2 text-xs ${clip.protected ? 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/30' : 'bg-white/10 text-slate-300 hover:bg-white/15'}`} title={clip.protected ? 'Allow automatic cleanup' : 'Protect from automatic cleanup'}>{clip.protected ? '★' : '☆'}</button>
                                 <button type="button" onClick={() => void handleDeleteRoadClip(clip)} className="rounded-xl bg-red-500/10 px-2.5 py-2 text-xs text-red-300 hover:bg-red-500/20" title="Delete recording">🗑️</button>
                             </div>
                         ))}

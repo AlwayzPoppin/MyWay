@@ -141,6 +141,7 @@ public class NativeRoadRecorderPlugin extends Plugin {
             item.put("createdAt", clip.lastModified());
             item.put("sizeBytes", clip.length());
             item.put("durationMs", getDurationMs(clip));
+            item.put("protected", isProtectedClip(clip));
             clips.put(item);
         }
         JSObject result = new JSObject();
@@ -185,6 +186,41 @@ public class NativeRoadRecorderPlugin extends Plugin {
         }
     }
 
+    @PluginMethod
+    public void setClipProtected(PluginCall call) {
+        String path = call.getString("path");
+        Boolean shouldProtect = call.getBoolean("protected");
+        if (!isManagedClip(path) || shouldProtect == null) {
+            call.reject("This recording cannot be updated.");
+            return;
+        }
+        File clip = new File(path);
+        if (!clip.exists()) {
+            call.reject("This recording is unavailable.");
+            return;
+        }
+        boolean isProtected = isProtectedClip(clip);
+        if (isProtected == shouldProtect) {
+            JSObject result = new JSObject();
+            result.put("path", clip.getAbsolutePath());
+            result.put("protected", isProtected);
+            call.resolve(result);
+            return;
+        }
+        String filename = shouldProtect
+            ? "MyWay-Protected-" + clip.getName().substring("MyWay-".length())
+            : "MyWay-" + clip.getName().substring("MyWay-Protected-".length());
+        File renamed = new File(clip.getParentFile(), filename);
+        if (!clip.renameTo(renamed)) {
+            call.reject("Could not update this recording.");
+            return;
+        }
+        JSObject result = new JSObject();
+        result.put("path", renamed.getAbsolutePath());
+        result.put("protected", shouldProtect);
+        call.resolve(result);
+    }
+
     private File[] getClips() {
         File movies = getContext().getExternalFilesDir(Environment.DIRECTORY_MOVIES);
         if (movies == null) return new File[0];
@@ -207,6 +243,10 @@ public class NativeRoadRecorderPlugin extends Plugin {
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private boolean isProtectedClip(File clip) {
+        return clip.getName().startsWith("MyWay-Protected-");
     }
 
     private long getDurationMs(File clip) {
@@ -233,6 +273,7 @@ public class NativeRoadRecorderPlugin extends Plugin {
         int remainingClips = clips.length;
         for (int index = clips.length - 1; index >= 0 && (remainingClips > MAX_CLIPS || totalBytes > MAX_TOTAL_BYTES); index--) {
             File oldest = clips[index];
+            if (isProtectedClip(oldest)) continue;
             long size = oldest.length();
             if (oldest.delete()) {
                 totalBytes -= size;

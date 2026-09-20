@@ -8,6 +8,7 @@ export type RoadRecorderClip = {
   createdAt: number;
   sizeBytes: number;
   durationMs: number;
+  protected: boolean;
 };
 
 type RoadRecorderLibrary = {
@@ -23,6 +24,7 @@ interface NativeRoadRecorderPlugin {
   listClips(): Promise<RoadRecorderLibrary>;
   deleteClip(options: { path: string }): Promise<void>;
   openClip(options: { path: string }): Promise<void>;
+  setClipProtected(options: { path: string; protected: boolean }): Promise<{ path: string; protected: boolean }>;
 }
 
 const NativeRoadRecorder = registerPlugin<NativeRoadRecorderPlugin>('NativeRoadRecorder');
@@ -34,5 +36,6 @@ export const nativeRoadRecorderService = {
   getStatus: () => NativeRoadRecorder.getStatus(),
   listClips: () => NativeRoadRecorder.listClips(),
   deleteClip: (path: string) => NativeRoadRecorder.deleteClip({ path }),
-  openClip: (path: string) => NativeRoadRecorder.openClip({ path })
+  openClip: (path: string) => NativeRoadRecorder.openClip({ path }),
+  setClipProtected: (path: string, protected: boolean) => NativeRoadRecorder.setClipProtected({ path, protected })
 };
