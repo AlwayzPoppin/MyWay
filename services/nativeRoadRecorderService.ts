@@ -37,5 +37,5 @@ export const nativeRoadRecorderService = {
   listClips: () => NativeRoadRecorder.listClips(),
   deleteClip: (path: string) => NativeRoadRecorder.deleteClip({ path }),
   openClip: (path: string) => NativeRoadRecorder.openClip({ path }),
-  setClipProtected: (path: string, protected: boolean) => NativeRoadRecorder.setClipProtected({ path, protected })
+  setClipProtected: (path: string, isProtected: boolean) => NativeRoadRecorder.setClipProtected({ path, protected: isProtected })
 };
