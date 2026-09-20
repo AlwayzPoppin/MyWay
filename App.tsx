@@ -2408,7 +2408,7 @@ const App: React.FC = () => {
                 onContinueAfterFuelStop={handleContinueAfterStop}
                 savedPlaces={userPlaces}
                 roadRecorderStatus={roadRecorderStatus}
-                roadRecorderEnabled={userSettings.autoRoadRecording !== false}
+                roadRecorderEnabled={nativeRoadRecorderService.isSupported() && userSettings.autoRoadRecording !== false}
                 onRoadRecorderStatusTap={() => {
                   if (roadRecorderStatus !== 'recording') return;
                   void nativeRoadRecorderService.showPreview().catch((error) => {
