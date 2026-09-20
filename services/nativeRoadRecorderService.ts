@@ -22,6 +22,7 @@ interface NativeRoadRecorderPlugin {
   start(options?: RecorderOptions): Promise<RecorderState>;
   stop(): Promise<RecorderState>;
   getStatus(): Promise<RecorderState>;
+  showPreview(): Promise<void>;
   listClips(): Promise<RoadRecorderLibrary>;
   deleteClip(options: { path: string }): Promise<void>;
   openClip(options: { path: string }): Promise<void>;
@@ -35,6 +36,7 @@ export const nativeRoadRecorderService = {
   start: (options: RecorderOptions = {}) => NativeRoadRecorder.start(options),
   stop: () => NativeRoadRecorder.stop(),
   getStatus: () => NativeRoadRecorder.getStatus(),
+  showPreview: () => NativeRoadRecorder.showPreview(),
   listClips: () => NativeRoadRecorder.listClips(),
   deleteClip: (path: string) => NativeRoadRecorder.deleteClip({ path }),
   openClip: (path: string) => NativeRoadRecorder.openClip({ path }),

@@ -2409,6 +2409,13 @@ const App: React.FC = () => {
                 savedPlaces={userPlaces}
                 roadRecorderStatus={roadRecorderStatus}
                 roadRecorderEnabled={userSettings.autoRoadRecording !== false}
+                onRoadRecorderStatusTap={() => {
+                  if (roadRecorderStatus !== 'recording') return;
+                  void nativeRoadRecorderService.showPreview().catch((error) => {
+                    console.warn('[RoadRecorder] Could not show preview:', error);
+                    showNotification('Camera preview is unavailable right now.', 3000);
+                  });
+                }}
               />
             </OverlayManager>
           ) : (

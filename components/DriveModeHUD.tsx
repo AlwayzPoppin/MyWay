@@ -150,6 +150,7 @@ interface DriveModeHUDProps {
   savedPlaces?: Place[];
   roadRecorderStatus?: 'recording' | 'paused' | 'error' | 'off';
   roadRecorderEnabled?: boolean;
+  onRoadRecorderStatusTap?: () => void;
 }
 
 const getStopSearchLocation = (location?: Location | null): { lat: number; lng: number } | undefined => {
@@ -970,7 +971,8 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
   isMapRecovering = false,
   savedPlaces = [],
   roadRecorderStatus = 'off',
-  roadRecorderEnabled = false
+  roadRecorderEnabled = false,
+  onRoadRecorderStatusTap
 }) => {
   const [showDetails, setShowDetails] = useState(!isMobile);
   const [isAlternativesModalOpen, setIsAlternativesModalOpen] = useState(false);
@@ -2202,7 +2204,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
         className={`drive-hud-bottom absolute z-40 pointer-events-none ${isSplitScreenCompact ? 'drive-hud-split-compact' : ''}`}
       >
         {roadRecorderEnabled && (
-          <div className={`absolute bottom-full right-2 mb-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide shadow-lg ${
+          <button type="button" onClick={onRoadRecorderStatusTap} disabled={roadRecorderStatus !== 'recording'} title={roadRecorderStatus === 'recording' ? 'Show camera preview' : undefined} className={`absolute bottom-full right-2 mb-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide shadow-lg pointer-events-auto disabled:cursor-default ${
             roadRecorderStatus === 'recording'
               ? 'border-rose-300 bg-rose-600 text-white'
               : roadRecorderStatus === 'paused'
@@ -2213,7 +2215,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
           }`}>
             <Camera className={`h-3 w-3 ${roadRecorderStatus === 'recording' ? 'animate-pulse' : ''}`} />
             <span>{roadRecorderStatus === 'recording' ? 'Recording' : roadRecorderStatus === 'paused' ? 'Recorder paused' : roadRecorderStatus === 'error' ? 'Recorder unavailable' : 'Recorder starting'}</span>
-          </div>
+          </button>
         )}
         {upcomingGuidance.currentRoadName?.trim() && (
           <div ref={currentStreetRef} className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 max-w-[calc(100%-24px)] rounded-full border border-slate-200 bg-white px-4 py-2 shadow-lg" title={upcomingGuidance.currentRoadName} aria-label={`Current street: ${upcomingGuidance.currentRoadName}`}>

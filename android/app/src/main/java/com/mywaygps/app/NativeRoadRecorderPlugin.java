@@ -5,9 +5,17 @@ import android.content.Intent;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.view.PreviewView;
 import androidx.camera.video.FileOutputOptions;
 import androidx.camera.video.Quality;
 import androidx.camera.video.QualitySelector;
@@ -40,6 +48,10 @@ public class NativeRoadRecorderPlugin extends Plugin {
     private static final long DEFAULT_MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L;
     private ProcessCameraProvider cameraProvider;
     private Recording recording;
+    private VideoCapture<Recorder> videoCapture;
+    private Preview cameraPreview;
+    private FrameLayout previewOverlay;
+    private final Handler previewHandler = new Handler(Looper.getMainLooper());
     private boolean starting = false;
     private String outputPath = "";
     private long maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES;
@@ -75,9 +87,10 @@ public class NativeRoadRecorderPlugin extends Plugin {
                 Recorder recorder = new Recorder.Builder()
                     .setQualitySelector(QualitySelector.from("standard".equals(quality) ? Quality.SD : Quality.HD))
                     .build();
-                VideoCapture<Recorder> videoCapture = VideoCapture.withOutput(recorder);
+                videoCapture = VideoCapture.withOutput(recorder);
+                cameraPreview = new Preview.Builder().build();
                 cameraProvider.unbindAll();
-                cameraProvider.bindToLifecycle(getActivity(), CameraSelector.DEFAULT_BACK_CAMERA, videoCapture);
+                cameraProvider.bindToLifecycle(getActivity(), CameraSelector.DEFAULT_BACK_CAMERA, cameraPreview, videoCapture);
 
                 File movies = getContext().getExternalFilesDir(Environment.DIRECTORY_MOVIES);
                 if (movies == null) throw new IllegalStateException("Video storage is unavailable.");
@@ -121,9 +134,12 @@ public class NativeRoadRecorderPlugin extends Plugin {
 
     @PluginMethod
     public void stop(PluginCall call) {
+        hidePreviewOverlay();
         if (recording != null) recording.stop();
         if (cameraProvider != null) cameraProvider.unbindAll();
         recording = null;
+        videoCapture = null;
+        cameraPreview = null;
         starting = false;
         resolveState(call, false);
         notifyStatus(false, null);
@@ -131,6 +147,22 @@ public class NativeRoadRecorderPlugin extends Plugin {
 
     @PluginMethod
     public void getStatus(PluginCall call) { resolveState(call, recording != null || starting); }
+
+    @PluginMethod
+    public void showPreview(PluginCall call) {
+        if (recording == null || cameraPreview == null) {
+            call.reject("Start recording before opening the camera preview.");
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            try {
+                showPreviewOverlay();
+                call.resolve();
+            } catch (Exception error) {
+                call.reject("Could not show the camera preview.", error);
+            }
+        });
+    }
 
     @PluginMethod
     public void listClips(PluginCall call) {
@@ -256,6 +288,50 @@ public class NativeRoadRecorderPlugin extends Plugin {
         Integer storageGb = call.getInt("storageGb", 2);
         int selectedGb = storageGb != null && (storageGb == 1 || storageGb == 2 || storageGb == 5) ? storageGb : 2;
         maxTotalBytes = selectedGb * 1024L * 1024L * 1024L;
+    }
+
+    private void showPreviewOverlay() {
+        hidePreviewOverlay();
+        if (cameraPreview == null) throw new IllegalStateException("Camera preview is unavailable.");
+
+        FrameLayout root = getActivity().findViewById(android.R.id.content);
+        PreviewView previewView = new PreviewView(getContext());
+        previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+        previewView.setBackgroundColor(0xFF111827);
+        cameraPreview.setSurfaceProvider(previewView.getSurfaceProvider());
+
+        previewOverlay = new FrameLayout(getContext());
+        previewOverlay.setBackgroundColor(0xFF111827);
+        previewOverlay.setOnClickListener(view -> hidePreviewOverlay());
+        previewOverlay.addView(previewView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TextView badge = new TextView(getContext());
+        badge.setText("  ● LIVE CAMERA  ");
+        badge.setTextColor(0xFFFFFFFF);
+        badge.setTextSize(10);
+        badge.setGravity(Gravity.CENTER);
+        badge.setBackgroundColor(0xCCDC2626);
+        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24), Gravity.TOP | Gravity.LEFT);
+        previewOverlay.addView(badge, badgeParams);
+
+        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(dp(176), dp(118), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        overlayParams.setMargins(dp(12), 0, dp(12), 0);
+        root.addView(previewOverlay, overlayParams);
+        previewHandler.postDelayed(this::hidePreviewOverlay, 5000);
+    }
+
+    private void hidePreviewOverlay() {
+        previewHandler.removeCallbacksAndMessages(null);
+        if (cameraPreview != null) cameraPreview.setSurfaceProvider(null);
+        if (previewOverlay != null) {
+            ViewGroup parent = (ViewGroup) previewOverlay.getParent();
+            if (parent != null) parent.removeView(previewOverlay);
+            previewOverlay = null;
+        }
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getContext().getResources().getDisplayMetrics().density);
     }
 
     private long getDurationMs(File clip) {
