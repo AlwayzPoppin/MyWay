@@ -403,7 +403,7 @@ const App: React.FC = () => {
       arrivalAlerts: true,
       speedAlerts: cachedSpeedAlerts,
       autoRoadRecording: localStorage.getItem('myway_auto_road_recording') !== 'false',
-      roadRecordingMode: localStorage.getItem('myway_road_recording_mode') === 'moving' ? 'moving' as const : 'trip' as const,
+      roadRecordingMode: localStorage.getItem('myway_road_recording_mode') === 'trip' ? 'trip' as const : 'moving' as const,
       roadRecordingQuality: localStorage.getItem('myway_road_recording_quality') === 'standard' ? 'standard' as const : 'hd' as const,
       roadRecordingStorageGb: ([1, 2, 5].includes(Number(localStorage.getItem('myway_road_recording_storage_gb'))) ? Number(localStorage.getItem('myway_road_recording_storage_gb')) : 2) as 1 | 2 | 5,
       privacyMode: 'exact' as const,
@@ -421,6 +421,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!profile?.settings) return;
     setUserSettings(prev => {
+      const useMotionFirstDefault = localStorage.getItem('myway_road_recorder_motion_default_v1') !== 'applied';
+      if (useMotionFirstDefault) {
+        localStorage.setItem('myway_road_recorder_motion_default_v1', 'applied');
+        localStorage.setItem('myway_road_recording_mode', 'moving');
+      }
+      const storedRoadRecordingMode = localStorage.getItem('myway_road_recording_mode');
       const profileSpeedAlerts = (profile.settings as any).speedAlerts;
       const effectiveSpeedAlerts = typeof profileSpeedAlerts === 'boolean'
         ? profileSpeedAlerts
@@ -442,7 +448,7 @@ const App: React.FC = () => {
         arrivalAlerts: (profile.settings as any).arrivalAlerts ?? prev.arrivalAlerts,
         speedAlerts: effectiveSpeedAlerts,
         autoRoadRecording: (profile.settings as any).autoRoadRecording ?? prev.autoRoadRecording,
-        roadRecordingMode: (profile.settings as any).roadRecordingMode === 'moving' ? 'moving' : ((profile.settings as any).roadRecordingMode === 'trip' ? 'trip' : prev.roadRecordingMode),
+        roadRecordingMode: storedRoadRecordingMode === 'trip' ? 'trip' : 'moving',
         roadRecordingQuality: (profile.settings as any).roadRecordingQuality === 'standard' ? 'standard' : ((profile.settings as any).roadRecordingQuality === 'hd' ? 'hd' : prev.roadRecordingQuality),
         roadRecordingStorageGb: [1, 2, 5].includes((profile.settings as any).roadRecordingStorageGb) ? (profile.settings as any).roadRecordingStorageGb : prev.roadRecordingStorageGb,
         privacyMode: (profile.settings as any).privacyMode === 'blurred'
@@ -836,22 +842,23 @@ const App: React.FC = () => {
     void (async () => {
       try {
         const recordingEnabled = isNavigating && userSettings.autoRoadRecording !== false;
-        const movingOnly = userSettings.roadRecordingMode === 'moving';
+        const movingOnly = userSettings.roadRecordingMode !== 'trip';
         const currentlyMoving = typeof liveSpeedMph !== 'number' || liveSpeedMph > 1.5;
-        if (recordingEnabled && (!movingOnly || currentlyMoving)) {
+        if (recordingEnabled && currentlyMoving) {
           clearPauseTimer();
           const status = await nativeRoadRecorderService.start({
             quality: userSettings.roadRecordingQuality || 'hd',
             storageGb: userSettings.roadRecordingStorageGb || 2
           });
           if (!cancelled) setRoadRecorderStatus(status.recording ? 'recording' : 'error');
-        } else if (recordingEnabled && movingOnly) {
+        } else if (recordingEnabled) {
           if (!roadRecorderPauseRef.current) {
+            if (!cancelled) setRoadRecorderStatus('paused');
             roadRecorderPauseRef.current = setTimeout(() => {
               roadRecorderPauseRef.current = null;
               void nativeRoadRecorderService.stop();
               setRoadRecorderStatus('paused');
-            }, 90_000);
+            }, movingOnly ? 12_000 : 45_000);
           }
         } else {
           clearPauseTimer();

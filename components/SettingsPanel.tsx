@@ -1086,7 +1086,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     id="road_recorder"
                     title="Road Recorder"
                     icon={Camera}
-                    subtitle={localSettings.autoRoadRecording === false ? 'Off' : localSettings.roadRecordingMode === 'moving' ? 'While Moving' : 'Entire Trip'}
+                    subtitle={localSettings.autoRoadRecording === false ? 'Off' : localSettings.roadRecordingMode === 'trip' ? 'Keep Short Stops' : 'While Moving'}
                 >
                     <SettingRow label="Auto-record trips" description="Record rear-camera footage locally during navigation">
                         <ToggleSwitch enabled={localSettings.autoRoadRecording !== false} onChange={(v) => updateSetting('autoRoadRecording', v)} />
@@ -1132,13 +1132,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <p className={`mb-2 text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Recording mode</p>
                                 <div className={`grid grid-cols-2 gap-1 rounded-xl border p-1 ${theme === 'dark' ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-slate-100'}`}>
                                     {[
-                                        { id: 'trip', label: 'Entire trip' },
+                                        { id: 'trip', label: 'Keep short stops' },
                                         { id: 'moving', label: 'While moving' }
                                     ].map(mode => (
                                         <button key={mode.id} type="button" onClick={() => updateSetting('roadRecordingMode', mode.id as 'trip' | 'moving')} className={`rounded-lg px-2 py-2 text-[10px] font-black ${localSettings.roadRecordingMode !== 'moving' && mode.id === 'trip' || localSettings.roadRecordingMode === mode.id ? 'bg-violet-600 text-white shadow-sm' : theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{mode.label}</button>
                                     ))}
                                 </div>
-                                <p className="mt-1.5 text-[10px] text-slate-500">While moving waits 90 seconds at stops before pausing.</p>
+                                <p className="mt-1.5 text-[10px] text-slate-500">While moving pauses after 12 seconds at 0 mph. Keep short stops waits 45 seconds.</p>
                             </div>
                             <div>
                                 <p className={`mb-2 text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Video quality</p>
