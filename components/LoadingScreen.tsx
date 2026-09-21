@@ -10,7 +10,7 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({ theme, message = 'Initial
     
     return (
         <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-            isDark ? 'bg-[#0f172a]' : 'bg-slate-50'
+            isDark ? 'bg-[#0f172a]' : 'bg-[#f8f6f0]'
         }`}>
             {/* Logo container with pulse effect */}
             <div className="relative mb-8">

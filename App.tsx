@@ -3540,11 +3540,8 @@ const App: React.FC = () => {
       )}
 
       {!isMapReady && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#0f172a] text-white">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-20 h-20 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <p className="font-bold tracking-widest animate-pulse">PREPARING MAP...</p>
-          </div>
+        <div className="fixed inset-0 z-[9999]">
+          <LoadingScreen theme={activeTheme} message="Preparing map..." />
         </div>
       )}
     </div>
