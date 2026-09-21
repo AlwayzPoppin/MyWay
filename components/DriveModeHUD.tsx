@@ -2397,14 +2397,13 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
               <button
                 type="button"
                 onClick={() => {
-                  setIsAlternativesModalOpen(prev => !prev);
-                  if (!isAlternativesModalOpen && onRecalculateRoutes) onRecalculateRoutes();
+                  onOpenTripOverview?.();
                 }}
-                title="Alternative routes"
-                aria-label="Alternative routes"
-                className={`w-full h-12 rounded-xl border flex items-center justify-center gap-1.5 font-black text-xs uppercase tracking-wider shadow-sm active:scale-95 transition-all cursor-pointer ${isAlternativesModalOpen || isRecalculatingRoutes ? 'bg-slate-800 text-white border-slate-700 shadow-md' : 'bg-slate-100 border-slate-200 text-slate-800 hover:bg-slate-200'}`}
+                title="Trip overview"
+                aria-label="Open trip overview"
+                className="w-full h-12 rounded-xl border border-slate-200 bg-slate-100 text-slate-800 hover:bg-slate-200 flex items-center justify-center gap-1.5 font-black text-xs uppercase tracking-wider shadow-sm active:scale-95 transition-all cursor-pointer"
               >
-                {isRecalculatingRoutes ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Route className="w-4 h-4" />}
+                <Route className="w-4 h-4" />
                 <span>Routes</span>
               </button>
               <button
@@ -2432,7 +2431,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
         {isSplitScreenCompact && isCompactActionsOpen && (
           <div className="absolute bottom-full right-0 mb-3 w-48 rounded-2xl border border-slate-200 bg-white/98 p-2 shadow-xl backdrop-blur-xl pointer-events-auto animate-in slide-in-from-bottom-2 duration-150">
             <button type="button" onClick={() => { setIsAddStopDrawerOpen(true); setIsCompactActionsOpen(false); }} className="w-full min-h-11 rounded-xl px-3 text-left text-xs font-black text-slate-800 hover:bg-slate-100 flex items-center gap-2"><Plus className="w-4 h-4" /> Add stop</button>
-            <button type="button" onClick={() => { setIsAlternativesModalOpen(true); setIsCompactActionsOpen(false); onRecalculateRoutes?.(); }} className="w-full min-h-11 rounded-xl px-3 text-left text-xs font-black text-slate-800 hover:bg-slate-100 flex items-center gap-2"><Route className="w-4 h-4" /> Routes</button>
+            <button type="button" onClick={() => { onOpenTripOverview?.(); setIsCompactActionsOpen(false); }} className="w-full min-h-11 rounded-xl px-3 text-left text-xs font-black text-slate-800 hover:bg-slate-100 flex items-center gap-2"><Route className="w-4 h-4" /> Routes</button>
             <button type="button" onClick={() => { const next = speechService.toggleMuted(); setIsVoiceMuted(next); if (next) { try { window.speechSynthesis?.cancel(); } catch {} audioService.cancel(); } }} className={`w-full min-h-11 rounded-xl px-3 text-left text-xs font-black hover:bg-slate-100 flex items-center gap-2 ${isVoiceMuted ? 'text-amber-700' : 'text-slate-800'}`}>{isVoiceMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}{isVoiceMuted ? 'Unmute guidance' : 'Mute guidance'}</button>
           </div>
         )}
@@ -2599,6 +2598,19 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                 <p className="mt-2 text-[10px] font-bold text-amber-300">Includes tolls{route.tollCostEstimate ? ` • ${route.tollCostEstimate}` : ''}</p>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                onCloseTripOverview?.();
+                setIsAlternativesModalOpen(true);
+                onRecalculateRoutes?.();
+              }}
+              className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/35 bg-indigo-400/10 text-xs font-black text-indigo-200 transition-colors hover:bg-indigo-400/20"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Compare routes
+            </button>
 
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between">
