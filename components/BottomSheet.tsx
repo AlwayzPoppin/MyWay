@@ -147,6 +147,10 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 
     const [activeTab, setActiveTab] = useState<'members' | 'places' | 'log'>('members');
     const [dragStart, setDragStart] = useState<number | null>(null);
+    const [dragOffset, setDragOffset] = useState(0);
+    const [isDraggingSheet, setIsDraggingSheet] = useState(false);
+    const dragOffsetRef = useRef(0);
+    const didDragSheetRef = useRef(false);
     const [showAddCustomPlace, setShowAddCustomPlace] = useState(false);
     const [customPlaceName, setCustomPlaceName] = useState('');
     const [customPlaceIcon, setCustomPlaceIcon] = useState('📍');
@@ -185,23 +189,42 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         }
     };
 
+    const getExpandedHeight = () => typeof window === 'undefined' ? 480 : Math.min(window.innerHeight * 0.62, 480);
+
     const handleTouchStart = (e: React.TouchEvent) => {
         dismissKeyboard();
         setDragStart(e.touches[0].clientY);
+        setDragOffset(0);
+        dragOffsetRef.current = 0;
+        setIsDraggingSheet(true);
+        didDragSheetRef.current = false;
     };
 
     const handleTouchMove = (e: React.TouchEvent) => {
         if (dragStart === null) return;
         const diff = dragStart - e.touches[0].clientY;
-        if (Math.abs(diff) > 5) {
+        const travel = Math.max(1, getExpandedHeight() - 100);
+        const offset = isExpanded
+            ? Math.min(travel, Math.max(0, -diff))
+            : Math.min(travel, Math.max(0, diff));
+        if (offset > 5) {
             dismissKeyboard();
+            e.preventDefault();
+            didDragSheetRef.current = true;
         }
-        if (diff > 45 && !isExpanded) setExpanded(true);
-        if (diff < -45 && isExpanded) setExpanded(false);
+        setDragOffset(offset);
+        dragOffsetRef.current = offset;
     };
 
     const handleTouchEnd = () => {
+        const travel = Math.max(1, getExpandedHeight() - 100);
+        if (dragStart !== null && dragOffsetRef.current >= travel * 0.22) {
+            setExpanded(!isExpanded);
+        }
         setDragStart(null);
+        setDragOffset(0);
+        dragOffsetRef.current = 0;
+        setIsDraggingSheet(false);
     };
 
     const handleAddMember = () => {
@@ -285,6 +308,11 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         (member.status === 'Moving' || member.status === 'Walking') && !isLocationStale(member)
     ).length;
     const staleLocationCount = summaryMembers.filter(isLocationStale).length;
+    const isDragPreviewExpanded = isDraggingSheet && !isExpanded && dragOffset > 12;
+    const showExpandedPanel = isExpanded || isDragPreviewExpanded;
+    const sheetDragHeight = isDraggingSheet
+        ? (isExpanded ? getExpandedHeight() - dragOffset : 100 + dragOffset)
+        : null;
 
     return (
         <>
@@ -304,30 +332,35 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                         ? 'bg-gradient-to-t from-[#090d16] via-[#0f172a]/98 to-[#0f172a]/95 text-white'
                         : 'bg-gradient-to-t from-[#f5f2eb] via-[#fdfbf7]/98 to-[#fdfbf7]/95 text-slate-900'}
                     backdrop-blur-2xl border-t ${isDark ? 'border-white/10' : 'border-slate-200/80'}
-                    rounded-t-[28px] shadow-[0_-10px_60px_rgba(0,0,0,0.35)] flex flex-col ${className || ''}`}
+                    rounded-t-[28px] shadow-[0_-10px_60px_rgba(0,0,0,0.35)] flex flex-col overflow-hidden ${className || ''}`}
                 style={{
-                    height: isExpanded ? 'min(62vh, 480px)' : 'calc(100px + env(safe-area-inset-bottom, 0px))',
+                    height: sheetDragHeight !== null ? `${sheetDragHeight}px` : (isExpanded ? 'min(62vh, 480px)' : 'calc(100px + env(safe-area-inset-bottom, 0px))'),
                     maxHeight: isExpanded ? 'min(62vh, 480px)' : undefined,
-                    transform: 'translateY(0)'
+                    transform: 'translateY(0)',
+                    transitionDuration: isDraggingSheet ? '0ms' : undefined
                 }}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
             >
                 {/* Drag Handle Bar */}
                 <div
-                    className="pt-2.5 pb-1 flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
+                    className="pt-2.5 pb-1 flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0 touch-none"
                     onClick={() => {
+                        if (didDragSheetRef.current) {
+                            didDragSheetRef.current = false;
+                            return;
+                        }
                         dismissKeyboard();
                         setExpanded(!isExpanded);
                     }}
-                    onTouchStart={dismissKeyboard}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                    onTouchCancel={handleTouchEnd}
                 >
                 <div className={`w-10 h-1.5 rounded-full transition-colors ${isDark ? 'bg-white/25 hover:bg-white/40' : 'bg-slate-300 hover:bg-slate-400'}`} />
             </div>
 
             {/* ─── COLLAPSED PEEK VIEW ─── */}
-            {!isExpanded && (
+            {!showExpandedPanel && (
                 <div className="px-4 flex items-center justify-between gap-2 min-h-[72px] py-1.5 shrink-0">
                     {/* Avatars Carousel */}
                     <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-2 px-1">
@@ -390,7 +423,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
             )}
 
             {/* ─── EXPANDED FULL DRAWER (DESKTOP FEATURE PARITY) ─── */}
-            {isExpanded && (
+            {showExpandedPanel && (
                 <div className="px-4 flex flex-col flex-1 overflow-hidden">
                     {/* Header Bar */}
                     <div className="flex items-center justify-between pb-3 pt-1 border-b border-white/5 shrink-0">
