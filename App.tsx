@@ -3541,7 +3541,7 @@ const App: React.FC = () => {
 
       {!isMapReady && (
         <div className="fixed inset-0 z-[9999]">
-          <LoadingScreen theme={activeTheme} message="Preparing map..." />
+          <LoadingScreen theme={activeTheme} stage="map" />
         </div>
       )}
     </div>

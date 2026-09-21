@@ -1,12 +1,20 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface LoadingScreenProps {
     theme: 'light' | 'dark';
-    message?: string;
+    stage?: 'startup' | 'map';
 }
 
-const LoadingScreen: React.FC<LoadingScreenProps> = ({ theme, message = 'Initializing MyWay...' }) => {
+const LoadingScreen: React.FC<LoadingScreenProps> = ({ theme, stage = 'startup' }) => {
     const isDark = theme === 'dark';
+    const [isSlow, setIsSlow] = useState(false);
+    const initialMessage = stage === 'map' ? 'Preparing your map...' : 'Initializing My Way...';
+    const slowMessage = stage === 'map' ? 'Loading map details...' : 'Securing your circle...';
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setIsSlow(true), 1000);
+        return () => window.clearTimeout(timer);
+    }, [stage]);
     
     return (
         <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
@@ -43,7 +51,7 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({ theme, message = 'Initial
                 <p className={`text-sm font-medium animate-pulse ${
                     isDark ? 'text-slate-400' : 'text-slate-500'
                 }`}>
-                    {message}
+                    {isSlow ? slowMessage : initialMessage}
                 </p>
             </div>
 
