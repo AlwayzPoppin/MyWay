@@ -61,9 +61,7 @@ import {
   CornerUpLeft,
   CornerUpRight,
   RotateCcw,
-  Play,
-  Clock,
-  MapPin
+  Play
 } from 'lucide-react';
 
 const renderAdvisoryIcon = (iconName?: string, type?: string, className: string = "w-4 h-4") => {
@@ -1553,26 +1551,6 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
       ? new Date(Date.now() + minutes * 60_000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       : '—';
   }, [displayEta, remainingDurationSeconds]);
-  const overviewManeuvers = useMemo(() => {
-    const seen = new Set<string>();
-    const entries: Array<{ instruction: string; detail: string; icon: React.ElementType }> = [];
-    const add = (instruction: string | undefined, detail: string, step?: any) => {
-      const text = instruction?.trim();
-      const key = text?.toLowerCase();
-      if (!text || !key || seen.has(key) || entries.length >= 3) return;
-      seen.add(key);
-      entries.push({
-        instruction: text,
-        detail,
-        icon: getManeuverIcon(step?.maneuverType, step?.maneuverModifier, text)
-      });
-    };
-    add(upcomingGuidance?.instruction, upcomingGuidance?.distanceStr || 'Coming up', upcomingGuidance);
-    steps.slice(Math.max(0, stepIndex + 1)).forEach((step, index) => {
-      add(step.instruction, entries.length === 0 ? (step.distance || 'Coming up') : `Then ${index + 1}`, step);
-    });
-    return entries;
-  }, [getManeuverIcon, stepIndex, steps, upcomingGuidance]);
 
   return (
     <div className="absolute inset-0 z-[100] pointer-events-none overflow-hidden">
@@ -2245,7 +2223,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
       {/* Mobile summary and controls fit within the viewport without scrolling. */}
       <div
         ref={hudRef}
-        className={`drive-hud-bottom absolute z-40 pointer-events-none ${isSplitScreenCompact ? 'drive-hud-split-compact' : ''}`}
+        className={`drive-hud-bottom absolute z-40 pointer-events-none ${isTripOverviewOpen ? 'hidden' : ''} ${isSplitScreenCompact ? 'drive-hud-split-compact' : ''}`}
       >
         {roadRecorderEnabled && (
           <button type="button" onClick={onRoadRecorderStatusTap} disabled={roadRecorderStatus !== 'recording'} title={roadRecorderStatus === 'recording' ? 'Show camera preview' : undefined} className={`absolute bottom-full right-2 mb-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide shadow-lg pointer-events-auto disabled:cursor-default ${
@@ -2544,61 +2522,11 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
         </div>
       )}
 
-      {/* Driver-triggered overview: the map is framed by MapLibre while this sheet is open. */}
+      {/* Map-first route overview. The map remains visible and interactive around its compact controls. */}
       {isTripOverviewOpen && (
-        <div className="fixed inset-0 z-[205] flex items-end justify-center bg-slate-950/35 backdrop-blur-[1px] pointer-events-auto" onClick={onCloseTripOverview}>
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-label="Trip overview"
-            className="w-full max-w-lg rounded-t-[2rem] border border-white/15 bg-slate-950/[0.98] p-4 sm:p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-[0_-20px_70px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom-4 duration-200"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-white/20" />
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 text-white shadow-lg shadow-indigo-600/25">
-                  <Route className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-indigo-300">Live trip</p>
-                  <h3 className="truncate text-lg font-black text-white">Trip overview</h3>
-                </div>
-              </div>
-              <button type="button" onClick={onCloseTripOverview} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 text-slate-300 transition-colors hover:bg-white/20 hover:text-white" aria-label="Close trip overview">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="mt-4 grid grid-cols-3 gap-2" aria-label="Remaining trip summary">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-3">
-                <Clock className="mb-1.5 h-4 w-4 text-emerald-300" />
-                <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Arrival</p>
-                <p className="mt-0.5 text-sm font-black text-white">{tripArrivalTime}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-3">
-                <Route className="mb-1.5 h-4 w-4 text-cyan-300" />
-                <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Remaining</p>
-                <p className="mt-0.5 text-sm font-black text-white">{displayDist}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-3">
-                <MapPin className="mb-1.5 h-4 w-4 text-rose-300" />
-                <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Stops</p>
-                <p className="mt-0.5 text-sm font-black text-white">{remainingTripOrder.length}</p>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Destination</p>
-              <div className="mt-1 flex items-center gap-2 text-white">
-                <Flag className="h-4 w-4 shrink-0 text-rose-400 fill-rose-400/20" />
-                <p className="truncate text-sm font-black">{route.destinationName}</p>
-              </div>
-              {route.hasTolls && (
-                <p className="mt-2 text-[10px] font-bold text-amber-300">Includes tolls{route.tollCostEstimate ? ` • ${route.tollCostEstimate}` : ''}</p>
-              )}
-            </div>
-
+        <div className="fixed inset-0 z-[205] pointer-events-none">
+          <div className="absolute left-1/2 top-44 flex -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-1 shadow-xl pointer-events-auto">
+            <span className="rounded-xl bg-indigo-50 px-4 py-2 text-sm font-black text-indigo-700">Map</span>
             <button
               type="button"
               onClick={() => {
@@ -2606,39 +2534,24 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                 setIsAlternativesModalOpen(true);
                 onRecalculateRoutes?.();
               }}
-              className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/35 bg-indigo-400/10 text-xs font-black text-indigo-200 transition-colors hover:bg-indigo-400/20"
+              className="rounded-xl px-4 py-2 text-sm font-black text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Compare routes
+              List
             </button>
+          </div>
 
-            <div className="mt-4">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Next maneuvers</p>
-                <span className="text-[10px] font-bold text-indigo-300">Map shows full route</span>
+          <section role="dialog" aria-label="Trip overview" className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 w-[calc(100%-1.5rem)] max-w-lg -translate-x-1/2 rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_18px_50px_rgba(15,23,42,0.28)] pointer-events-auto animate-in slide-in-from-bottom-4 duration-200">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-3xl font-black tracking-tight text-slate-950">{displayEta}</p>
+                <p className="mt-1 text-base font-bold text-slate-700">{tripArrivalTime} <span className="text-slate-300">•</span> {displayDist}</p>
+                <p className="mt-1 truncate text-sm font-semibold text-slate-600">Via {getRouteRoadNames(route).join(', ') || 'the fastest route'}</p>
               </div>
-              <ol className="space-y-2">
-                {overviewManeuvers.map((maneuver, index) => {
-                  const Maneuver = maneuver.icon;
-                  return (
-                    <li key={`${maneuver.instruction}-${index}`} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5">
-                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${index === 0 ? 'bg-indigo-500 text-white' : 'bg-white/10 text-slate-300'}`}>
-                        <Maneuver className="h-4 w-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-black text-white">{maneuver.instruction}</p>
-                        <p className="mt-0.5 text-[10px] font-bold text-slate-400">{maneuver.detail}</p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
+              <button type="button" onClick={onCloseTripOverview} className="flex h-12 shrink-0 items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-sm font-black text-white shadow-lg shadow-indigo-500/25 transition-transform active:scale-[0.98]">
+                <Navigation className="h-4 w-4 fill-current" />
+                Resume
+              </button>
             </div>
-
-            <button type="button" onClick={onCloseTripOverview} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-sm font-black text-white shadow-lg shadow-indigo-700/25 transition-transform active:scale-[0.98]">
-              <Navigation className="h-4 w-4 fill-current" />
-              Resume navigation
-            </button>
           </section>
         </div>
       )}
