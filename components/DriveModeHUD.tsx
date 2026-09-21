@@ -2226,7 +2226,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
         className={`drive-hud-bottom absolute z-40 pointer-events-none ${isTripOverviewOpen ? 'hidden' : ''} ${isSplitScreenCompact ? 'drive-hud-split-compact' : ''}`}
       >
         {roadRecorderEnabled && (
-          <button type="button" onClick={onRoadRecorderStatusTap} disabled={roadRecorderStatus !== 'recording'} title={roadRecorderStatus === 'recording' ? 'Show camera preview' : undefined} className={`absolute bottom-full right-2 mb-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide shadow-lg pointer-events-auto disabled:cursor-default ${
+          <button type="button" onClick={onRoadRecorderStatusTap} disabled={roadRecorderStatus !== 'recording'} title={roadRecorderStatus === 'recording' ? 'Show camera preview' : undefined} className={`absolute bottom-full left-2 mb-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide shadow-lg pointer-events-auto disabled:cursor-default ${
             roadRecorderStatus === 'recording'
               ? 'border-rose-300 bg-rose-600 text-white'
               : roadRecorderStatus === 'paused'

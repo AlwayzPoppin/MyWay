@@ -361,8 +361,11 @@ public class NativeRoadRecorderPlugin extends Plugin {
         FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24), Gravity.TOP | Gravity.LEFT);
         previewOverlay.addView(badge, badgeParams);
 
-        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(dp(176), dp(118), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        overlayParams.setMargins(dp(12), 0, dp(12), 0);
+        // Keep the camera feedback beside the recording control, above the
+        // drive HUD. This preserves the map's right-side controls and puts
+        // the recorder's two touchpoints in one predictable location.
+        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(dp(176), dp(118), Gravity.LEFT | Gravity.BOTTOM);
+        overlayParams.setMargins(dp(12), 0, dp(12), dp(136));
         root.addView(previewOverlay, overlayParams);
         previewHandler.postDelayed(this::hidePreviewOverlay, 5000);
     }
