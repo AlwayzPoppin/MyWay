@@ -480,7 +480,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 onClick={() => setActiveTab('members')}
                                 className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
                                     activeTab === 'members'
-                                        ? 'bg-indigo-600 text-white shadow-md'
+                                        ? 'brand-gradient text-white shadow-md'
                                         : 'text-slate-400 hover:text-white'
                                 }`}
                             >
@@ -492,7 +492,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 onClick={() => setActiveTab('places')}
                                 className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
                                     activeTab === 'places'
-                                        ? 'bg-indigo-600 text-white shadow-md'
+                                        ? 'brand-gradient text-white shadow-md'
                                         : 'text-slate-400 hover:text-white'
                                 }`}
                             >
@@ -507,14 +507,14 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                                 }}
                                 className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
                                     activeTab === 'activity'
-                                        ? 'bg-indigo-600 text-white shadow-md'
+                                        ? 'brand-gradient text-white shadow-md'
                                         : 'text-slate-400 hover:text-white'
                                 }`}
                             >
                                 <FileText className="w-3.5 h-3.5 shrink-0" />
                                 <span>LOG</span>
                                 {unreadActivityCount > 0 && (
-                                    <span className="min-w-4 rounded-full bg-violet-500 px-1.5 py-0.5 text-[9px] leading-none text-white">
+                                    <span className="min-w-4 rounded-full bg-[#4F63E7] px-1.5 py-0.5 text-[9px] leading-none text-white">
                                         {unreadActivityCount > 99 ? '99+' : unreadActivityCount}
                                     </span>
                                 )}
@@ -523,7 +523,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
                     </div>
 
                     {/* ─── TAB CONTENT (SCROLLABLE) ─── */}
-                    <div 
+                    <div
                         className="flex-1 overflow-y-auto no-scrollbar space-y-3.5 pb-6"
                         onScroll={dismissKeyboard}
                         onTouchMove={dismissKeyboard}

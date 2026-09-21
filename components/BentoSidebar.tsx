@@ -234,7 +234,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                         title={pendingOperationsReviewCount && pendingOperationsReviewCount > 0 ? `Settings — ${pendingOperationsReviewCount} reviews awaiting moderation` : 'Settings'}
                     >
                         <Settings className="w-4 h-4 text-slate-400" />
-                        {pendingOperationsReviewCount && pendingOperationsReviewCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-violet-600 text-white text-[9px] font-black grid place-items-center ring-2 ring-white" aria-label={`${pendingOperationsReviewCount} reviews awaiting moderation`}>{pendingOperationsReviewCount > 99 ? '99+' : pendingOperationsReviewCount}</span>}
+                        {pendingOperationsReviewCount && pendingOperationsReviewCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-[#4F63E7] text-white text-[9px] font-black grid place-items-center ring-2 ring-white" aria-label={`${pendingOperationsReviewCount} reviews awaiting moderation`}>{pendingOperationsReviewCount > 99 ? '99+' : pendingOperationsReviewCount}</span>}
                     </button>
                 )}
                 {/* Collapse Toggle */}
@@ -289,8 +289,8 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                 <button
                                     onClick={() => setSidebarTab('members')}
                                     className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                                        sidebarTab === 'members' 
-                                            ? 'bg-indigo-600 text-white shadow-md' 
+                                        sidebarTab === 'members'
+                                            ? 'brand-gradient text-white shadow-md'
                                             : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                                     }`}
                                 >
@@ -299,8 +299,8 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                 <button
                                     onClick={() => setSidebarTab('places')}
                                     className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                                        sidebarTab === 'places' 
-                                            ? 'bg-indigo-600 text-white shadow-md' 
+                                        sidebarTab === 'places'
+                                            ? 'brand-gradient text-white shadow-md'
                                             : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                                     }`}
                                 >
@@ -312,14 +312,14 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                         onLogViewed?.();
                                     }}
                                     className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                                        sidebarTab === 'log' 
-                                            ? 'bg-indigo-600 text-white shadow-md' 
+                                        sidebarTab === 'log'
+                                            ? 'brand-gradient text-white shadow-md'
                                             : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                                     }`}
                                 >
                                     <span>Log</span>
                                     {unreadActivityCount > 0 && (
-                                        <span className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-violet-500 px-1.5 py-0.5 text-[8px] leading-none text-white">
+                                        <span className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-[#4F63E7] px-1.5 py-0.5 text-[8px] leading-none text-white">
                                             {unreadActivityCount > 99 ? '99+' : unreadActivityCount}
                                         </span>
                                     )}
@@ -544,7 +544,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                 borderColor: selectedId === member.id ? memberCircleHex : `${memberCircleHex}55`,
                                                 boxShadow: `inset 4px 0 0 ${memberCircleHex}`
                                             } : undefined}
-                                            title={isCollapsed 
+                                            title={isCollapsed
                                                 ? (isUnresolved
                                                     ? `${member.name} • Locating…`
                                                     : member.currentTrip
@@ -552,7 +552,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                         : member.name)
                                                 : undefined}
                                         >
-                                            <div 
+                                            <div
                                                 className={`cursor-pointer shrink-0 transition-transform group-hover:scale-105 active:scale-95 flex items-center justify-center relative ${
                                                     isCollapsed ? 'w-10' : 'w-12'
                                                 }`}
@@ -1183,7 +1183,7 @@ const BentoSidebar: React.FC<BentoSidebarProps> = ({
                                                                 ? 'glass-card hover:bg-white/10'
                                                                 : 'bg-white border-slate-100 hover:border-slate-200 shadow-sm'
                                                         }`}
-                                                    title={isCollapsed 
+                                                    title={isCollapsed
                                                         ? `${place.name}${membersInside.length > 0 ? ` • ${membersInside.length} here` : ''}${membersEnRoute.length > 0 ? ` • ${membersEnRoute.length} en route` : ''}`
                                                         : undefined}
                                                 >

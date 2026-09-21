@@ -119,7 +119,7 @@ const getEffectiveMembersWithSelf = (
             safetyScore: 100,
             pathHistory: [],
             driveEvents: [],
-            circleColor: '#8b5cf6'
+            circleColor: '#354FCF'
         });
     }
 
@@ -139,15 +139,15 @@ const computePlaceOccupants = (
     const placeOccupantsMap = new Map<string, FamilyMember[]>();
     const clusteredIntoPlaceMemberIds = new Set<string>();
 
-    const savedPlaces = (places || []).filter(p => 
-        p && 
-        p.location && 
-        typeof p.location.lat === 'number' && 
-        typeof p.location.lng === 'number' && 
+    const savedPlaces = (places || []).filter(p =>
+        p &&
+        p.location &&
+        typeof p.location.lat === 'number' &&
+        typeof p.location.lng === 'number' &&
         !(p.location.lat === 0 && p.location.lng === 0) &&
-        !p.isAmbient && 
+        !p.isAmbient &&
         p.isSaved !== false &&
-        p.type !== 'search_result' && 
+        p.type !== 'search_result' &&
         !p.id?.startsWith('building_') &&
         !p.id?.startsWith('comm_bld_') &&
         !p.id?.startsWith('place_bld_') &&
@@ -155,8 +155,8 @@ const computePlaceOccupants = (
         !p.id?.startsWith('rooftop_') &&
         !(p.id && (
             p.id.startsWith('search-') ||
-            p.id.startsWith('photon-') || 
-            p.id.startsWith('nominatim-') || 
+            p.id.startsWith('photon-') ||
+            p.id.startsWith('nominatim-') ||
             p.id.startsWith('google-') ||
             p.id.startsWith('overpass-') ||
             p.id.startsWith('temp-') ||
@@ -480,7 +480,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         if (rebootTimeoutRef.current) return;
         rebootTimeoutRef.current = setTimeout(() => {
             rebootTimeoutRef.current = null;
-            
+
             // Double rAF ensures the browser compositor and layout engine are fully unthrottled
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
@@ -566,7 +566,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     // Prepare route polyline coordinates for map rendering
     const routeCoords = useMemo<Location[]>(() => {
         if (!activeRoute) return [];
-        
+
         // Use the full road-following geometry from OSRM if available
         if (activeRoute.routeGeometry && activeRoute.routeGeometry.length > 0) {
             return activeRoute.routeGeometry.map((coord: any) => {
@@ -589,7 +589,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             });
         }
         if (activeRoute.destinationLoc) coords.push(activeRoute.destinationLoc);
-        
+
         return coords;
     }, [activeRoute?.id, activeRoute?.destinationName, activeRoute?.totalDistance, activeRoute?.routeGeometry, activeRoute?.steps]);
 
@@ -924,7 +924,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         const majorLabelsId = 'myway-road-labels-major';
         const minorLabelsId = 'myway-road-labels-minor';
         const defaultRoadLayers = ['roadname_minor', 'roadname_sec', 'roadname_pri', 'roadname_major'];
-        
+
         // High-Contrast Palette: Crisp warm ivory (#fef9c3) on Dark with 2.8px Pure Black Halo (#000000, blur 0.5px)
         const roadTextColor = isWarmLightSkin ? '#111827' : isCarbonAmber ? '#fef9c3' : '#ffffff';
         const roadHaloColor = isWarmLightSkin ? '#ffffff' : '#000000';
@@ -983,8 +983,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     filter: [
                         'any',
                         ['in', ['get', 'class'], ['literal', ['motorway', 'trunk', 'primary', 'secondary']]],
-                        ['all', 
-                            ['has', 'name'], 
+                        ['all',
+                            ['has', 'name'],
                             ['!', ['in', ['get', 'class'], ['literal', ['minor', 'service', 'residential', 'track', 'path', 'unclassified', 'tertiary']]]]
                         ]
                     ],
@@ -1103,7 +1103,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                     !id.includes('poi') && !id.includes('park');
                 const isLocalityLabel = id.includes('city') || id.includes('town') ||
                     id.includes('village') || id.includes('suburb') || id.includes('neighborhood');
-                const isPlaceOrPoi = isEmergency || isGasOrStore || id.includes('poi') || id.includes('place') || id.includes('park') || 
+                const isPlaceOrPoi = isEmergency || isGasOrStore || id.includes('poi') || id.includes('place') || id.includes('park') ||
                                      id.includes('school') || id.includes('suburb') || id.includes('neighborhood');
                 try {
                     if (isRegionalPlace) {
@@ -1636,16 +1636,16 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             ] : []
         };
 
-        const primaryRouteColor = isCarbonAmber 
+        const primaryRouteColor = isCarbonAmber
             ? '#00f2fe' // Vibrant Electric Cyan â€” maximum contrast against amber/orange roads
             : theme === 'dark'
                 ? '#38bdf8' // Luminous Electric Blue in Dark Mode
                 : '#2563eb'; // Vibrant Modern Electric Blue in Daylight
 
-        const glowColor = isCarbonAmber 
+        const glowColor = isCarbonAmber
             ? '#06b6d4' // Electric cyan luminous underglow accent
             : theme === 'dark'
-                ? '#38bdf8' 
+                ? '#38bdf8'
                 : '#60a5fa'; // Soft radiant electric blue halo
 
         const casingColor = isCarbonAmber
@@ -1972,7 +1972,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 map.current.off('idle', onMapData);
             }
         };
-    }, [syncRouteLayers, isMapReady, styleVersion]); 
+    }, [syncRouteLayers, isMapReady, styleVersion]);
 
     // Interactive selection for alternative route lines on map
     useEffect(() => {
@@ -1985,8 +1985,8 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
             const routeId = clickedFeature.properties?.routeId;
             const routeSummary = clickedFeature.properties?.summary;
 
-            const selected = (alternativeRoutes || []).find(r => 
-                (r.id && r.id === routeId) || 
+            const selected = (alternativeRoutes || []).find(r =>
+                (r.id && r.id === routeId) ||
                 (r.summary && r.summary === routeSummary)
             );
             if (selected && onSelectAlternativeRoute) {
@@ -2016,7 +2016,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 } catch (e) { /* ignore cleanup on unmounted map */ }
             }
         };
-    }, [isMapReady, alternativeRoutes, onSelectAlternativeRoute]); 
+    }, [isMapReady, alternativeRoutes, onSelectAlternativeRoute]);
 
     // ==========================================
     // UNIFIED DESTINATION PIN MARKER (HIGH-VISIBILITY DOM MARKER)
@@ -2127,21 +2127,21 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         width: 56px;
                         height: 56px;
                         border-radius: 50%;
-                        background: rgba(168, 85, 247, 0.25);
-                        border: 2px solid rgba(168, 85, 247, 0.65);
+                        background: rgba(53, 79, 207, 0.22);
+                        border: 2px solid rgba(53, 79, 207, 0.62);
                         animation: marker-steady-pulse 2.2s ease-in-out infinite;
                         pointer-events: none;
                     "></div>
-                    
+
                     <!-- Core Pin Badge -->
                     <div style="
                         position: relative;
                         width: 40px;
                         height: 40px;
                         border-radius: 50%;
-                        background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
+                        background: linear-gradient(135deg, #354FCF 0%, #2189E8 100%);
                         border: 3px solid #ffffff;
-                        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(168, 85, 247, 0.7);
+                        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(33, 137, 232, 0.52);
                         display: flex;
                         align-items: center;
                         justify-content: center;
@@ -2175,7 +2175,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                             </g>
                         </svg>
                     </div>
-                    
+
                     <!-- Pin Needle Pointer (Seamlessly anchored to pill with matching border & placeColor) -->
                     <svg width="14" height="9" viewBox="0 0 14 9" style="
                         display: block;
@@ -2184,7 +2184,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                         filter: drop-shadow(0 2px 4px rgba(0,0,0,0.45));
                         overflow: visible;
                     ">
-                        <polygon points="1,0 7,8 13,0" fill="#7c3aed" />
+                        <polygon points="1,0 7,8 13,0" fill="#2189E8" />
                         <polyline points="1,0 7,8 13,0" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
 
@@ -2464,7 +2464,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
             try {
                 map.current.fitBounds(bounds, {
-                    padding: isMobileRef.current 
+                    padding: isMobileRef.current
                         ? { top: 60, bottom: 260, left: 30, right: 30 }
                         : { top: 80, bottom: 80, left: 320, right: 80 },
                     duration: 900,
@@ -2662,7 +2662,7 @@ case 'speed_bump':
                     }
                 })();
 
-                const label = 
+                const label =
                     inc.type === 'police' ? 'Police' :
                     inc.type === 'hazard' ? 'Hazard' :
                     inc.type === 'shoulder' ? 'Shoulder' :
@@ -2677,7 +2677,7 @@ case 'speed_bump':
                     inc.type === 'signal_out' ? 'Signal Out' :
                     inc.type === 'stop_sign' ? 'Stop Sign' : inc.type === 'speed_bump' ? (inc.verified ? 'Verified Speed Bump' : 'Speed Bump') : 'Alert';
 
-                const color = 
+                const color =
                     inc.type === 'police' ? '#3b82f6' :
                     inc.type === 'hazard' ? '#f59e0b' :
                     inc.type === 'shoulder' ? '#a855f7' :
@@ -2990,8 +2990,8 @@ case 'speed_bump':
                             cursor: ${isSelfOcc ? 'default' : 'pointer'};
                             transition: transform 0.15s ease;
                         ">
-                            ${hasAvatar 
-                                ? `<img src="${occ.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` 
+                            ${hasAvatar
+                                ? `<img src="${occ.avatar}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />`
                                 : ''}
                             <span style="${hasAvatar ? 'display: none;' : 'display: flex;'} font-weight: 900; color: #ffffff; font-size: 11px;">${occInitial}</span>
                             <div style="position: absolute; bottom: 0; right: 0; width: 6px; height: 6px; border-radius: 50%; background: ${occBorderColor}; border: 1px solid #ffffff;"></div>
@@ -3028,7 +3028,7 @@ case 'speed_bump':
                         padding: 2px 4px 2px 4px;
                         border-radius: 9999px;
                         background: ${isDark ? 'rgba(15, 23, 42, 0.94)' : 'rgba(255, 255, 255, 0.96)'};
-                        border: 1.5px solid ${isHome ? '#8b5cf6' : placeColor};
+                        border: 1.5px solid ${isHome ? '#354FCF' : placeColor};
                         box-shadow: 0 4px 12px rgba(0,0,0,0.45);
                         z-index: 15;
                         animation: fadeIn 0.2s ease-out;
@@ -3095,7 +3095,7 @@ case 'speed_bump':
             // - Hazards (incidents/reports -> minzoom 0)
             const isEmergency = place.type === 'hospital' || place.type === 'emergency' || place.type === 'police' || place.type === 'fire_station';
             const isGasOrStore = place.type === 'gas' || place.type === 'grocery' || (place.type as any) === 'convenience' || place.type === 'coffee' || place.type === 'food';
-            
+
             let markerMinZoom = 0;
             if (isAmbient && !isHome && !isSelected && !isSearchResult && occupants.length === 0) {
                 markerMinZoom = isEmergency ? 12.5 : 13.5;
@@ -3131,13 +3131,13 @@ case 'speed_bump':
             // Visual Offset for Identical Coordinates:
             // If a reactive search pin's coordinate is an exact match to a savedPlace (like Home),
             // apply a slight CSS offset translate(10px, -10px) so it peeks out from behind the saved pin.
-            const referenceSavedPlaces = (savedPlaces && savedPlaces.length > 0) 
-                ? savedPlaces 
+            const referenceSavedPlaces = (savedPlaces && savedPlaces.length > 0)
+                ? savedPlaces
                 : places.filter(p => p.type !== 'search_result' && !p.id.startsWith('photon-') && !p.id.startsWith('nominatim-') && !p.id.startsWith('google-'));
 
             const isOverlappingSaved = Boolean(
-                isSearchResult && 
-                markerLoc && 
+                isSearchResult &&
+                markerLoc &&
                 referenceSavedPlaces.some(sp => {
                     if (!sp || sp.id === place.id) return false;
                     const spLoc = isHomePlace(sp) && userProfile?.preciseHomeLocation && typeof userProfile.preciseHomeLocation.lat === 'number' && !(userProfile.preciseHomeLocation.lat === 0 && userProfile.preciseHomeLocation.lng === 0)
@@ -3858,8 +3858,8 @@ case 'speed_bump':
                 entranceBoxFeatures.push({
                     type: 'Feature' as const,
                     id: `${place.id}-entrance-box`,
-                    properties: { 
-                        id: `${place.id}-entrance-box`, 
+                    properties: {
+                        id: `${place.id}-entrance-box`,
                         placeId: place.id,
                         name: place.name ? `${place.name} (${zoneLabel})` : zoneLabel,
                         isOccupied: isOccupied,
@@ -3888,8 +3888,8 @@ case 'speed_bump':
                 entranceBoxFeatures.push({
                     type: 'Feature' as const,
                     id: `${place.id}-entrance-box`,
-                    properties: { 
-                        id: `${place.id}-entrance-box`, 
+                    properties: {
+                        id: `${place.id}-entrance-box`,
                         placeId: place.id,
                         name: place.name ? `${place.name} (${zoneLabel})` : zoneLabel,
                         isOccupied: isOccupied,
@@ -3908,8 +3908,8 @@ case 'speed_bump':
                 hysteresisFeatures.push({
                     type: 'Feature' as const,
                     id: `${place.id}-hysteresis`,
-                    properties: { 
-                        id: `${place.id}-hysteresis`, 
+                    properties: {
+                        id: `${place.id}-hysteresis`,
                         placeId: place.id,
                         name: `${place.name} (+5m Driveway Buffer)`,
                         isOccupied: isOccupied
@@ -3940,8 +3940,8 @@ case 'speed_bump':
                 entranceBoxFeatures.push({
                     type: 'Feature' as const,
                     id: `${place.id}-entrance-box`,
-                    properties: { 
-                        id: `${place.id}-entrance-box`, 
+                    properties: {
+                        id: `${place.id}-entrance-box`,
                         placeId: place.id,
                         name: place.name ? `${place.name} (${zoneLabel})` : zoneLabel,
                         isOccupied: isOccupied,
@@ -3959,8 +3959,8 @@ case 'speed_bump':
                 hysteresisFeatures.push({
                     type: 'Feature' as const,
                     id: `${place.id}-hysteresis`,
-                    properties: { 
-                        id: `${place.id}-hysteresis`, 
+                    properties: {
+                        id: `${place.id}-hysteresis`,
                         placeId: place.id,
                         name: `${place.name} (+5m Buffer)`,
                         isOccupied: isOccupied
@@ -4008,11 +4008,11 @@ case 'speed_bump':
         if (source) {
             source.setData(geojsonData);
             if (map.current.getLayer(`${sourceId}-fill`)) {
-                map.current.setPaintProperty(`${sourceId}-fill`, 'fill-color', '#8b5cf6');
+                map.current.setPaintProperty(`${sourceId}-fill`, 'fill-color', '#354FCF');
                 map.current.setPaintProperty(`${sourceId}-fill`, 'fill-opacity', theme === 'dark' ? 0.12 : 0.10);
             }
             if (map.current.getLayer(`${sourceId}-outline`)) {
-                map.current.setPaintProperty(`${sourceId}-outline`, 'line-color', '#8b5cf6');
+                map.current.setPaintProperty(`${sourceId}-outline`, 'line-color', '#354FCF');
                 map.current.setPaintProperty(`${sourceId}-outline`, 'line-width', 1.5);
                 map.current.setPaintProperty(`${sourceId}-outline`, 'line-opacity', 0.6);
             }
@@ -4027,7 +4027,7 @@ case 'speed_bump':
                 type: 'fill',
                 source: sourceId,
                 paint: {
-                    'fill-color': '#8b5cf6',
+                    'fill-color': '#354FCF',
                     'fill-opacity': theme === 'dark' ? 0.12 : 0.10
                 }
             });
@@ -4037,7 +4037,7 @@ case 'speed_bump':
                 type: 'line',
                 source: sourceId,
                 paint: {
-                    'line-color': '#8b5cf6',
+                    'line-color': '#354FCF',
                     'line-width': 1.5,
                     'line-opacity': 0.6
                 }
@@ -4454,7 +4454,7 @@ case 'speed_bump':
                     imageUrl: r.imageUrl || '',
                     trustScore: r.trustScore,
                     reporterName: r.reporterName || 'Community Driver',
-                    color: r.reportType === 'hazard' ? '#ef4444' : r.reportType === 'entrance_fix' ? '#10b981' : '#8b5cf6',
+                    color: r.reportType === 'hazard' ? '#ef4444' : r.reportType === 'entrance_fix' ? '#10b981' : '#354FCF',
                     icon: r.reportType === 'hazard' ? 'âš ï¸' : r.reportType === 'entrance_fix' ? 'ðŸšª' : 'ðŸ“Œ',
                     label: `${r.placeName || 'Community Edit'} (â­${r.trustScore})`
                 },
@@ -4566,7 +4566,7 @@ case 'speed_bump':
                         ${props.details ? `<p style="font-size: 11px; color: #475569; margin: 0 0 6px 0; line-height: 1.3;">${props.details}</p>` : ''}
                         ${props.entranceNotes ? `<p style="font-size: 11px; font-weight: 600; color: #059669; margin: 0 0 6px 0;">ðŸšª Note: ${props.entranceNotes}</p>` : ''}
                         ${props.imageUrl ? `<img src="${props.imageUrl}" style="width: 100%; height: 90px; object-fit: cover; border-radius: 8px; margin-bottom: 8px;" />` : ''}
-                        
+
                         <div style="font-size: 10px; color: #64748b; margin-bottom: 8px;">
                             Reported by <b>${props.reporterName || 'Driver'}</b>
                         </div>
@@ -4988,7 +4988,7 @@ case 'speed_bump':
 
         // Filter to members eligible for rendering (strictly exclude any building IDs)
         // Standalone member markers are not suppressed by saved place geofence occupancy
-        const unclusteredMembers = dedupedMembers.filter(m => 
+        const unclusteredMembers = dedupedMembers.filter(m =>
             !m.id.startsWith('bld_') &&
             !m.id.startsWith('building_') &&
             !m.id.startsWith('comm_bld_') &&
@@ -5239,9 +5239,9 @@ case 'speed_bump':
                     : isCarbonAmber
                         ? '#f59e0b'
                         : isBlurred
-                        ? '#a855f7' 
+                        ? '#a855f7'
                         : isInvisible
-                            ? '#38bdf8' 
+                            ? '#38bdf8'
                             : markerVisuals.ringColor;
 
                 const initials = (member.name || 'M').charAt(0).toUpperCase();
@@ -5249,10 +5249,10 @@ case 'speed_bump':
                     <div class="myway-nav-puck-container select-none" style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
                         <!-- Dynamic Forward Vision Headlight Beam (Electric Cyan) -->
                         <div class="myway-puck-beam" style="position: absolute; top: -38px; left: 50%; transform: translateX(-50%); transform-origin: bottom center; width: 56px; height: 60px; background: radial-gradient(ellipse at bottom, ${isCarbonAmber ? 'rgba(0, 242, 254, 0.65)' : 'rgba(56, 189, 248, 0.45)'} 0%, ${isCarbonAmber ? 'rgba(6, 182, 212, 0.25)' : 'rgba(56, 189, 248, 0.12)'} 50%, transparent 80%); clip-path: polygon(50% 100%, 0% 0%, 100% 0%); pointer-events: none;"></div>
-                        
+
                         <!-- Radar Pulse Beacon (Electric Cyan) -->
                         <div style="position: absolute; inset: 6px; border-radius: 50%; background: ${isCarbonAmber ? '#00f2fe' : isLightSkin ? '#0284c7' : circleColor}; opacity: 0.4; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; box-shadow: ${isCarbonAmber ? '0 0 16px #00f2fe' : 'none'};"></div>
-                        
+
                         <!-- 3D Navigation Vehicle Arrow Puck with Solid Black Casing -->
                         <div class="myway-puck-arrow" style="position: relative; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.8));">
                             <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
@@ -5950,27 +5950,27 @@ case 'speed_bump':
 
     return (
         <div className="relative w-full h-full overflow-hidden select-none">
-            <div 
-                ref={mapContainer} 
+            <div
+                ref={mapContainer}
                 className={`absolute inset-0 w-full h-full ${
                     isNavigating ? 'cursor-none' : ''
                 }`}
-                style={{ 
+                style={{
                     background: theme === 'dark' ? '#0f172a' : '#f1f5f9',
                     // AUDIT FIX: Ghost Mode Ambiguity Indicator
                     // Outer glow when in privacy mode
-                    boxShadow: !members.find(m => m.id === 'demo-you')?.locationSharing 
-                        ? 'inset 0 0 100px rgba(217, 70, 239, 0.4)' 
+                    boxShadow: !members.find(m => m.id === 'demo-you')?.locationSharing
+                        ? 'inset 0 0 100px rgba(217, 70, 239, 0.4)'
                         : 'none'
-                }} 
+                }}
             />
 
             {/* Unified Map Controls & Alerts Tool Stack */}
-            <div 
+            <div
                 className={`absolute z-40 pointer-events-auto flex flex-col items-center gap-3 transition-all duration-300 map-controls-cluster ${isMobile ? 'map-controls-mobile' : ''} ${isNavigating ? 'map-controls-navigating' : ''} ${
                     isMobile
-                        ? (isNavigating 
-                            ? 'right-[max(0.875rem,env(safe-area-inset-right,0px))] bottom-[calc(14rem+env(safe-area-inset-bottom,0px))]' 
+                        ? (isNavigating
+                            ? 'right-[max(0.875rem,env(safe-area-inset-right,0px))] bottom-[calc(14rem+env(safe-area-inset-bottom,0px))]'
                             : 'right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[calc(12rem+env(safe-area-inset-bottom,0px))] sm:bottom-52')
                         : (isNavigating ? 'right-6 bottom-32' : 'right-6 bottom-36')
                 } landscape:!bottom-[max(6rem,calc(env(safe-area-inset-bottom,0px)+5rem))] landscape:!top-auto landscape:!right-[max(1rem,calc(env(safe-area-inset-right,0px)+0.75rem))]`}
@@ -6012,7 +6012,7 @@ case 'speed_bump':
                                 }}
                                 className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer ${
                                     mapStyle === opt.id
-                                        ? 'bg-purple-600 text-white ring-2 ring-purple-400 shadow-md scale-105'
+                                        ? 'brand-gradient text-white ring-2 ring-blue-300 shadow-md scale-105'
                                         : 'bg-gray-50 border border-gray-100 text-gray-700 hover:bg-gray-100'
                                 }`}
                                 title={opt.name}
@@ -6054,8 +6054,8 @@ case 'speed_bump':
                         onPointerLeave={handleStylePointerLeave}
                         title="Tap: Toggle 3D/2D View â€¢ Hold: Change Map Layer"
                         className={`w-10 h-10 flex flex-col items-center justify-center transition-all active:scale-95 select-none cursor-pointer ${
-                            is3DMode 
-                                ? 'bg-white text-orange-500 font-bold hover:bg-orange-50/50' 
+                            is3DMode
+                                ? 'bg-white text-orange-500 font-bold hover:bg-orange-50/50'
                                 : 'bg-white text-gray-700 hover:text-gray-900 hover:bg-gray-50'
                         }`}
                     >

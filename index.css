@@ -2,6 +2,10 @@
 
 /* Design Tokens & Theme Variables */
 :root {
+    --brand-indigo: #354FCF;
+    --brand-blue: #2189E8;
+    --brand-soft: #EEF3FF;
+    --brand-border: #C7D7FA;
     --panel-bg: rgba(15, 23, 42, 0.78);
     --panel-bg-solid: #0f172a;
     --panel-border: rgba(255, 255, 255, 0.1);
@@ -292,6 +296,14 @@ body.theme-default .glass-card:hover {
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22);
   backdrop-filter: blur(20px);
 }
+
+/* My Way brand system: connected indigo, guided by blue. */
+.brand-gradient { background: linear-gradient(135deg, var(--brand-indigo), var(--brand-blue)); }
+.brand-gradient:hover { background: linear-gradient(135deg, #2944BD, #1678D6); }
+.brand-soft { background: var(--brand-soft); border-color: var(--brand-border); color: var(--brand-indigo); }
+.brand-soft:hover { background: #E3ECFF; border-color: #AFC4F5; }
+.brand-icon-control { color: var(--brand-indigo); background: #F4F7FF; border-color: var(--brand-border); }
+.brand-icon-control:hover { color: #2944BD; background: #EAF1FF; }
 
 .drive-hud-tier-telemetry {
   display: flex;

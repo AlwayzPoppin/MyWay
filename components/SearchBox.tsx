@@ -4,22 +4,22 @@ import { searchHistoryService, RecentSearchItem } from '../services/searchHistor
 import { searchPlacesText } from '../services/placesService';
 import { predictiveRoutingService, PredictedDestination } from '../services/predictiveRoutingService';
 import BrandIcon from './BrandIcon';
-import { 
-  History, 
-  Search, 
-  X, 
-  Navigation, 
+import {
+  History,
+  Search,
+  X,
+  Navigation,
   Navigation2,
   LocateFixed,
-  Star, 
-  Sparkles, 
-  Zap, 
-  Building2, 
-  Flame, 
-  Compass, 
-  Fuel, 
-  Coffee, 
-  Utensils, 
+  Star,
+  Sparkles,
+  Zap,
+  Building2,
+  Flame,
+  Compass,
+  Fuel,
+  Coffee,
+  Utensils,
   ShoppingCart,
   MapPin,
   Check
@@ -94,16 +94,16 @@ function extractBranchDistinction(
 ): BranchDistinction {
   const displayName = (place.name || place.query || '').trim();
   const cleanName = displayName.toLowerCase();
-  
+
   // Detect if this is a franchise / multi-branch query where 2+ results share the same brand/name
   const matchingCount = allPlaces.filter(p => {
     const otherName = (p.name || p.query || '').trim().toLowerCase();
     if (!otherName || !cleanName) return false;
-    return otherName === cleanName || 
+    return otherName === cleanName ||
       (cleanName.length > 3 && otherName.includes(cleanName)) ||
       (otherName.length > 3 && cleanName.includes(otherName));
   }).length;
-  
+
   // Exclude street addresses and roads from multi-branch franchise badges
   const isAddressOrStreet = /^\d+|\b(st|street|rd|road|dr|drive|ave|avenue|blvd|boulevard|lane|ln|ct|court|pkwy|parkway|hwy|highway|way|circle|cir)\b/i.test(displayName);
   const isMultiBranch = !isAddressOrStreet && matchingCount > 1;
@@ -113,7 +113,7 @@ function extractBranchDistinction(
 
   if (place.description) {
     const rawParts = place.description.split(',').map(s => s.trim()).filter(Boolean);
-    
+
     // Filter out parts that are essentially the place name
     const addressParts = rawParts.filter(part => {
       const partLower = part.toLowerCase();
@@ -139,7 +139,7 @@ function extractBranchDistinction(
 
   // Calculate distance
   const dist = place.location ? getDistanceMiles(userLoc, place.location) : null;
-  
+
   // Format compact badge: e.g. "0.4 mi • Main St"
   let compactBadge = '';
   if (dist && street) {
@@ -381,8 +381,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         }
 
         // Ensure live coordinates are passed to geocoder
-        let loc = focusLoc || ((userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && userLocation.lat !== 0 && userLocation.lng !== 0 && !isNaN(userLocation.lat) && !isNaN(userLocation.lng)) 
-          ? userLocation 
+        let loc = focusLoc || ((userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && userLocation.lat !== 0 && userLocation.lng !== 0 && !isNaN(userLocation.lat) && !isNaN(userLocation.lng))
+          ? userLocation
           : undefined);
         if (!loc && typeof window !== 'undefined' && window.localStorage) {
           try {
@@ -396,7 +396,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           } catch (e) {}
         }
         const results = await searchPlacesText(trimmed, loc);
-        
+
         // Discard result if user has typed a newer query in the meantime
         if (searchRequestIdRef.current !== currentRequestId) {
           return;
@@ -406,7 +406,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
         // NEVER drop neighboring addresses just because their coordinates are close to a saved place!
         const combined = [
           ...matchingSaved,
-          ...results.filter(r => !matchingSaved.some(s => 
+          ...results.filter(r => !matchingSaved.some(s =>
             s.id === r.id ||
             (s.name.trim().toLowerCase() === r.name.trim().toLowerCase() && s.location && r.location && getNumericMiles(s.location, r.location) < 0.025) ||
             (s.address && r.address && s.address.trim().toLowerCase() === r.address.trim().toLowerCase())
@@ -466,7 +466,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           const isWithinSpatialBound = hasExplicitCityOrState || distToMatch <= 45 || !loc;
 
           if (hasHouseMatch && isWithinSpatialBound && topMatch.location && typeof topMatch.location.lat === 'number' && typeof topMatch.location.lng === 'number') {
-            const isDifferent = !selectedPlace || 
+            const isDifferent = !selectedPlace ||
               selectedPlace.id !== topMatch.id ||
               (selectedPlace.location && (Math.abs(selectedPlace.location.lat - topMatch.location.lat) > 0.00005 || Math.abs(selectedPlace.location.lng - topMatch.location.lng) > 0.00005));
 
@@ -490,7 +490,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
   const filteredHistory = useMemo(() => {
     if (!query.trim()) return history.slice(0, 8);
     const qLower = query.toLowerCase().trim();
-    return history.filter(item => 
+    return history.filter(item =>
       item.query.toLowerCase().includes(qLower) ||
       (item.name && item.name.toLowerCase().includes(qLower)) ||
       (item.description && item.description.toLowerCase().includes(qLower))
@@ -603,16 +603,16 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
   const isPlaceSaved = useMemo(() => {
     if (selectedPlace) {
-      return (userPlaces || []).some(up => 
+      return (userPlaces || []).some(up =>
         (up.id && selectedPlace.id && up.id === selectedPlace.id) ||
-        (selectedPlace.location && up.location && 
+        (selectedPlace.location && up.location &&
          Math.abs(up.location.lat - selectedPlace.location.lat) < 0.0001 &&
          Math.abs(up.location.lng - selectedPlace.location.lng) < 0.0001) ||
         (up.name && selectedPlace.name && up.name.toLowerCase().trim() === selectedPlace.name.toLowerCase().trim())
       );
     }
     if (query.trim()) {
-      return (userPlaces || []).some(up => 
+      return (userPlaces || []).some(up =>
         up.name.toLowerCase().trim() === query.toLowerCase().trim() ||
         (up.address && up.address.toLowerCase().includes(query.toLowerCase().trim()))
       );
@@ -706,7 +706,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
           {/* "Go" Button */}
           <button
             type="submit"
-            className="w-11 h-11 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white flex items-center justify-center p-2.5 sm:p-3 shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:scale-105 active:scale-95 transition-all cursor-pointer group"
+            className="w-11 h-11 shrink-0 rounded-2xl brand-gradient text-white flex items-center justify-center p-2.5 sm:p-3 shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:scale-105 active:scale-95 transition-all cursor-pointer group"
             title={selectedPlace || query ? "Start Navigation" : "Search Destination"}
           >
             <Navigation2 className="w-5 h-5 shrink-0 fill-current transition-transform group-hover:scale-110 group-hover:translate-x-0.5" />
@@ -722,8 +722,8 @@ const SearchBox: React.FC<SearchBoxProps> = ({
               type="button"
               onClick={onLocate}
               className={`w-11 h-11 rounded-2xl flex items-center justify-center p-2.5 sm:p-3 transition-all border cursor-pointer active:scale-95 hover:scale-105 group
-                ${theme === 'dark' 
-                  ? 'bg-white/5 border-white/10 text-slate-300 hover:text-purple-400 hover:bg-purple-500/10 hover:border-purple-500/30 active:bg-purple-500/20 active:text-purple-300 shadow-sm' 
+                ${theme === 'dark'
+                  ? 'bg-white/5 border-white/10 text-slate-300 hover:text-purple-400 hover:bg-purple-500/10 hover:border-purple-500/30 active:bg-purple-500/20 active:text-purple-300 shadow-sm'
                   : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-purple-600 hover:bg-purple-50 hover:border-purple-200 active:bg-slate-200 active:text-purple-700 shadow-sm'}`}
               title="Current Location"
             >
@@ -744,12 +744,12 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                       : 'bg-amber-50 border-amber-300 text-amber-500 hover:bg-amber-100 hover:border-amber-400 active:bg-amber-200 shadow-sm shadow-amber-500/10')}`}
               title={isPlaceSaved ? "Saved Place (in Favorites)" : "Saved Places & Favorites"}
             >
-              <Star 
+              <Star
                 className={`w-5 h-5 shrink-0 transition-transform group-hover:scale-110 drop-shadow-sm ${
                   isPlaceSaved
                     ? 'fill-amber-300 text-amber-500 dark:fill-amber-300 dark:text-amber-200'
                     : 'fill-amber-400 text-amber-500 dark:fill-amber-400 dark:text-amber-400'
-                }`} 
+                }`}
               />
             </button>
           )}
@@ -796,7 +796,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                     onClick={() => setActiveTab('suggestions')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-black tracking-wide transition-all flex items-center gap-1.5 shrink-0
                       ${activeTab === 'suggestions'
-                        ? 'bg-indigo-600 text-white shadow-md'
+                        ? 'brand-gradient text-white shadow-md'
                         : theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
                   >
                     <span>Suggestions ({suggestions.length})</span>
@@ -808,7 +808,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                   onClick={() => setActiveTab('recent')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-black tracking-wide transition-all flex items-center gap-1.5 shrink-0
                     ${activeTab === 'recent'
-                      ? 'bg-indigo-600 text-white shadow-md'
+                      ? 'brand-gradient text-white shadow-md'
                       : theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
                 >
                   <History className="w-3.5 h-3.5 shrink-0" />
@@ -821,7 +821,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
                     onClick={() => setActiveTab('saved')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-black tracking-wide transition-all flex items-center gap-1.5 shrink-0
                       ${activeTab === 'saved'
-                        ? 'bg-indigo-600 text-white shadow-md'
+                        ? 'brand-gradient text-white shadow-md'
                         : theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
                   >
                     <Star className="w-3.5 h-3.5 shrink-0 fill-amber-400 text-amber-400" />
@@ -843,7 +843,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 0: Live Suggestions List */}
             {activeTab === 'suggestions' && (
-              <div 
+              <div
                 className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5"
                 onScroll={() => (document.activeElement as HTMLElement)?.blur()}
                 onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
@@ -979,7 +979,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Tab 1: Recent Searches List */}
             {activeTab === 'recent' && (
-              <div 
+              <div
                 className="flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-1.5"
                 onScroll={() => (document.activeElement as HTMLElement)?.blur()}
                 onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
@@ -1127,7 +1127,7 @@ const SearchBox: React.FC<SearchBoxProps> = ({
 
             {/* Saved Places */}
             {activeTab === 'saved' && (
-              <div 
+              <div
                 className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto overscroll-contain no-scrollbar pt-1"
                 onScroll={() => (document.activeElement as HTMLElement)?.blur()}
                 onTouchMove={() => (document.activeElement as HTMLElement)?.blur()}
