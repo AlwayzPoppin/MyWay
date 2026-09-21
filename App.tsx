@@ -2710,7 +2710,7 @@ const App: React.FC = () => {
               {/* ────────────────────────────────────────────────────────── */}
               {/* UNIFIED INTERACTION CONTAINER (DESKTOP / LANDSCAPE: MAP ROUTING COLUMN) */}
               {/* ────────────────────────────────────────────────────────── */}
-              {!usesMobileSheetLayout && !isDriveMode && !activeModal && !correctingPlace && (
+              {!usesMobileSheetLayout && !isDriveMode && !pendingTripResume && !activeModal && !correctingPlace && (
                 <div className="absolute left-1/2 -translate-x-1/2 bottom-6 md:bottom-8 lg:bottom-10 landscape:bottom-6 landscape:md:bottom-8 w-full max-w-[min(620px,calc(100%-2rem))] z-[120] flex flex-col-reverse gap-2 sm:gap-3 pointer-events-none max-h-[calc(100%-2rem)] md:max-h-[calc(100%-4rem)] landscape:max-h-[calc(100dvh-4rem)] justify-start transition-all duration-300">
                   {/* Search Input Bar (Anchors dropdown directly above) */}
                   <div className="w-full pointer-events-auto">
