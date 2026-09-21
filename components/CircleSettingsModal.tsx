@@ -508,7 +508,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             onClick={() => onSelectFilterCircle?.('all')}
                                             className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
                                                 activeFilterCircleId === 'all'
-                                                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow'
+                                                    ? 'brand-gradient text-white shadow'
                                                     : 'text-slate-400 hover:text-white'
                                             }`}
                                         >
@@ -519,7 +519,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                             onClick={() => onSelectFilterCircle?.(currentCircle?.id || 'all')}
                                             className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
                                                 activeFilterCircleId !== 'all'
-                                                    ? 'bg-indigo-600 text-white shadow'
+                                                    ? 'brand-gradient text-white shadow'
                                                     : 'text-slate-400 hover:text-white'
                                             }`}
                                         >
@@ -847,7 +847,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                     <button
                                         type="button"
                                         onClick={() => setIsScannerOpen(true)}
-                                        className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-colors ${isDark ? 'border-purple-500/30 bg-purple-500/10 text-purple-300' : 'border-purple-200 bg-purple-50 text-purple-700'}`}
+                                        className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-colors ${isDark ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300' : 'border-indigo-200 bg-indigo-50 text-indigo-700'}`}
                                         title="Scan a Circle QR code"
                                         aria-label="Scan a Circle QR code"
                                     >
@@ -1020,7 +1020,7 @@ const CircleSettingsModal: React.FC<CircleSettingsModalProps> = ({
                                 )}
                                 {entitlementError && <p className="text-[9px] font-semibold text-amber-500">{entitlementError}</p>}
                                 {entitlement && !entitlement.active && entitlement.personalTier !== 'free' && (
-                                    <button type="button" disabled={isSubmitting} onClick={handleSponsorCircle} className="w-full rounded-xl bg-violet-600 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-white transition hover:bg-violet-500 disabled:opacity-50">
+                                    <button type="button" disabled={isSubmitting} onClick={handleSponsorCircle} className="w-full rounded-xl brand-gradient px-3 py-2 text-[10px] font-black uppercase tracking-wider text-white transition disabled:opacity-50">
                                         Sponsor this Circle with {entitlement.personalTier === 'platinum' ? 'Platinum' : 'Gold'}
                                     </button>
                                 )}

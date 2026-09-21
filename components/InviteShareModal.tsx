@@ -70,7 +70,7 @@ const InviteShareModal: React.FC<InviteShareModalProps> = ({
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header gradient */}
-                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-center relative">
+                <div className="brand-gradient p-6 text-center relative">
                     {onBack && (
                         <button
                             onClick={onBack}
@@ -121,7 +121,7 @@ const InviteShareModal: React.FC<InviteShareModalProps> = ({
                         </button>
                         <button
                             onClick={handleShare}
-                            className="flex-1 py-3 rounded-2xl font-bold text-sm bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:opacity-90 transition-all"
+                            className="flex-1 py-3 rounded-2xl font-bold text-sm brand-gradient text-white hover:opacity-90 transition-all"
                         >
                             📤 Share
                         </button>

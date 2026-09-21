@@ -1310,7 +1310,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                                         >
                                             <div
                                                 onPointerDown={handleRotateStart}
-                                                className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 border-2 border-white shadow-xl flex items-center justify-center text-white cursor-grab active:cursor-grabbing hover:scale-110 active:scale-95 transition-transform pointer-events-auto touch-none"
+                                                className="w-8 h-8 rounded-full bg-gradient-to-br from-[#354FCF] to-[#2189E8] border-2 border-white shadow-xl flex items-center justify-center text-white cursor-grab active:cursor-grabbing hover:scale-110 active:scale-95 transition-transform pointer-events-auto touch-none"
                                             >
                                                 <RotateCw className="w-4 h-4" />
                                             </div>
@@ -1494,7 +1494,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                             type="button"
                             onClick={() => setStep(current => (current + 1) as 2 | 3)}
                             disabled={step === 1 && !name.trim()}
-                            className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 py-3.5 brand-gradient disabled:opacity-50 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer"
                         >
                             Continue
                         </button>
@@ -1503,7 +1503,7 @@ const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
                             type="button"
                             onClick={handleSave}
                             disabled={!name.trim()}
-                            className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                            className="flex-1 py-3.5 brand-gradient disabled:opacity-50 text-white font-bold rounded-xl text-sm shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
                         >
                             <Save className="w-4 h-4 shrink-0" />
                             <span>Save Changes</span>

@@ -463,7 +463,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <button
             onClick={() => onChange(!enabled)}
             className={`relative w-12 h-6 rounded-full transition-all ${enabled
-                ? 'bg-gradient-to-r from-indigo-500 to-purple-600'
+                ? 'brand-gradient'
                 : theme === 'dark' ? 'bg-white/10' : 'bg-slate-200'
                 } `}
         >
@@ -526,12 +526,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         {onOpenContacts && (
                             <button type="button" onClick={onOpenContacts}
                                 className={`w-full rounded-2xl border p-4 text-left transition-colors ${theme === 'dark'
-                                    ? 'bg-violet-500/10 border-violet-400/25 hover:bg-violet-500/15'
-                                    : 'bg-violet-50/70 border-violet-200 hover:bg-violet-50'}`}>
+                                    ? 'bg-indigo-500/10 border-indigo-400/25 hover:bg-indigo-500/15'
+                                    : 'bg-indigo-50/70 border-indigo-200 hover:bg-indigo-50'}`}>
                                 <span className="flex items-center gap-3">
-                                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-violet-600"><Smartphone className="h-4 w-4" /></span>
+                                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-600"><Smartphone className="h-4 w-4" /></span>
                                     <span>
-                                        <span className={`block text-sm font-bold ${theme === 'dark' ? 'text-violet-200' : 'text-violet-800'}`}>Contact number & Circle sharing</span>
+                                        <span className={`block text-sm font-bold ${theme === 'dark' ? 'text-indigo-200' : 'text-indigo-800'}`}>Contact number & Circle sharing</span>
                                         <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{contactSharingStatus || 'Checking sharing status…'}</span>
                                     </span>
                                 </span>
@@ -692,7 +692,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         {/* Top Meta Row */}
                                         <div className="flex items-center justify-between gap-2 mb-2">
                                             {isBuildingPhoto ? (
-                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-violet-500/15 text-violet-500 border border-violet-500/30">
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/15 text-indigo-500 border border-indigo-500/30">
                                                     <Camera className="w-3 h-3" />
                                                     <span>Building Photo</span>
                                                 </span>
@@ -752,7 +752,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                                 <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
                                                     item.placeType === 'residential'
                                                         ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
-                                                        : 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                                                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
                                                 }`}>
                                                     {item.placeType === 'residential' ? '🏠 Residential' : '🏢 Business'}
                                                 </span>
@@ -858,7 +858,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         }
                                     }}
                                     disabled={isUploading}
-                                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50"
+                                    className="px-4 py-2 rounded-xl brand-gradient text-white text-sm font-bold disabled:opacity-50"
                                 >
                                     {isUploading ? '...' : 'Save'}
                                 </button>
@@ -974,12 +974,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         <div className="flex items-center justify-between mb-1.5">
                             <div>
                                 <h4 className={`text-xs font-black flex items-center gap-1.5 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                                    <EyeOff className="w-3.5 h-3.5 text-purple-400" />
+                                    <EyeOff className="w-3.5 h-3.5 text-indigo-400" />
                                     <span>Location Privacy Level</span>
                                 </h4>
                                 <p className="text-[11px] text-slate-400">Control how circle members see your location</p>
                             </div>
-                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300">
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300">
                                 {localSettings.privacyMode === 'blurred' ? 'Blurred' : localSettings.privacyMode === 'invisible' ? 'Invisible' : 'Exact'}
                             </span>
                         </div>
@@ -1006,17 +1006,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         }}
                                         className={`p-2 rounded-lg text-left transition-all border ${
                                             isCurrent
-                                                ? 'bg-purple-600 text-white border-purple-400 shadow-md ring-1 ring-purple-400/50'
+                                                ? 'brand-gradient text-white border-indigo-400 shadow-md ring-1 ring-indigo-400/50'
                                                 : theme === 'dark'
                                                     ? 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'
                                                     : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                                         }`}
                                     >
                                         <div className="flex items-center gap-1.5">
-                                            <ModeIcon className={`w-3.5 h-3.5 ${isCurrent ? 'text-white' : 'text-purple-400'}`} />
+                                            <ModeIcon className={`w-3.5 h-3.5 ${isCurrent ? 'text-white' : 'text-indigo-400'}`} />
                                             <span className="text-[11px] font-black">{mode.label}</span>
                                         </div>
-                                        <div className={`text-[9px] mt-0.5 ${isCurrent ? 'text-purple-200' : 'text-slate-400'}`}>{mode.desc}</div>
+                                        <div className={`text-[9px] mt-0.5 ${isCurrent ? 'text-indigo-200' : 'text-slate-400'}`}>{mode.desc}</div>
                                     </button>
                                 );
                             })}
@@ -1135,7 +1135,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         { id: 'trip', label: 'Keep short stops' },
                                         { id: 'moving', label: 'While moving' }
                                     ].map(mode => (
-                                        <button key={mode.id} type="button" onClick={() => updateSetting('roadRecordingMode', mode.id as 'trip' | 'moving')} className={`rounded-lg px-2 py-2 text-[10px] font-black ${localSettings.roadRecordingMode !== 'moving' && mode.id === 'trip' || localSettings.roadRecordingMode === mode.id ? 'bg-violet-600 text-white shadow-sm' : theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{mode.label}</button>
+                                        <button key={mode.id} type="button" onClick={() => updateSetting('roadRecordingMode', mode.id as 'trip' | 'moving')} className={`rounded-lg px-2 py-2 text-[10px] font-black ${localSettings.roadRecordingMode !== 'moving' && mode.id === 'trip' || localSettings.roadRecordingMode === mode.id ? 'brand-gradient text-white shadow-sm' : theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{mode.label}</button>
                                     ))}
                                 </div>
                                 <p className="mt-1.5 text-[10px] text-slate-500">While moving pauses after 12 seconds at 0 mph. Keep short stops waits 45 seconds.</p>
@@ -1147,7 +1147,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                         { id: 'standard', label: 'Standard', note: 'Saves storage' },
                                         { id: 'hd', label: 'HD', note: 'Clearer footage' }
                                     ].map(quality => (
-                                        <button key={quality.id} type="button" onClick={() => updateSetting('roadRecordingQuality', quality.id as 'standard' | 'hd')} className={`rounded-xl border px-2 py-2 text-left ${localSettings.roadRecordingQuality === quality.id || (!localSettings.roadRecordingQuality && quality.id === 'hd') ? 'border-violet-500 bg-violet-500/15 text-violet-200' : theme === 'dark' ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-600'}`}><span className="block text-[10px] font-black">{quality.label}</span><span className="block text-[9px] opacity-75">{quality.note}</span></button>
+                                        <button key={quality.id} type="button" onClick={() => updateSetting('roadRecordingQuality', quality.id as 'standard' | 'hd')} className={`rounded-xl border px-2 py-2 text-left ${localSettings.roadRecordingQuality === quality.id || (!localSettings.roadRecordingQuality && quality.id === 'hd') ? 'border-indigo-500 bg-indigo-500/15 text-indigo-200' : theme === 'dark' ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-600'}`}><span className="block text-[10px] font-black">{quality.label}</span><span className="block text-[9px] opacity-75">{quality.note}</span></button>
                                     ))}
                                 </div>
                             </div>
@@ -1155,11 +1155,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 <p className={`mb-2 text-xs font-black ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Storage limit</p>
                                 <div className="grid grid-cols-3 gap-1">
                                     {[1, 2, 5].map(limit => (
-                                        <button key={limit} type="button" onClick={() => updateSetting('roadRecordingStorageGb', limit as 1 | 2 | 5)} className={`rounded-xl border py-2 text-[10px] font-black ${localSettings.roadRecordingStorageGb === limit || (!localSettings.roadRecordingStorageGb && limit === 2) ? 'border-violet-500 bg-violet-500/15 text-violet-200' : theme === 'dark' ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-600'}`}>{limit} GB</button>
+                                        <button key={limit} type="button" onClick={() => updateSetting('roadRecordingStorageGb', limit as 1 | 2 | 5)} className={`rounded-xl border py-2 text-[10px] font-black ${localSettings.roadRecordingStorageGb === limit || (!localSettings.roadRecordingStorageGb && limit === 2) ? 'border-indigo-500 bg-indigo-500/15 text-indigo-200' : theme === 'dark' ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-600'}`}>{limit} GB</button>
                                     ))}
                                 </div>
                             </div>
-                            <p className="rounded-xl bg-violet-500/10 px-3 py-2 text-[10px] leading-relaxed text-violet-300">Recordings stay on this phone. Protected clips are never removed automatically.</p>
+                            <p className="rounded-xl bg-indigo-500/10 px-3 py-2 text-[10px] leading-relaxed text-indigo-300">Recordings stay on this phone. Protected clips are never removed automatically.</p>
                         </div>
                     )}
                 </AccordionSection>
@@ -1200,7 +1200,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                             onClick={() => updateSetting('buildingScale', scale.id as any)}
                                             className={`flex-1 py-1.5 px-1.5 text-[9.5px] font-black uppercase rounded-lg transition-all min-w-0 flex items-center justify-center gap-1 truncate ${
                                                 isSelected
-                                                    ? 'bg-indigo-600 text-white shadow-md'
+                                                    ? 'brand-gradient text-white shadow-md'
                                                     : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900'
                                             }`}
                                         >
@@ -1320,7 +1320,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                                 {currentDevice.isLocationPublisher && <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[9px] font-black text-emerald-600">LIVE GPS</span>}
                             </div>
                             {currentDeviceIsMobile && !currentDevice.isLocationPublisher && (
-                                <button type="button" disabled={deviceActionPending} onClick={claimThisDeviceForLocation} className="mt-2 w-full rounded-lg bg-indigo-600 px-2.5 py-2 text-[10px] font-black text-white disabled:opacity-50">
+                                <button type="button" disabled={deviceActionPending} onClick={claimThisDeviceForLocation} className="mt-2 w-full rounded-lg brand-gradient px-2.5 py-2 text-[10px] font-black text-white disabled:opacity-50">
                                     Share location from this phone
                                 </button>
                             )}
@@ -1410,7 +1410,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         icon={ShieldCheck}
                         subtitle="Community map review & admin recovery"
                         badge={pendingReviewCount && pendingReviewCount > 0 ? (
-                            <span className="min-w-5 h-5 px-1.5 rounded-full bg-violet-600 text-white text-[10px] font-black grid place-items-center shadow-sm" aria-label={`${pendingReviewCount} submissions pending review`}>
+                            <span className="min-w-5 h-5 px-1.5 rounded-full brand-gradient text-white text-[10px] font-black grid place-items-center shadow-sm" aria-label={`${pendingReviewCount} submissions pending review`}>
                                 {pendingReviewCount > 99 ? '99+' : pendingReviewCount}
                             </span>
                         ) : undefined}
@@ -1419,9 +1419,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             <button
                                 type="button"
                                 onClick={() => setIsMapReviewOpen(true)}
-                                className={`w-full flex items-center justify-between rounded-2xl border p-3.5 text-left transition-colors ${theme === 'dark' ? 'bg-violet-500/10 border-violet-400/25 hover:bg-violet-500/15' : 'bg-violet-50 border-violet-200 hover:bg-violet-100'}`}
+                                className={`w-full flex items-center justify-between rounded-2xl border p-3.5 text-left transition-colors ${theme === 'dark' ? 'bg-indigo-500/10 border-indigo-400/25 hover:bg-indigo-500/15' : 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100'}`}
                             >
-                                <span className="flex items-center gap-2.5"><ShieldCheck className="w-5 h-5 text-violet-500" /><span><span className="block text-sm font-black">Review community submissions</span><span className="block text-[11px] text-slate-500">Resolve exceptional map edits and reports</span></span></span>
+                                <span className="flex items-center gap-2.5"><ShieldCheck className="w-5 h-5 text-indigo-500" /><span><span className="block text-sm font-black">Review community submissions</span><span className="block text-[11px] text-slate-500">Resolve exceptional map edits and reports</span></span></span>
                                 <ChevronRight className="w-4 h-4 text-slate-400" />
                             </button>
                             {!hasRecoveryAdmin && (

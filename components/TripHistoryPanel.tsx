@@ -195,7 +195,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                     onClick={() => setActiveTab('trips')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
                         activeTab === 'trips'
-                            ? 'bg-indigo-600 text-white shadow-md'
+                            ? 'brand-gradient text-white shadow-md'
                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                 >
@@ -219,7 +219,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                     onClick={() => setActiveTab('road_recorder')}
                     className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
                         activeTab === 'road_recorder'
-                            ? 'bg-violet-600 text-white shadow-md'
+                            ? 'brand-gradient text-white shadow-md'
                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                 >
@@ -232,18 +232,18 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
             <div className="flex-1 overflow-y-auto">
                 {activeTab === 'road_recorder' ? (
                     <div className="p-4 space-y-3">
-                        <div className="rounded-2xl border border-violet-500/30 bg-violet-950/25 p-3.5">
+                        <div className="rounded-2xl border border-indigo-500/30 bg-indigo-950/25 p-3.5">
                             <div className="flex items-start justify-between gap-3">
                                 <div>
                                     <h3 className="text-sm font-black text-white">Local Road Recorder</h3>
                                     <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Clips stay on this phone. MyWay keeps the newest recordings within a 20-clip or 2 GB limit; protected clips are never auto-deleted.</p>
                                 </div>
-                                <button type="button" onClick={() => void loadRoadClips()} className="rounded-lg bg-white/10 px-2.5 py-1.5 text-[10px] font-black text-violet-200 hover:bg-white/15">Refresh</button>
+                                <button type="button" onClick={() => void loadRoadClips()} className="rounded-lg bg-white/10 px-2.5 py-1.5 text-[10px] font-black text-indigo-200 hover:bg-white/15">Refresh</button>
                             </div>
                             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-                                <div className="h-full rounded-full bg-violet-500" style={{ width: `${roadStorage.maxBytes ? Math.min(100, (roadStorage.totalBytes / roadStorage.maxBytes) * 100) : 0}%` }} />
+                                <div className="h-full rounded-full bg-[#354FCF]" style={{ width: `${roadStorage.maxBytes ? Math.min(100, (roadStorage.totalBytes / roadStorage.maxBytes) * 100) : 0}%` }} />
                             </div>
-                            <p className="mt-1.5 text-[10px] font-bold text-violet-200">{formatBytes(roadStorage.totalBytes)} of {formatBytes(roadStorage.maxBytes || 2 * 1024 * 1024 * 1024)} used</p>
+                            <p className="mt-1.5 text-[10px] font-bold text-indigo-200">{formatBytes(roadStorage.totalBytes)} of {formatBytes(roadStorage.maxBytes || 2 * 1024 * 1024 * 1024)} used</p>
                         </div>
 
                         {!nativeRoadRecorderService.isSupported() ? (
@@ -453,7 +453,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                         </div>
 
                         {/* Replay Controls */}
-                        <div className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 rounded-2xl p-4 border border-indigo-500/30">
+                        <div className="bg-gradient-to-r from-[#354FCF]/20 to-[#2189E8]/20 rounded-2xl p-4 border border-indigo-500/30">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-white font-semibold text-sm">Trip Replay</p>
@@ -478,7 +478,7 @@ const TripHistoryPanel: React.FC<TripHistoryPanelProps> = ({ onClose, onBack, on
                             {isReplaying && (
                                 <div className="mt-3 h-1.5 bg-white/10 rounded-full overflow-hidden">
                                     <div
-                                        className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-100"
+                                        className="h-full bg-gradient-to-r from-[#354FCF] to-[#2189E8] rounded-full transition-all duration-100"
                                         style={{ width: `${(replayIndex / selectedTrip.path.length) * 100}%` }}
                                     />
                                 </div>
