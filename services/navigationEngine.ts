@@ -2,15 +2,13 @@ import { Location, NavigationRoute, RouteStep, LaneGuidance } from '../types';
 import { getDistanceMeters, getBearing, getPointOnSegmentNearestTo } from '../utils/geo';
 
 // Constants
-// Audit Fix: Dynamic step completion radius scaled by speed
-// Walking (<5 mph): 20m — precise for pedestrians
-// City driving (5–45 mph): linearly scaled 20m–60m
-// Highway (>45 mph): 80m — accounts for high-speed GPS lag
+// Turn completion must remain close to the physical intersection. The former
+// 20–80m window could replace a city maneuver more than 100 ft too early.
 const getStepCompletionRadius = (speedMph: number = 0): number => {
-    if (speedMph <= 5) return 20;
-    if (speedMph >= 45) return 80;
-    // Linear interpolation: 20m at 5mph → 60m at 45mph
-    return 20 + ((speedMph - 5) / 40) * 40;
+    if (speedMph <= 5) return 8;
+    if (speedMph >= 45) return 18;
+    // City driving: 8m–18m (about 25–60 ft), paired with 1s GPS updates.
+    return 8 + ((speedMph - 5) / 40) * 10;
 };
 export const getOffRouteThresholdMeters = (speedMph: number = 0): number => {
     if (speedMph <= 45) return 38; // 38m (~125ft, city road width + sidewalk)
@@ -67,6 +65,22 @@ export interface UpcomingManeuverGuidance {
 }
 
 const remainingPolylineDistanceCache = new WeakMap<NavigationRoute, number[]>();
+
+const getRemainingPolylineTotals = (route: NavigationRoute): number[] | null => {
+    const geometry = route.routeGeometry;
+    if (!geometry || geometry.length < 2) return null;
+    let totals = remainingPolylineDistanceCache.get(route);
+    if (!totals || totals.length !== geometry.length) {
+        totals = Array.from({ length: geometry.length }, () => 0);
+        for (let index = geometry.length - 2; index >= 0; index -= 1) {
+            const start = { lat: geometry[index][1], lng: geometry[index][0] };
+            const end = { lat: geometry[index + 1][1], lng: geometry[index + 1][0] };
+            totals[index] = getDistanceMeters(start, end) + (totals[index + 1] || 0);
+        }
+        remainingPolylineDistanceCache.set(route, totals);
+    }
+    return totals;
+};
 
 /**
  * Formats distance in meters to standard driving HUD string
@@ -259,18 +273,33 @@ export const getRemainingRouteDistanceMeters = (
     const segmentEnd = { lat: geometry[segmentIndex + 1][1], lng: geometry[segmentIndex + 1][0] };
     const snappedPoint = getPointOnSegmentNearestTo(currentLocation, segmentStart, segmentEnd);
 
-    let segmentTotals = remainingPolylineDistanceCache.get(route);
-    if (!segmentTotals || segmentTotals.length !== geometry.length) {
-        segmentTotals = Array.from({ length: geometry.length }, () => 0);
-        for (let index = geometry.length - 2; index >= 0; index -= 1) {
-            const start = { lat: geometry[index][1], lng: geometry[index][0] };
-            const end = { lat: geometry[index + 1][1], lng: geometry[index + 1][0] };
-            segmentTotals[index] = getDistanceMeters(start, end) + (segmentTotals[index + 1] || 0);
-        }
-        remainingPolylineDistanceCache.set(route, segmentTotals);
-    }
+    const segmentTotals = getRemainingPolylineTotals(route);
+    if (!segmentTotals) return null;
 
     return Math.max(0, getDistanceMeters(snappedPoint, segmentEnd) + (segmentTotals[segmentIndex + 1] || 0));
+};
+
+/**
+ * Measures the remaining road distance to a route vertex, rather than the
+ * straight-line distance through blocks. This keeps turn pacing aligned with
+ * what the driver actually travels on winding residential roads.
+ */
+const getRouteDistanceToPolylineIndex = (
+    currentLocation: Location,
+    route: NavigationRoute,
+    splitIndex: number,
+    targetIndex: number
+): number | null => {
+    const geometry = route.routeGeometry;
+    const totals = getRemainingPolylineTotals(route);
+    if (!geometry || !totals || targetIndex < splitIndex || targetIndex >= geometry.length) return null;
+
+    const segmentIndex = Math.max(0, Math.min(geometry.length - 2, splitIndex));
+    if (targetIndex <= segmentIndex) return 0;
+    const segmentStart = { lat: geometry[segmentIndex][1], lng: geometry[segmentIndex][0] };
+    const segmentEnd = { lat: geometry[segmentIndex + 1][1], lng: geometry[segmentIndex + 1][0] };
+    const snappedPoint = getPointOnSegmentNearestTo(currentLocation, segmentStart, segmentEnd);
+    return Math.max(0, getDistanceMeters(snappedPoint, segmentEnd) + (totals[segmentIndex + 1] || 0) - (totals[targetIndex] || 0));
 };
 
 /**
@@ -574,7 +603,11 @@ export const updateNavigationState = (
         };
     }
 
-    const distToTarget = getDistanceMeters(currentLocation, segmentEnd);
+    const stepEndIndex = route.routeGeometry ? getStepEndPolylineIndices(route)[currentStepIndex] : undefined;
+    const routeDistanceToTurn = typeof stepEndIndex === 'number' && !isOffRoute
+        ? getRouteDistanceToPolylineIndex(currentLocation, route, splitIndex, stepEndIndex)
+        : null;
+    const distToTarget = routeDistanceToTurn ?? getDistanceMeters(currentLocation, segmentEnd);
 
     // GPS DRIFT FIX: Check if we're much closer to the NEXT step than current
     // Bounded by max proximity to prevent false advancement across parallel roads

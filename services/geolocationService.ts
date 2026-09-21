@@ -151,6 +151,7 @@ class GeolocationService {
     private webWatchId: number | null = null;
     private capacitorWatcherId: string | null = null;
     private isWatching = false;
+    private nativeWatchRestartQueued = false;
 
     private readonly ACCURACY_THRESHOLD = 150;
     private trackingTier: TrackingTier = 'transit';
@@ -470,9 +471,10 @@ class GeolocationService {
         try {
             console.log('📡 Starting native foreground geolocation watcher...');
             const distanceFilter = this.trackingTier === 'driving' ? 0 : this.trackingTier === 'transit' ? 5 : 15;
+            const interval = this.trackingTier === 'driving' ? 1_000 : this.trackingTier === 'transit' ? 3_000 : 10_000;
 
             this.capacitorWatcherId = await CapGeolocation.watchPosition(
-                { enableHighAccuracy: true, timeout: 15_000, interval: 5_000, minimumUpdateInterval: Math.max(1_000, distanceFilter ? 3_000 : 1_000) },
+                { enableHighAccuracy: true, timeout: 15_000, interval, minimumUpdateInterval: Math.max(1_000, distanceFilter ? 3_000 : 1_000) },
                 (position, error) => {
                     if (error || !position) {
                         this.notifyErrorSubscribers({ code: 2, message: error?.message || 'Native location error' });
@@ -544,33 +546,48 @@ class GeolocationService {
     private updateAdaptiveTier(speedMph: number): void {
         this.lastSpeed = speedMph;
 
+        const applyTier = (nextTier: TrackingTier, message: string) => {
+            if (this.trackingTier === nextTier) return;
+            this.trackingTier = nextTier;
+            console.log(message);
+            // Capacitor applies its interval only when a watcher is created.
+            // Re-register when the movement tier changes so driving truly gets
+            // one-second fixes instead of retaining the initial five-second cadence.
+            if (!Capacitor.isNativePlatform()) {
+                this.startWebWatch();
+                return;
+            }
+            if (this.nativeWatchRestartQueued) return;
+            this.nativeWatchRestartQueued = true;
+            void Promise.resolve().then(async () => {
+                try {
+                    if (this.isWatching) await this.startNativeForegroundWatch();
+                } finally {
+                    this.nativeWatchRestartQueued = false;
+                }
+            });
+        };
+
         if (speedMph >= 15) {
             // Tier 1: Driving
             if (this.stationaryTimeout) {
                 clearTimeout(this.stationaryTimeout);
                 this.stationaryTimeout = null;
             }
-            if (this.trackingTier !== 'driving') {
-                this.trackingTier = 'driving';
-                console.log('🏎️ GPS Tier: Driving (>15 mph) — High-Frequency 1s sync');
-            }
+            applyTier('driving', '🏎️ GPS Tier: Driving (>15 mph) — High-Frequency 1s sync');
         } else if (speedMph >= 1) {
             // Tier 2: Transit / Walking
             if (this.stationaryTimeout) {
                 clearTimeout(this.stationaryTimeout);
                 this.stationaryTimeout = null;
             }
-            if (this.trackingTier !== 'transit') {
-                this.trackingTier = 'transit';
-                console.log('🚶 GPS Tier: Transit/Walking — Balanced 3s sync');
-            }
+            applyTier('transit', '🚶 GPS Tier: Transit/Walking — Balanced 3s sync');
         } else {
             // Tier 3: Stationary / Dwelling
             if (!this.stationaryTimeout && this.trackingTier !== 'dwelling') {
                 this.stationaryTimeout = setTimeout(() => {
                     if (this.lastSpeed < 1 && this.isWatching) {
-                        this.trackingTier = 'dwelling';
-                        console.log('🔋 GPS Tier: Dwelling (Stationary >2 min) — Battery-Saver mode enabled');
+                        applyTier('dwelling', '🔋 GPS Tier: Dwelling (Stationary >2 min) — Battery-Saver mode enabled');
 
                         // Predictive Dwelling Cache: Pre-cache immediate 5km radius (z13-z15) to secure outbound navigation
                         // Guarded by Idempotent Spatial Containment & Distance/Cooldown Bounding
