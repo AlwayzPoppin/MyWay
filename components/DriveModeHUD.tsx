@@ -2558,18 +2558,22 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
 
       {/* Alternative Routes & On-the-Fly Reroute Selection Modal */}
       {isAlternativesModalOpen && (
-        <div className="fixed inset-0 z-[200] flex items-end justify-center p-3 sm:p-4 bg-slate-950/30 backdrop-blur-[1px] animate-in fade-in duration-200 pointer-events-auto">
-          <div className="bg-slate-900/[0.97] border border-white/15 rounded-3xl p-4 sm:p-5 max-w-lg w-full shadow-[0_25px_70px_rgba(0,0,0,0.85)] space-y-3 max-h-[62vh] flex flex-col">
+        <div className="fixed inset-0 z-[200] flex flex-col items-center bg-slate-950/45 px-3 pt-44 pb-4 backdrop-blur-[1px] animate-in fade-in duration-200 pointer-events-auto">
+          <div className="mb-4 flex rounded-2xl border border-slate-200 bg-white p-1 shadow-xl">
+            <button type="button" onClick={() => { setIsAlternativesModalOpen(false); onOpenTripOverview?.(); }} className="rounded-xl px-4 py-2 text-sm font-black text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900">Map</button>
+            <span className="rounded-xl bg-indigo-50 px-4 py-2 text-sm font-black text-indigo-700">List</span>
+          </div>
+          <div className="max-w-lg w-full rounded-3xl border border-slate-200 bg-white p-4 sm:p-5 shadow-[0_18px_50px_rgba(15,23,42,0.32)] space-y-3 max-h-[calc(100dvh-13rem)] flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-3 shrink-0">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-md text-white">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-md text-white">
                   <Route className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-black text-white">Choose a route</h3>
-                  <p className="text-xs text-slate-400 truncate max-w-[200px] sm:max-w-[280px]">
-                    To: <span className="text-slate-200 font-bold">{route.destinationName}</span>
+                  <h3 className="text-base sm:text-lg font-black text-slate-950">Choose a route</h3>
+                  <p className="text-xs text-slate-500 truncate max-w-[200px] sm:max-w-[280px]">
+                    To: <span className="text-slate-800 font-bold">{route.destinationName}</span>
                   </p>
                 </div>
               </div>
@@ -2578,7 +2582,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                   type="button"
                   onClick={() => onRecalculateRoutes && onRecalculateRoutes()}
                   disabled={isRecalculatingRoutes}
-                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   title="Recalculate fresh routes from current GPS"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isRecalculatingRoutes ? 'animate-spin' : ''}`} />
@@ -2587,20 +2591,20 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                 <button
                   type="button"
                   onClick={() => setIsAlternativesModalOpen(false)}
-                  className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer"
+                  className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-all cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="shrink-0 rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs">
+            <div className="shrink-0 rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs">
               {isRecalculatingRoutes ? (
-                <span className="text-cyan-300 font-semibold">Finding routes from your current location…</span>
+                <span className="text-indigo-700 font-semibold">Finding routes from your current location…</span>
               ) : alternativeRoutes.length > 1 ? (
-                <span className="text-slate-300"><strong className="text-white">{alternativeRoutes.length} routes found.</strong> The map shows each path; compare arrival time and route corridor below.</span>
+                <span className="text-slate-600"><strong className="text-slate-900">{alternativeRoutes.length} routes found.</strong> Compare arrival time and route corridor below.</span>
               ) : (
-                <span className="text-slate-300">Your current route is shown first. We’ll list another route only when it is meaningfully different.</span>
+                <span className="text-slate-600">Your current route is shown first. We’ll list another route only when it is meaningfully different.</span>
               )}
             </div>
 
@@ -2627,8 +2631,8 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                     key={r.id || `route_card_${idx}`}
                     className={`px-4 py-3 rounded-2xl border transition-all duration-200 ${
                       isActive
-                        ? 'bg-indigo-950/40 border-cyan-400/60 shadow-[0_0_20px_rgba(6,182,212,0.25)] ring-1 ring-cyan-400/40'
-                        : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20'
+                        ? 'bg-indigo-50 border-indigo-400 shadow-md ring-1 ring-indigo-200'
+                        : 'bg-white border-slate-200 hover:bg-slate-50 hover:border-slate-300'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -2636,39 +2640,39 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                         <div className="flex items-center gap-2 flex-wrap mb-1">
                           <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
                             isActive
-                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                              ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
                               : r.routeType === 'toll_free' || !r.hasTolls
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                              : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-violet-50 text-violet-700 border border-violet-200'
                           }`}>
                             {isActive ? 'Active Route' : (r.routeLabel || (r.routeType === 'toll_free' ? 'Toll-Free' : `Option ${idx + 1}`))}
                           </span>
                           {r.hasTolls ? (
-                            <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                               {r.tollCostEstimate || `$${r.estimatedTolls?.toFixed(2)} Tolls`}
                             </span>
                           ) : (
-                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
                               No Tolls
                             </span>
                           )}
                         </div>
 
-                        <h4 className="text-sm font-black text-white truncate">
+                        <h4 className="text-sm font-black text-slate-900 truncate">
                           {routeDescription}
                         </h4>
 
-                        <div className="flex items-center gap-2 text-xs text-slate-300 mt-1.5 flex-wrap">
-                          <span className="font-black text-white text-sm">{arrivalTime || r.totalTime}</span>
-                          <span className="text-slate-500">·</span>
-                          <span className={`font-black ${isActive || deltaMinutes <= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>{deltaLabel}</span>
-                          <span className="text-slate-500">·</span>
+                        <div className="flex items-center gap-2 text-xs text-slate-600 mt-1.5 flex-wrap">
+                          <span className="font-black text-slate-950 text-sm">{arrivalTime || r.totalTime}</span>
+                          <span className="text-slate-300">·</span>
+                          <span className={`font-black ${isActive || deltaMinutes <= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>{deltaLabel}</span>
+                          <span className="text-slate-300">·</span>
                           <span>{r.totalDistance}</span>
                           {r.fuelCostEstimate && (
                             <>
-                              <span className="text-slate-500">·</span>
+                              <span className="text-slate-300">·</span>
                               <span
-                                className="text-slate-300 font-semibold"
+                                className="text-slate-600 font-semibold"
                                 title={r.fuelEstimateGal !== undefined ? `Estimated from ${r.fuelEstimateGal.toFixed(2)} gallons for this route` : 'Estimated fuel cost for this route'}
                               >
                                 ≈ {r.fuelCostEstimate} gas{r.fuelEstimateGal !== undefined ? ` (${r.fuelEstimateGal.toFixed(2)} gal)` : ''}
@@ -2681,8 +2685,8 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                       {/* Action Button */}
                       <div className="shrink-0 pt-1">
                         {isActive ? (
-                          <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-xs font-black">
-                            <Check className="w-3.5 h-3.5 text-cyan-300" />
+                          <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-100 border border-indigo-300 text-indigo-700 text-xs font-black">
+                            <Check className="w-3.5 h-3.5 text-indigo-700" />
                             <span>Selected</span>
                           </div>
                         ) : (
@@ -2694,7 +2698,7 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                                 setIsAlternativesModalOpen(false);
                               }
                             }}
-                            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-xs shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-95 text-white font-black text-xs shadow-lg shadow-indigo-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
                           >
                             <GitFork className="w-3.5 h-3.5" />
                             <span>Select</span>
@@ -2706,17 +2710,17 @@ const DriveModeHUD: React.FC<DriveModeHUDProps> = React.memo(({
                 );
               })}
               {!isRecalculatingRoutes && alternativeRoutes.length <= 1 && (
-                <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-3 text-xs text-slate-400">
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-xs text-slate-500">
                   No distinct alternate route is available right now. Refresh after traffic or your position changes.
                 </div>
               )}
             </div>
 
             {/* Footer Tip */}
-            <div className="pt-2 border-t border-white/10 text-center shrink-0">
-              <p className="text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
-                <Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span><span className="text-slate-300 font-semibold">Tip:</span> You can also tap alternative route lines directly on the map to switch routes.</span>
+            <div className="pt-2 border-t border-slate-100 text-center shrink-0">
+              <p className="text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span><span className="text-slate-700 font-semibold">Tip:</span> Tap Map to return to the full route view.</span>
               </p>
             </div>
           </div>
