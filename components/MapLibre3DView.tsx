@@ -269,6 +269,7 @@ interface MapLibre3DViewProps {
     isMobile?: boolean;
     buildingScale?: 'none' | 'flat' | 'realistic';
     isCameraFree?: boolean;
+    isTripOverviewOpen?: boolean;
     onCameraFreeChange?: (isFree: boolean) => void;
     showTrafficControls?: boolean;
     onToggle3DMode?: () => void;
@@ -318,6 +319,7 @@ const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     isMobile = false,
     buildingScale = 'realistic',
     isCameraFree = false,
+    isTripOverviewOpen = false,
     onCameraFreeChange,
     showTrafficControls = true,
     onToggle3DMode,
@@ -5659,7 +5661,7 @@ case 'speed_bump':
             wasNavigatingRef.current = true;
 
             // If user has dragged/panned or zoomed the map ahead, DO NOT fight user touch input
-            if (isCameraFree) {
+            if (isCameraFree || isTripOverviewOpen) {
                 return;
             }
 
@@ -5807,7 +5809,30 @@ case 'speed_bump':
             }
             return;
         }
-    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isNavigating, isMapReady, routeCoords, is3DMode, isCameraFree, currentStepIndex, remainingDistanceMeters, hasArrived]);
+    }, [members, userLocation?.lat, userLocation?.lng, currentUserId, isNavigating, isMapReady, routeCoords, is3DMode, isCameraFree, isTripOverviewOpen, currentStepIndex, remainingDistanceMeters, hasArrived]);
+
+    // A route overview is intentionally driver-triggered. Pause the chase
+    // camera and frame the full remaining route until the overview closes.
+    useEffect(() => {
+        if (!isTripOverviewOpen || !map.current || !isMapReady || routeCoords.length < 2) return;
+
+        const bounds = new maplibregl.LngLatBounds();
+        routeCoords.forEach(point => bounds.extend([point.lng, point.lat]));
+        try {
+            map.current.fitBounds(bounds, {
+                padding: isMobileRef.current
+                    ? { top: 96, bottom: 330, left: 28, right: 28 }
+                    : { top: 100, bottom: 120, left: 360, right: 80 },
+                pitch: 0,
+                bearing: 0,
+                maxZoom: 15.5,
+                duration: 650,
+                essential: true
+            });
+        } catch (error) {
+            console.warn('[MapLibre] trip overview framing failed:', error);
+        }
+    }, [isTripOverviewOpen, isMapReady, routeCoords]);
 
     // Camera control â€” initial center and member selection
     useEffect(() => {

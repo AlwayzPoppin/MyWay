@@ -560,6 +560,7 @@ const App: React.FC = () => {
 
   // Free-look camera state during navigation
   const [isCameraFree, setIsCameraFree] = useState(false);
+  const [isTripOverviewOpen, setIsTripOverviewOpen] = useState(false);
   const handleRecenter = useCallback(() => {
     setIsCameraFree(false);
   }, []);
@@ -923,6 +924,10 @@ const App: React.FC = () => {
       setIsPlaceDetailOpen(false);
       setPreviewRoute(null);
     }
+  }, [isNavigating, isDriveMode]);
+
+  useEffect(() => {
+    if (!isNavigating && !isDriveMode) setIsTripOverviewOpen(false);
   }, [isNavigating, isDriveMode]);
 
   // Ensure isPlaceDetailOpen is synchronized with selectedPlace: if selectedPlace is set, force isPlaceDetailOpen to true
@@ -2226,6 +2231,7 @@ const App: React.FC = () => {
               mapStyle={userSettings.mapStyle}
               isMobile={usesMobileSheetLayout}
               isCameraFree={isCameraFree}
+              isTripOverviewOpen={isTripOverviewOpen}
               onCameraFreeChange={setIsCameraFree}
               onToggle3DMode={() => set3DMode(prev => !prev)}
               onSelectMapStyle={(style) => setUserSettings(prev => ({ ...prev, mapStyle: style }))}
@@ -2411,6 +2417,9 @@ const App: React.FC = () => {
                 distanceToNextStep={navState.distanceToNextStep}
                 isCameraFree={isCameraFree}
                 onRecenter={handleRecenter}
+                isTripOverviewOpen={isTripOverviewOpen}
+                onOpenTripOverview={() => setIsTripOverviewOpen(true)}
+                onCloseTripOverview={() => setIsTripOverviewOpen(false)}
                 liveFuelSnapshot={liveFuelSnapshot}
                 lowFuelAlert={lowFuelAlert}
                 schoolZoneAdvisory={schoolZoneAdvisory}
